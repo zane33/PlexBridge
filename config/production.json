@@ -1,0 +1,33 @@
+{
+  "server": {
+    "port": 8080,
+    "host": "0.0.0.0",
+    "environment": "production"
+  },
+  "database": {
+    "path": "/data/database/plextv.db"
+  },
+  "cache": {
+    "host": "redis",
+    "port": 6379,
+    "db": 0
+  },
+  "ssdp": {
+    "friendlyName": "PlexTV"
+  },
+  "streams": {
+    "maxConcurrent": 10,
+    "transcodeEnabled": true,
+    "ffmpegPath": "/usr/bin/ffmpeg"
+  },
+  "logging": {
+    "level": "info",
+    "maxFiles": 30,
+    "maxSize": "100m"
+  },
+  "security": {
+    "bcryptRounds": 12,
+    "rateLimitMax": 500,
+    "rateLimitWindow": 900000
+  }
+}

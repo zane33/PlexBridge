@@ -1,0 +1,75 @@
+{
+  "server": {
+    "port": 8080,
+    "host": "0.0.0.0",
+    "environment": "development"
+  },
+  "database": {
+    "path": "./data/database/plextv.db"
+  },
+  "cache": {
+    "host": "localhost",
+    "port": 6379,
+    "db": 0,
+    "ttl": {
+      "epg": 3600,
+      "streams": 300,
+      "api": 60
+    }
+  },
+  "ssdp": {
+    "port": 1900,
+    "friendlyName": "PlexTV Development",
+    "manufacturer": "PlexTV",
+    "modelName": "PlexTV Bridge",
+    "modelNumber": "1.0",
+    "description": "IPTV to Plex Bridge Interface"
+  },
+  "streams": {
+    "maxConcurrent": 5,
+    "transcodeEnabled": true,
+    "ffmpegPath": "/usr/bin/ffmpeg",
+    "supportedFormats": ["hls", "dash", "rtsp", "rtmp", "udp", "http", "mms", "srt"],
+    "autoDetectFormat": true,
+    "timeout": 30000,
+    "reconnectAttempts": 3,
+    "bufferSize": 65536
+  },
+  "protocols": {
+    "rtsp": {
+      "transport": "tcp",
+      "timeout": 10000,
+      "port": 554
+    },
+    "udp": {
+      "bufferSize": 65536,
+      "timeout": 5000
+    },
+    "http": {
+      "userAgent": "PlexTV/1.0",
+      "timeout": 30000,
+      "followRedirects": true
+    },
+    "srt": {
+      "latency": 120,
+      "encryption": "none"
+    }
+  },
+  "epg": {
+    "refreshInterval": "4h",
+    "cacheTtl": 3600,
+    "maxFileSize": 104857600,
+    "timeout": 60000
+  },
+  "logging": {
+    "level": "debug",
+    "maxFiles": 14,
+    "maxSize": "10m"
+  },
+  "security": {
+    "sessionTimeout": 86400,
+    "bcryptRounds": 10,
+    "rateLimitMax": 1000,
+    "rateLimitWindow": 900000
+  }
+}

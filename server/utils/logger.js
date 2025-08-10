@@ -1,0 +1,222 @@
+const winston = require('winston');
+const DailyRotateFile = require('winston-daily-rotate-file');
+const path = require('path');
+const config = require('../config');
+
+// Define log levels
+const levels = {
+  error: 0,
+  warn: 1,
+  info: 2,
+  http: 3,
+  debug: 4
+};
+
+// Define colors for each level
+const colors = {
+  error: 'red',
+  warn: 'yellow',
+  info: 'green',
+  http: 'magenta',
+  debug: 'white'
+};
+
+// Add colors to winston
+winston.addColors(colors);
+
+// Create custom format
+const customFormat = winston.format.combine(
+  winston.format.timestamp({ format: 'YYYY-MM-DD HH:mm:ss' }),
+  winston.format.errors({ stack: true }),
+  winston.format.printf(({ timestamp, level, message, stack, ...meta }) => {
+    let log = `${timestamp} [${level.toUpperCase()}]: ${message}`;
+    
+    // Add stack trace for errors
+    if (stack) {
+      log += `\n${stack}`;
+    }
+    
+    // Add metadata if present
+    if (Object.keys(meta).length > 0) {
+      log += `\n${JSON.stringify(meta, null, 2)}`;
+    }
+    
+    return log;
+  })
+);
+
+// Console format with colors
+const consoleFormat = winston.format.combine(
+  winston.format.colorize({ all: true }),
+  customFormat
+);
+
+// Create transports
+const transports = [];
+
+// Console transport for development
+if (process.env.NODE_ENV !== 'production') {
+  transports.push(
+    new winston.transports.Console({
+      level: 'debug',
+      format: consoleFormat
+    })
+  );
+}
+
+// File transports for all environments
+const logDir = config.logging.path;
+
+// Application log file
+transports.push(
+  new DailyRotateFile({
+    filename: path.join(logDir, 'app-%DATE%.log'),
+    datePattern: 'YYYY-MM-DD',
+    level: config.logging.level,
+    format: customFormat,
+    maxFiles: config.logging.maxFiles,
+    maxSize: config.logging.maxSize,
+    zippedArchive: true
+  })
+);
+
+// Error log file
+transports.push(
+  new DailyRotateFile({
+    filename: path.join(logDir, 'error-%DATE%.log'),
+    datePattern: 'YYYY-MM-DD',
+    level: 'error',
+    format: customFormat,
+    maxFiles: config.logging.maxFiles,
+    maxSize: config.logging.maxSize,
+    zippedArchive: true
+  })
+);
+
+// Stream log file for streaming-specific logs
+transports.push(
+  new DailyRotateFile({
+    filename: path.join(logDir, 'streams-%DATE%.log'),
+    datePattern: 'YYYY-MM-DD',
+    level: 'info',
+    format: customFormat,
+    maxFiles: config.logging.maxFiles,
+    maxSize: config.logging.maxSize,
+    zippedArchive: true
+  })
+);
+
+// HTTP log file for request logs
+transports.push(
+  new DailyRotateFile({
+    filename: path.join(logDir, 'http-%DATE%.log'),
+    datePattern: 'YYYY-MM-DD',
+    level: 'http',
+    format: customFormat,
+    maxFiles: config.logging.maxFiles,
+    maxSize: config.logging.maxSize,
+    zippedArchive: true
+  })
+);
+
+// Create logger
+const logger = winston.createLogger({
+  levels,
+  level: config.logging.level,
+  transports,
+  exitOnError: false
+});
+
+// Add custom logging methods
+logger.stream = function(message, meta = {}) {
+  this.info(message, { ...meta, category: 'stream' });
+};
+
+logger.security = function(message, meta = {}) {
+  this.warn(message, { ...meta, category: 'security' });
+};
+
+logger.performance = function(message, meta = {}) {
+  this.info(message, { ...meta, category: 'performance' });
+};
+
+logger.epg = function(message, meta = {}) {
+  this.info(message, { ...meta, category: 'epg' });
+};
+
+// Database logger for storing logs in SQLite
+class DatabaseLogger {
+  constructor(database) {
+    this.db = database;
+  }
+
+  async log(level, message, meta = {}) {
+    try {
+      if (this.db && this.db.isInitialized) {
+        await this.db.run(
+          'INSERT INTO logs (level, message, meta) VALUES (?, ?, ?)',
+          [level, message, JSON.stringify(meta)]
+        );
+      }
+    } catch (error) {
+      // Avoid circular logging
+      console.error('Database logging error:', error.message);
+    }
+  }
+
+  async getLogs(options = {}) {
+    try {
+      const {
+        level = null,
+        limit = 100,
+        offset = 0,
+        startDate = null,
+        endDate = null
+      } = options;
+
+      let query = 'SELECT * FROM logs WHERE 1=1';
+      const params = [];
+
+      if (level) {
+        query += ' AND level = ?';
+        params.push(level);
+      }
+
+      if (startDate) {
+        query += ' AND timestamp >= ?';
+        params.push(startDate);
+      }
+
+      if (endDate) {
+        query += ' AND timestamp <= ?';
+        params.push(endDate);
+      }
+
+      query += ' ORDER BY timestamp DESC LIMIT ? OFFSET ?';
+      params.push(limit, offset);
+
+      return await this.db.all(query, params);
+    } catch (error) {
+      console.error('Database log retrieval error:', error.message);
+      return [];
+    }
+  }
+
+  async cleanupLogs(daysToKeep = 30) {
+    try {
+      const cutoffDate = new Date(Date.now() - daysToKeep * 24 * 60 * 60 * 1000).toISOString();
+      const result = await this.db.run(
+        'DELETE FROM logs WHERE timestamp < ?',
+        [cutoffDate]
+      );
+      return result.changes;
+    } catch (error) {
+      console.error('Database log cleanup error:', error.message);
+      return 0;
+    }
+  }
+}
+
+// Export logger and database logger class
+module.exports = logger;
+module.exports.DatabaseLogger = DatabaseLogger;

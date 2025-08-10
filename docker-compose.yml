@@ -1,0 +1,28 @@
+version: '3.8'
+
+services:
+  plextv:
+    build: .
+    container_name: plextv
+    restart: unless-stopped
+    ports:
+      - "8080:8080"
+      - "1900:1900/udp"
+    volumes:
+      - ./data:/data
+      - ./config:/app/config:ro
+    environment:
+      - NODE_ENV=production
+      - DB_PATH=/data/database/plextv.db
+      - LOG_PATH=/data/logs
+      - CACHE_PATH=/data/cache
+      - LOGOS_PATH=/data/logos
+      # Use internal Redis (single container)
+      - REDIS_HOST=localhost
+      - REDIS_PORT=6379
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
