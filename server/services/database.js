@@ -16,19 +16,48 @@ class DatabaseService {
     }
 
     try {
-      // Ensure database directory exists
+      // Ensure database directory exists with proper permissions
       const dbDir = path.dirname(config.database.path);
+      const dbFile = config.database.path;
+      
+      logger.info(`Initializing database at: ${dbFile}`);
+      
       if (!fs.existsSync(dbDir)) {
-        fs.mkdirSync(dbDir, { recursive: true });
+        logger.info(`Creating database directory: ${dbDir}`);
+        fs.mkdirSync(dbDir, { recursive: true, mode: 0o755 });
       }
 
-      // Create database connection
-      this.db = new sqlite3.Database(config.database.path, (err) => {
-        if (err) {
-          logger.error('Database connection error:', err);
-          throw err;
+      // Verify directory is writable
+      try {
+        fs.accessSync(dbDir, fs.constants.W_OK);
+        logger.info(`Database directory is writable: ${dbDir}`);
+      } catch (accessError) {
+        logger.error(`Database directory is not writable: ${dbDir}`, accessError);
+        throw new Error(`Database directory not writable: ${dbDir} - ${accessError.message}`);
+      }
+
+      // Check if database file exists and is accessible
+      if (fs.existsSync(dbFile)) {
+        try {
+          fs.accessSync(dbFile, fs.constants.R_OK | fs.constants.W_OK);
+          logger.info(`Existing database file is accessible: ${dbFile}`);
+        } catch (accessError) {
+          logger.error(`Database file exists but is not accessible: ${dbFile}`, accessError);
+          throw new Error(`Database file not accessible: ${dbFile} - ${accessError.message}`);
         }
-        logger.info(`Connected to SQLite database: ${config.database.path}`);
+      }
+
+      // Create database connection with promise wrapper
+      this.db = await new Promise((resolve, reject) => {
+        const db = new sqlite3.Database(dbFile, (err) => {
+          if (err) {
+            logger.error('Database connection error:', err);
+            reject(new Error(`Database connection failed: ${err.message}`));
+          } else {
+            logger.info(`Connected to SQLite database: ${dbFile}`);
+            resolve(db);
+          }
+        });
       });
 
       // Configure database
@@ -38,9 +67,12 @@ class DatabaseService {
       await this.createTables();
       
       this.isInitialized = true;
+      logger.info('Database initialization completed successfully');
       return this.db;
     } catch (error) {
       logger.error('Database initialization failed:', error);
+      this.isInitialized = false;
+      this.db = null;
       throw error;
     }
   }
@@ -119,9 +151,7 @@ class DatabaseService {
         category TEXT,
         episode_number INTEGER,
         season_number INTEGER,
-        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-        INDEX idx_channel_time (channel_id, start_time, end_time),
-        INDEX idx_time (start_time, end_time)
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP
       )`,
 
       // Stream sessions table for monitoring
@@ -153,14 +183,24 @@ class DatabaseService {
         level TEXT NOT NULL,
         message TEXT NOT NULL,
         meta TEXT, -- JSON object
-        timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
-        INDEX idx_level_time (level, timestamp),
-        INDEX idx_timestamp (timestamp)
+        timestamp DATETIME DEFAULT CURRENT_TIMESTAMP
       )`
     ];
 
     for (const table of tables) {
       await this.run(table);
+    }
+
+    // Create indexes for performance
+    const indexes = [
+      'CREATE INDEX IF NOT EXISTS idx_epg_channel_time ON epg_programs (channel_id, start_time, end_time)',
+      'CREATE INDEX IF NOT EXISTS idx_epg_time ON epg_programs (start_time, end_time)',
+      'CREATE INDEX IF NOT EXISTS idx_logs_level_time ON logs (level, timestamp)',
+      'CREATE INDEX IF NOT EXISTS idx_logs_timestamp ON logs (timestamp)'
+    ];
+
+    for (const index of indexes) {
+      await this.run(index);
     }
 
     // Create triggers for updated_at
@@ -194,7 +234,7 @@ class DatabaseService {
       await this.run(trigger);
     }
 
-    logger.info('Database tables and triggers created successfully');
+    logger.info('Database tables, indexes, and triggers created successfully');
   }
 
   // Promisify database operations

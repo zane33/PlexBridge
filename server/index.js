@@ -158,32 +158,97 @@ process.on('unhandledRejection', (reason, promise) => {
   process.exit(1);
 });
 
-// Initialize application
+// Initialize application with detailed error handling
 const initializeApp = async () => {
+  logger.info('Starting PlexBridge application initialization...');
+  
   try {
-    // Initialize database
-    await database.initialize();
-    logger.info('Database initialized');
+    // Log configuration info
+    logger.info(`Node.js version: ${process.version}`);
+    logger.info(`Platform: ${process.platform} ${process.arch}`);
+    logger.info(`Working directory: ${process.cwd()}`);
+    logger.info(`Environment: ${process.env.NODE_ENV || 'development'}`);
+    logger.info(`Data directory: ${config.paths.data}`);
+    logger.info(`Database path: ${config.database.path}`);
+    
+    // Initialize database with retries
+    let dbInitialized = false;
+    let dbRetries = 3;
+    
+    while (!dbInitialized && dbRetries > 0) {
+      try {
+        await database.initialize();
+        logger.info('Database initialized successfully');
+        dbInitialized = true;
+      } catch (dbError) {
+        dbRetries--;
+        logger.error(`Database initialization attempt failed (${3 - dbRetries}/3):`, dbError.message);
+        
+        if (dbRetries > 0) {
+          logger.info(`Retrying database initialization in 2 seconds...`);
+          await new Promise(resolve => setTimeout(resolve, 2000));
+        } else {
+          throw new Error(`Database initialization failed after 3 attempts: ${dbError.message}`);
+        }
+      }
+    }
 
-    // Initialize cache service
-    await cacheService.initialize();
-    logger.info('Cache service initialized');
+    // Initialize cache service (non-critical, can fallback to memory)
+    try {
+      await cacheService.initialize();
+      logger.info('Cache service initialized successfully');
+    } catch (cacheError) {
+      logger.warn('Cache service initialization failed, continuing with fallback:', cacheError.message);
+    }
 
-    // Start SSDP service
-    ssdpService.start(io);
-    logger.info('SSDP service started');
+    // Start SSDP service (non-critical for basic functionality)
+    try {
+      ssdpService.start(io);
+      logger.info('SSDP service started successfully');
+    } catch (ssdpError) {
+      logger.warn('SSDP service failed to start, Plex auto-discovery may not work:', ssdpError.message);
+    }
 
-    // Start server
+    // Test database health
+    const dbHealth = await database.healthCheck();
+    if (dbHealth.status !== 'healthy') {
+      throw new Error(`Database health check failed: ${dbHealth.error}`);
+    }
+    logger.info('Database health check passed');
+
+    // Start HTTP server
     const PORT = process.env.PORT || config.server.port || 8080;
-    server.listen(PORT, '0.0.0.0', () => {
-      logger.info(`PlexTV server running on port ${PORT}`);
-      logger.info(`Environment: ${process.env.NODE_ENV || 'development'}`);
-      logger.info(`GUI available at: http://localhost:${PORT}`);
+    const HOST = config.server.host || '0.0.0.0';
+    
+    await new Promise((resolve, reject) => {
+      const serverStartTimeout = setTimeout(() => {
+        reject(new Error('Server start timeout after 30 seconds'));
+      }, 30000);
+      
+      server.listen(PORT, HOST, (err) => {
+        clearTimeout(serverStartTimeout);
+        if (err) {
+          reject(err);
+        } else {
+          resolve();
+        }
+      });
     });
 
+    logger.info(`✅ PlexBridge server running successfully on ${HOST}:${PORT}`);
+    logger.info(`📱 Web interface: http://localhost:${PORT}`);
+    logger.info(`🔍 Health check: http://localhost:${PORT}/health`);
+    logger.info(`📺 Plex discovery: http://localhost:${PORT}/discover.json`);
+    logger.info('🚀 Application initialization completed successfully');
+
   } catch (error) {
-    logger.error('Failed to initialize application:', error);
-    process.exit(1);
+    logger.error('❌ Failed to initialize application:', error);
+    logger.error('Application will exit in 5 seconds...');
+    
+    // Give time for logs to flush
+    setTimeout(() => {
+      process.exit(1);
+    }, 5000);
   }
 };
 

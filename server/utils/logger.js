@@ -1,6 +1,7 @@
 const winston = require('winston');
 const DailyRotateFile = require('winston-daily-rotate-file');
 const path = require('path');
+const fs = require('fs');
 const config = require('../config');
 
 // Define log levels
@@ -67,57 +68,89 @@ if (process.env.NODE_ENV !== 'production') {
 // File transports for all environments
 const logDir = config.logging.path;
 
-// Application log file
-transports.push(
-  new DailyRotateFile({
-    filename: path.join(logDir, 'app-%DATE%.log'),
-    datePattern: 'YYYY-MM-DD',
-    level: config.logging.level,
-    format: customFormat,
-    maxFiles: config.logging.maxFiles,
-    maxSize: config.logging.maxSize,
-    zippedArchive: true
-  })
-);
+// Ensure log directory exists and is writable
+let fileLoggingEnabled = true;
+try {
+  if (!fs.existsSync(logDir)) {
+    fs.mkdirSync(logDir, { recursive: true, mode: 0o755 });
+  }
+  fs.accessSync(logDir, fs.constants.W_OK);
+} catch (error) {
+  console.warn(`Log directory not accessible, disabling file logging: ${error.message}`);
+  fileLoggingEnabled = false;
+}
 
-// Error log file
-transports.push(
-  new DailyRotateFile({
-    filename: path.join(logDir, 'error-%DATE%.log'),
-    datePattern: 'YYYY-MM-DD',
-    level: 'error',
-    format: customFormat,
-    maxFiles: config.logging.maxFiles,
-    maxSize: config.logging.maxSize,
-    zippedArchive: true
-  })
-);
+if (fileLoggingEnabled) {
+  // Application log file
+  transports.push(
+    new DailyRotateFile({
+      filename: path.join(logDir, 'app-%DATE%.log'),
+      datePattern: 'YYYY-MM-DD',
+      level: config.logging.level,
+      format: customFormat,
+      maxFiles: config.logging.maxFiles,
+      maxSize: config.logging.maxSize,
+      zippedArchive: true,
+      handleExceptions: false,
+      handleRejections: false
+    })
+  );
 
-// Stream log file for streaming-specific logs
-transports.push(
-  new DailyRotateFile({
-    filename: path.join(logDir, 'streams-%DATE%.log'),
-    datePattern: 'YYYY-MM-DD',
-    level: 'info',
-    format: customFormat,
-    maxFiles: config.logging.maxFiles,
-    maxSize: config.logging.maxSize,
-    zippedArchive: true
-  })
-);
+  // Error log file
+  transports.push(
+    new DailyRotateFile({
+      filename: path.join(logDir, 'error-%DATE%.log'),
+      datePattern: 'YYYY-MM-DD',
+      level: 'error',
+      format: customFormat,
+      maxFiles: config.logging.maxFiles,
+      maxSize: config.logging.maxSize,
+      zippedArchive: true,
+      handleExceptions: false,
+      handleRejections: false
+    })
+  );
 
-// HTTP log file for request logs
-transports.push(
-  new DailyRotateFile({
-    filename: path.join(logDir, 'http-%DATE%.log'),
-    datePattern: 'YYYY-MM-DD',
-    level: 'http',
-    format: customFormat,
-    maxFiles: config.logging.maxFiles,
-    maxSize: config.logging.maxSize,
-    zippedArchive: true
-  })
-);
+  // Stream log file for streaming-specific logs
+  transports.push(
+    new DailyRotateFile({
+      filename: path.join(logDir, 'streams-%DATE%.log'),
+      datePattern: 'YYYY-MM-DD',
+      level: 'info',
+      format: customFormat,
+      maxFiles: config.logging.maxFiles,
+      maxSize: config.logging.maxSize,
+      zippedArchive: true,
+      handleExceptions: false,
+      handleRejections: false
+    })
+  );
+
+  // HTTP log file for request logs
+  transports.push(
+    new DailyRotateFile({
+      filename: path.join(logDir, 'http-%DATE%.log'),
+      datePattern: 'YYYY-MM-DD',
+      level: 'http',
+      format: customFormat,
+      maxFiles: config.logging.maxFiles,
+      maxSize: config.logging.maxSize,
+      zippedArchive: true,
+      handleExceptions: false,
+      handleRejections: false
+    })
+  );
+} else {
+  // If file logging is disabled, ensure we have console logging
+  if (!transports.some(t => t instanceof winston.transports.Console)) {
+    transports.push(
+      new winston.transports.Console({
+        level: config.logging.level,
+        format: consoleFormat
+      })
+    );
+  }
+}
 
 // Create logger
 const logger = winston.createLogger({

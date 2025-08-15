@@ -5,7 +5,6 @@ import {
   CardContent,
   Typography,
   Box,
-  CircularProgress,
   LinearProgress,
   Chip,
   Table,
@@ -19,12 +18,9 @@ import {
   useMediaQuery,
   Alert,
   Skeleton,
-  Fade,
 } from '@mui/material';
 import {
-  Tv as TvIcon,
   Stream as StreamIcon,
-  Schedule as ScheduleIcon,
   Memory as MemoryIcon,
   Speed as SpeedIcon,
   Storage as StorageIcon,
@@ -32,9 +28,10 @@ import {
   Error as ErrorIcon,
 } from '@mui/icons-material';
 import { Chart as ChartJS, CategoryScale, LinearScale, PointElement, LineElement, Title, Tooltip, Legend, ArcElement } from 'chart.js';
-import { Line, Doughnut } from 'react-chartjs-2';
+import { Doughnut } from 'react-chartjs-2';
 import { format } from 'date-fns';
 import api from '../../services/api';
+import socketService from '../../services/socket';
 
 ChartJS.register(CategoryScale, LinearScale, PointElement, LineElement, Title, Tooltip, Legend, ArcElement);
 
@@ -50,12 +47,33 @@ function Dashboard() {
     fetchMetrics();
     fetchActiveStreams();
     
-    const interval = setInterval(() => {
-      fetchMetrics();
+    // Set up real-time updates via Socket.IO
+    const unsubscribeMetrics = socketService.on('metrics:update', (data) => {
+      setMetrics(data);
+    });
+
+    const unsubscribeStreamStart = socketService.on('stream:started', () => {
       fetchActiveStreams();
+    });
+
+    const unsubscribeStreamStop = socketService.on('stream:stopped', () => {
+      fetchActiveStreams();
+    });
+    
+    // Fallback polling for when socket is not connected
+    const interval = setInterval(() => {
+      if (!socketService.isConnected()) {
+        fetchMetrics();
+        fetchActiveStreams();
+      }
     }, 30000); // Update every 30 seconds
 
-    return () => clearInterval(interval);
+    return () => {
+      clearInterval(interval);
+      unsubscribeMetrics();
+      unsubscribeStreamStart();
+      unsubscribeStreamStop();
+    };
   }, []);
 
   const fetchMetrics = async () => {

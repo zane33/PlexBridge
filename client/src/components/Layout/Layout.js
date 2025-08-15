@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
+import socketService from '../../services/socket';
 import {
   AppBar,
   Box,
@@ -57,20 +58,35 @@ function Layout({ children }) {
   }, [isMobile, mobileOpen]);
 
   useEffect(() => {
-    // Monitor connection status
+    // Initialize Socket.IO connection
+    socketService.connect();
+
+    // Monitor connection status via Socket.IO
+    const unsubscribeConnection = socketService.on('connection', (data) => {
+      setConnectionStatus(data.status);
+    });
+
+    // Fallback health check
     const checkConnection = async () => {
       try {
         const response = await fetch('/health');
-        setConnectionStatus(response.ok ? 'connected' : 'error');
+        if (!socketService.isConnected()) {
+          setConnectionStatus(response.ok ? 'connected' : 'error');
+        }
       } catch (error) {
-        setConnectionStatus('disconnected');
+        if (!socketService.isConnected()) {
+          setConnectionStatus('disconnected');
+        }
       }
     };
 
     checkConnection();
     const interval = setInterval(checkConnection, 30000); // Check every 30 seconds
 
-    return () => clearInterval(interval);
+    return () => {
+      clearInterval(interval);
+      unsubscribeConnection();
+    };
   }, []);
 
   const handleDrawerToggle = () => {

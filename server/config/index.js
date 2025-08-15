@@ -1,6 +1,28 @@
 const path = require('path');
 const fs = require('fs');
 
+// Determine base data directory
+const getDataDir = () => {
+  // In Docker, use /data if it exists and is writable, otherwise use local data directory
+  const dockerDataDir = '/data';
+  const localDataDir = path.join(__dirname, '../../data');
+  
+  try {
+    if (fs.existsSync(dockerDataDir) && fs.statSync(dockerDataDir).isDirectory()) {
+      // Test if we can write to the directory
+      fs.accessSync(dockerDataDir, fs.constants.W_OK);
+      return dockerDataDir;
+    }
+  } catch (error) {
+    // Docker directory not accessible or not writable, fall back to local
+    console.log(`Docker data directory not accessible, using local: ${error.message}`);
+  }
+  
+  return localDataDir;
+};
+
+const dataDir = process.env.DATA_PATH || getDataDir();
+
 // Default configuration
 const defaultConfig = {
   server: {
@@ -9,7 +31,8 @@ const defaultConfig = {
     environment: process.env.NODE_ENV || 'development'
   },
   database: {
-    path: process.env.DB_PATH || path.join(__dirname, '../../data/database/plextv.db'),
+    // Ensure database path always uses the resolved data directory
+    path: process.env.DB_PATH || path.join(dataDir, 'database', 'plextv.db'),
     options: {
       busyTimeout: 30000,
       synchronous: 'NORMAL',
@@ -75,7 +98,7 @@ const defaultConfig = {
   },
   logging: {
     level: process.env.LOG_LEVEL || 'info',
-    path: process.env.LOG_PATH || path.join(__dirname, '../../data/logs'),
+    path: process.env.LOG_PATH || path.join(dataDir, 'logs'),
     maxFiles: parseInt(process.env.LOG_MAX_FILES) || 30,
     maxSize: process.env.LOG_MAX_SIZE || '100m'
   },
@@ -87,11 +110,11 @@ const defaultConfig = {
     rateLimitWindow: parseInt(process.env.RATE_LIMIT_WINDOW) || 900000 // 15 minutes
   },
   paths: {
-    data: process.env.DATA_PATH || path.join(__dirname, '../../data'),
-    cache: process.env.CACHE_PATH || path.join(__dirname, '../../data/cache'),
-    logs: process.env.LOG_PATH || path.join(__dirname, '../../data/logs'),
-    database: process.env.DB_PATH || path.join(__dirname, '../../data/database'),
-    logos: process.env.LOGOS_PATH || path.join(__dirname, '../../data/logos')
+    data: dataDir,
+    cache: process.env.CACHE_PATH || path.join(dataDir, 'cache'),
+    logs: process.env.LOG_PATH || path.join(dataDir, 'logs'),
+    database: process.env.DB_PATH || path.join(dataDir, 'database'),
+    logos: process.env.LOGOS_PATH || path.join(dataDir, 'logos')
   }
 };
 
@@ -150,15 +173,37 @@ function deepMerge(target, source) {
   return result;
 }
 
-// Create necessary directories
+// Create necessary directories with proper error handling
 function ensureDirectories(config) {
   const dirs = Object.values(config.paths);
   
   dirs.forEach(dir => {
-    if (!fs.existsSync(dir)) {
-      fs.mkdirSync(dir, { recursive: true });
+    try {
+      if (!fs.existsSync(dir)) {
+        fs.mkdirSync(dir, { recursive: true, mode: 0o755 });
+        console.log(`Created directory: ${dir}`);
+      }
+      
+      // Verify directory is writable
+      fs.accessSync(dir, fs.constants.W_OK);
+    } catch (error) {
+      console.error(`Failed to create/access directory ${dir}:`, error.message);
+      // Don't throw here, let the application try to start
+      // Services will handle individual directory failures
     }
   });
+  
+  // Also ensure the database directory specifically exists
+  const dbDir = path.dirname(config.database.path);
+  try {
+    if (!fs.existsSync(dbDir)) {
+      fs.mkdirSync(dbDir, { recursive: true, mode: 0o755 });
+      console.log(`Created database directory: ${dbDir}`);
+    }
+    fs.accessSync(dbDir, fs.constants.W_OK);
+  } catch (error) {
+    console.error(`Failed to create/access database directory ${dbDir}:`, error.message);
+  }
 }
 
 // Initialize configuration

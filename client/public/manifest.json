@@ -1,6 +1,7 @@
 {
-  "short_name": "PlexTV",
-  "name": "PlexTV - IPTV to Plex Bridge",
+  "short_name": "PlexBridge",
+  "name": "PlexBridge - IPTV to Plex Bridge Interface",
+  "description": "Web interface for managing IPTV streams, channels, and Electronic Program Guide for Plex integration",
   "icons": [
     {
       "src": "favicon.ico",
@@ -10,6 +11,9 @@
   ],
   "start_url": ".",
   "display": "standalone",
-  "theme_color": "#000000",
-  "background_color": "#ffffff"
+  "orientation": "portrait-primary",
+  "theme_color": "#1976d2",
+  "background_color": "#121212",
+  "categories": ["entertainment", "utilities"],
+  "lang": "en-US"
 }

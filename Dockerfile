@@ -55,11 +55,12 @@ RUN cd client && npm run build && \
 # Create supervisor configuration
 COPY supervisord.conf /etc/supervisord.conf
 
+# Copy startup script and make executable
+COPY start.sh /app/start.sh
+RUN chmod +x /app/start.sh
+
 # Set ownership of application files
 RUN chown -R plextv:plextv /app
-
-# Switch to non-root user
-USER plextv
 
 # Environment variables
 ENV NODE_ENV=production \
@@ -82,5 +83,5 @@ VOLUME ["/data"]
 # Use tini as init system
 ENTRYPOINT ["/sbin/tini", "--"]
 
-# Start both Redis and the application using supervisor
-CMD ["supervisord", "-c", "/etc/supervisord.conf"]
+# Start both Redis and the application using simple startup script
+CMD ["/app/start.sh"]

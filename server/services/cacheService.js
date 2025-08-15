@@ -14,16 +14,18 @@ class CacheService {
     }
 
     try {
-      // Create Redis client
+      // Create Redis client with shorter timeout for development
       this.client = redis.createClient({
         socket: {
           host: config.cache.host,
-          port: config.cache.port
+          port: config.cache.port,
+          connectTimeout: 5000,      // 5 second connection timeout
+          commandTimeout: 2000       // 2 second command timeout
         },
         password: config.cache.password,
         database: config.cache.db,
         retryDelayOnFailover: 100,
-        maxRetriesPerRequest: 3,
+        maxRetriesPerRequest: 1,     // Reduce retries for faster fallback
         lazyConnect: true
       });
 
@@ -47,12 +49,27 @@ class CacheService {
         this.isConnected = false;
       });
 
-      // Connect to Redis
-      await this.client.connect();
+      // Connect to Redis with timeout
+      const connectPromise = this.client.connect();
+      const timeoutPromise = new Promise((_, reject) => {
+        setTimeout(() => reject(new Error('Redis connection timeout')), 5000);
+      });
+      
+      await Promise.race([connectPromise, timeoutPromise]);
       
       return this.client;
     } catch (error) {
       logger.warn('Redis connection failed, falling back to memory cache:', error.message);
+      
+      // Clean up failed Redis client
+      if (this.client && typeof this.client.quit === 'function') {
+        try {
+          await this.client.quit();
+        } catch (cleanupError) {
+          // Ignore cleanup errors
+        }
+      }
+      
       // Fallback to in-memory cache if Redis is not available
       this.client = new MemoryCache();
       this.isConnected = true;

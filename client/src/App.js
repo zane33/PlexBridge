@@ -8,21 +8,48 @@ import StreamManager from './components/StreamManager/StreamManager';
 import EPGManager from './components/EPGManager/EPGManager';
 import LogViewer from './components/LogViewer/LogViewer';
 import Settings from './components/Settings/Settings';
+import ErrorBoundary from './components/ErrorBoundary/ErrorBoundary';
 
 function App() {
   return (
-    <Box sx={{ display: 'flex' }}>
-      <Layout>
-        <Routes>
-          <Route path="/" element={<Dashboard />} />
-          <Route path="/channels" element={<ChannelManager />} />
-          <Route path="/streams" element={<StreamManager />} />
-          <Route path="/epg" element={<EPGManager />} />
-          <Route path="/logs" element={<LogViewer />} />
-          <Route path="/settings" element={<Settings />} />
-        </Routes>
-      </Layout>
-    </Box>
+    <ErrorBoundary>
+      <Box sx={{ display: 'flex' }}>
+        <Layout>
+          <Routes>
+            <Route path="/" element={
+              <ErrorBoundary>
+                <Dashboard />
+              </ErrorBoundary>
+            } />
+            <Route path="/channels" element={
+              <ErrorBoundary>
+                <ChannelManager />
+              </ErrorBoundary>
+            } />
+            <Route path="/streams" element={
+              <ErrorBoundary>
+                <StreamManager />
+              </ErrorBoundary>
+            } />
+            <Route path="/epg" element={
+              <ErrorBoundary>
+                <EPGManager />
+              </ErrorBoundary>
+            } />
+            <Route path="/logs" element={
+              <ErrorBoundary>
+                <LogViewer />
+              </ErrorBoundary>
+            } />
+            <Route path="/settings" element={
+              <ErrorBoundary>
+                <Settings />
+              </ErrorBoundary>
+            } />
+          </Routes>
+        </Layout>
+      </Box>
+    </ErrorBoundary>
   );
 }
 

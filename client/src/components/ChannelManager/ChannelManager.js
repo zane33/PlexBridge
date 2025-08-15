@@ -67,7 +67,7 @@ function ChannelManager() {
 
   useEffect(() => {
     fetchChannels();
-  }, []);
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   const fetchChannels = async () => {
     try {
