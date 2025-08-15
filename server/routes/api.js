@@ -679,29 +679,37 @@ router.put('/epg/sources/:id', validate(epgSourceSchema), async (req, res) => {
 
 router.get('/epg/sources/:id/channels', async (req, res) => {
   try {
-    // Get all unique channel IDs from EPG programs with their actual names
+    // Get unique channel IDs with program counts and sample program info
     const availableChannels = await database.all(`
       SELECT DISTINCT 
         channel_id,
-        (SELECT channel_name FROM epg_programs ep2 
-         WHERE ep2.channel_id = ep.channel_id 
-         AND ep2.channel_name IS NOT NULL 
-         LIMIT 1) as channel_name,
-        COUNT(*) as program_count
-      FROM epg_programs ep
+        COUNT(*) as program_count,
+        MIN(title) as sample_program
+      FROM epg_programs
       WHERE channel_id IS NOT NULL
       GROUP BY channel_id
-      ORDER BY channel_name
+      ORDER BY program_count DESC
       LIMIT 100
     `);
 
-    res.json({
-      source_id: req.params.id,
-      available_channels: availableChannels.map(ch => ({
+    // Create a more readable channel name using the sample program
+    const channelsWithNames = availableChannels.map(ch => {
+      // Create a readable name using sample program and short ID
+      const shortId = ch.channel_id.split('-').pop().substring(0, 8);
+      const sampleProgram = ch.sample_program || 'Unknown';
+      const displayName = `${sampleProgram} (${shortId})`;
+      
+      return {
         epg_id: ch.channel_id,
         program_count: ch.program_count,
-        channel_name: ch.channel_name || ch.channel_id
-      }))
+        channel_name: displayName,
+        sample_program: ch.sample_program
+      };
+    });
+
+    res.json({
+      source_id: req.params.id,
+      available_channels: channelsWithNames
     });
   } catch (error) {
     console.error('EPG source channels error:', error);
@@ -733,9 +741,9 @@ router.get('/debug/epg', async (req, res) => {
     // Get distinct channel info
     const distinctChannels = await database.all(`
       SELECT DISTINCT 
-        channel_id, 
-        channel_name,
-        COUNT(*) as program_count 
+        channel_id,
+        COUNT(*) as program_count,
+        MIN(title) as sample_program
       FROM epg_programs 
       WHERE channel_id IS NOT NULL 
       GROUP BY channel_id 
