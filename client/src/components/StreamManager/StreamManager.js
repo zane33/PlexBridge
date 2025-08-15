@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback, useMemo } from 'react';
+import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import {
   Box,
   Typography,
@@ -98,6 +98,10 @@ function StreamManager() {
     auto_create_channels: true, // Default to true for M3U imports
     isM3UMode: false, // Track if this is an M3U import
   });
+  const [videoPlayerOpen, setVideoPlayerOpen] = useState(false);
+  const [currentStreamUrl, setCurrentStreamUrl] = useState('');
+  const videoRef = useRef(null);
+  const hlsRef = useRef(null);
   const [formData, setFormData] = useState({
     channel_id: '',
     name: '',
@@ -426,6 +430,132 @@ function StreamManager() {
     });
   };
 
+  const handleTestStream = (streamUrl, streamName) => {
+    setCurrentStreamUrl(streamUrl);
+    setVideoPlayerOpen(true);
+  };
+
+  const handleCloseVideoPlayer = () => {
+    // Clean up HLS instance
+    if (hlsRef.current) {
+      hlsRef.current.destroy();
+      hlsRef.current = null;
+    }
+    setVideoPlayerOpen(false);
+    setCurrentStreamUrl('');
+  };
+
+  // HLS.js setup effect
+  useEffect(() => {
+    if (videoPlayerOpen && currentStreamUrl && videoRef.current) {
+      const loadHLS = async () => {
+        try {
+          const Hls = (await import('hls.js')).default;
+          
+          if (Hls.isSupported()) {
+            // Clean up previous instance
+            if (hlsRef.current) {
+              hlsRef.current.destroy();
+            }
+            
+            const hls = new Hls({
+              enableWorker: true,
+              lowLatencyMode: true,
+              backBufferLength: 90
+            });
+            
+            hlsRef.current = hls;
+            
+            hls.loadSource(currentStreamUrl);
+            hls.attachMedia(videoRef.current);
+            
+            hls.on(Hls.Events.ERROR, (event, data) => {
+              console.error('HLS Error:', {
+                type: data.type,
+                details: data.details,
+                fatal: data.fatal,
+                url: data.url || currentStreamUrl,
+                reason: data.reason,
+                response: data.response
+              });
+              
+              if (data.fatal) {
+                switch (data.type) {
+                  case Hls.ErrorTypes.NETWORK_ERROR:
+                    let networkMessage = 'Network error loading stream';
+                    if (data.details === Hls.ErrorDetails.MANIFEST_LOAD_ERROR) {
+                      networkMessage = 'Failed to load stream playlist - check URL or CORS policy';
+                    } else if (data.details === Hls.ErrorDetails.MANIFEST_LOAD_TIMEOUT) {
+                      networkMessage = 'Stream playlist load timeout - server may be slow';
+                    } else if (data.response && data.response.code) {
+                      networkMessage = `HTTP ${data.response.code}: ${data.response.text || 'Network error'}`;
+                    }
+                    enqueueSnackbar(`${networkMessage}. Try external player options below.`, { 
+                      variant: 'error',
+                      autoHideDuration: 10000
+                    });
+                    break;
+                  case Hls.ErrorTypes.MEDIA_ERROR:
+                    enqueueSnackbar(`Media format error: ${data.details || 'Unsupported stream format'}. Try external player.`, { 
+                      variant: 'error',
+                      autoHideDuration: 8000
+                    });
+                    break;
+                  default:
+                    enqueueSnackbar(`Stream error: ${data.details || data.type || 'Unknown error'}. Use external player options below.`, { 
+                      variant: 'error',
+                      autoHideDuration: 8000
+                    });
+                    break;
+                }
+              } else {
+                // Non-fatal errors - just log them
+                console.warn('HLS non-fatal error:', data.details);
+              }
+            });
+            
+            hls.on(Hls.Events.MANIFEST_LOADED, () => {
+              enqueueSnackbar('Stream loaded successfully! 🎥', { variant: 'success' });
+            });
+            
+          } else if (videoRef.current.canPlayType('application/vnd.apple.mpegurl')) {
+            // Safari native HLS support
+            console.log('Using Safari native HLS support');
+            videoRef.current.src = currentStreamUrl;
+            videoRef.current.load();
+            enqueueSnackbar('Using Safari native HLS support', { variant: 'info' });
+          } else {
+            // Fallback for non-HLS streams or unsupported browsers
+            console.log('HLS not supported, trying direct video src');
+            if (currentStreamUrl.includes('.m3u8')) {
+              enqueueSnackbar('HLS streams not supported in this browser. Use external player links below.', { 
+                variant: 'warning',
+                autoHideDuration: 8000
+              });
+            } else {
+              // Try direct video loading for MP4, WebM, etc.
+              videoRef.current.src = currentStreamUrl;
+              videoRef.current.load();
+              enqueueSnackbar('Loading stream directly...', { variant: 'info' });
+            }
+          }
+        } catch (error) {
+          console.error('Error loading HLS:', error);
+          enqueueSnackbar('Error loading video player', { variant: 'error' });
+        }
+      };
+      
+      loadHLS();
+    }
+    
+    return () => {
+      if (hlsRef.current) {
+        hlsRef.current.destroy();
+        hlsRef.current = null;
+      }
+    };
+  }, [videoPlayerOpen, currentStreamUrl, enqueueSnackbar]);
+
   const renderSkeletonTable = () => (
     <TableContainer component={Paper}>
       <Table>
@@ -639,9 +769,9 @@ function StreamManager() {
                                 <EditIcon />
                               </IconButton>
                             </Tooltip>
-                            <Tooltip title="Preview Stream">
+                            <Tooltip title="Test Stream in Video Player">
                               <IconButton
-                                onClick={() => window.open(`/streams/preview/${stream.id}`, '_blank')}
+                                onClick={() => handleTestStream(stream.url, stream.name)}
                                 size="small"
                                 color="info"
                               >
@@ -835,11 +965,12 @@ function StreamManager() {
                 </FormControl>
                 <Button
                   variant="outlined"
-                  onClick={handleValidate}
-                  disabled={validating || saving || !formData.url.trim()}
-                  sx={{ minWidth: 100 }}
+                  onClick={() => formData.url.trim() && handleTestStream(formData.url, formData.name || 'Test Stream')}
+                  disabled={saving || !formData.url.trim()}
+                  sx={{ minWidth: 120 }}
                 >
-                  {validating ? <CircularProgress size={20} /> : 'Test'}
+                  <PreviewIcon sx={{ mr: 1 }} />
+                  Test in Player
                 </Button>
               </Box>
             </Grid>
@@ -1146,6 +1277,187 @@ function StreamManager() {
               {importing ? 'Importing...' : `Import ${parsedChannels.length} Channels`}
             </Button>
           )}
+        </DialogActions>
+      </Dialog>
+
+      {/* Video Player Dialog */}
+      <Dialog
+        open={videoPlayerOpen}
+        onClose={handleCloseVideoPlayer}
+        maxWidth="lg"
+        fullWidth
+        sx={{
+          '& .MuiDialog-paper': {
+            bgcolor: 'black',
+          }
+        }}
+      >
+        <DialogTitle sx={{ color: 'white', borderBottom: '1px solid #333' }}>
+          <Box display="flex" justifyContent="space-between" alignItems="center">
+            <Typography variant="h6">🎥 Stream Test Player</Typography>
+            <IconButton onClick={handleCloseVideoPlayer} sx={{ color: 'white' }}>
+              <CancelIcon />
+            </IconButton>
+          </Box>
+        </DialogTitle>
+        <DialogContent sx={{ p: 0, bgcolor: 'black' }}>
+          {currentStreamUrl && (
+            <Box sx={{ position: 'relative', width: '100%', height: '500px' }}>
+              <video
+                ref={videoRef}
+                controls
+                autoPlay
+                muted
+                style={{
+                  width: '100%',
+                  height: '100%',
+                  objectFit: 'contain'
+                }}
+                onError={(e) => {
+                  console.error('Video error:', e.nativeEvent);
+                  const error = e.nativeEvent;
+                  let errorMessage = 'Error loading stream';
+                  
+                  if (error && error.target && error.target.error) {
+                    switch (error.target.error.code) {
+                      case error.target.error.MEDIA_ERR_ABORTED:
+                        errorMessage = 'Stream loading was aborted';
+                        break;
+                      case error.target.error.MEDIA_ERR_NETWORK:
+                        errorMessage = 'Network error loading stream - may be CORS restricted';
+                        break;
+                      case error.target.error.MEDIA_ERR_DECODE:
+                        errorMessage = 'Stream decode error - unsupported format';
+                        break;
+                      case error.target.error.MEDIA_ERR_SRC_NOT_SUPPORTED:
+                        errorMessage = 'Stream format not supported by browser';
+                        break;
+                      default:
+                        errorMessage = 'Unknown stream error';
+                    }
+                  }
+                  
+                  enqueueSnackbar(`${errorMessage}. Try external player options below.`, { 
+                    variant: 'error',
+                    autoHideDuration: 6000
+                  });
+                }}
+                onLoadStart={() => {
+                  console.log('Video load started for:', currentStreamUrl);
+                }}
+                onCanPlay={() => {
+                  console.log('Video can play');
+                }}
+              >
+                {/* Don't add source elements for HLS - let HLS.js handle it */}
+                {!currentStreamUrl.includes('.m3u8') && (
+                  <source 
+                    src={currentStreamUrl} 
+                    type={currentStreamUrl.includes('.mp4') ? 'video/mp4' : 
+                          currentStreamUrl.includes('.webm') ? 'video/webm' : 
+                          currentStreamUrl.includes('.ogg') ? 'video/ogg' : 'video/mp4'} 
+                  />
+                )}
+                Your browser does not support the video tag or this stream format.
+              </video>
+              
+              {/* Stream Info Overlay */}
+              <Box
+                sx={{
+                  position: 'absolute',
+                  top: 16,
+                  left: 16,
+                  right: 16,
+                  bgcolor: 'rgba(0,0,0,0.7)',
+                  color: 'white',
+                  p: 2,
+                  borderRadius: 1,
+                  backdropFilter: 'blur(5px)'
+                }}
+              >
+                <Typography variant="body2" sx={{ wordBreak: 'break-all' }}>
+                  <strong>Stream URL:</strong> {currentStreamUrl}
+                </Typography>
+                <Box sx={{ mt: 1, display: 'flex', gap: 1 }}>
+                  <Chip 
+                    label={currentStreamUrl.includes('.m3u8') ? 'HLS' : 'Direct'} 
+                    size="small" 
+                    color="primary" 
+                  />
+                  <Button
+                    size="small"
+                    variant="outlined"
+                    onClick={() => {
+                      navigator.clipboard.writeText(currentStreamUrl);
+                      enqueueSnackbar('Stream URL copied! 📋', { variant: 'success' });
+                    }}
+                    sx={{ color: 'white', borderColor: 'white' }}
+                  >
+                    Copy URL
+                  </Button>
+                </Box>
+              </Box>
+            </Box>
+          )}
+        </DialogContent>
+        <DialogActions sx={{ bgcolor: 'black', borderTop: '1px solid #333', flexDirection: 'column', alignItems: 'stretch', gap: 2 }}>
+          <Alert severity="warning" sx={{ bgcolor: 'rgba(255,193,7,0.1)', color: 'white' }}>
+            <Typography variant="body2">
+              💡 <strong>Browser Playback Limitations:</strong> External M3U8 streams may not play due to CORS restrictions. 
+              Use the options below to test the stream in external players that handle CORS properly.
+            </Typography>
+          </Alert>
+          
+          <Box sx={{ display: 'flex', gap: 2, justifyContent: 'center', flexWrap: 'wrap' }}>
+            <Button
+              variant="outlined"
+              onClick={() => {
+                const vlcUrl = `vlc://${currentStreamUrl}`;
+                window.open(vlcUrl, '_blank');
+              }}
+              sx={{ color: 'white', borderColor: 'white' }}
+            >
+              📱 Open in VLC
+            </Button>
+            
+            <Button
+              variant="outlined"
+              onClick={() => {
+                const mpcUrl = `mpc-hc://${currentStreamUrl}`;
+                window.open(mpcUrl, '_blank');
+              }}
+              sx={{ color: 'white', borderColor: 'white' }}
+            >
+              🎬 Open in MPC-HC
+            </Button>
+            
+            <Button
+              variant="outlined"
+              onClick={() => {
+                navigator.clipboard.writeText(currentStreamUrl);
+                enqueueSnackbar('Stream URL copied! Paste into your video player 📋', { variant: 'success' });
+              }}
+              sx={{ color: 'white', borderColor: 'white' }}
+            >
+              📋 Copy URL
+            </Button>
+            
+            <Button
+              variant="outlined"
+              onClick={() => {
+                const proxyUrl = `${window.location.origin}/stream/${editingStream?.channel_id || 'test'}`;
+                navigator.clipboard.writeText(proxyUrl);
+                enqueueSnackbar('PlexBridge proxy URL copied! 📋', { variant: 'success' });
+              }}
+              sx={{ color: 'white', borderColor: 'white' }}
+            >
+              🔗 Copy Proxy URL
+            </Button>
+            
+            <Button onClick={handleCloseVideoPlayer} sx={{ color: 'white' }}>
+              Close
+            </Button>
+          </Box>
         </DialogActions>
       </Dialog>
     </Box>

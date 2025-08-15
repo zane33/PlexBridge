@@ -679,25 +679,30 @@ router.put('/epg/sources/:id', validate(epgSourceSchema), async (req, res) => {
 
 router.get('/epg/sources/:id/channels', async (req, res) => {
   try {
-    // Get unique channel IDs available in EPG data for this source
+    // Get all unique channel IDs from EPG programs
     const availableChannels = await database.all(`
-      SELECT DISTINCT p.channel_epg_id, COUNT(*) as program_count
-      FROM epg_programs p
-      WHERE p.source_id = ?
-      GROUP BY p.channel_epg_id
-      ORDER BY p.channel_epg_id
-    `, [req.params.id]);
+      SELECT DISTINCT 
+        channel_id,
+        channel_name,
+        COUNT(*) as program_count
+      FROM epg_programs
+      WHERE channel_id IS NOT NULL
+      GROUP BY channel_id, channel_name
+      ORDER BY channel_name
+      LIMIT 100
+    `);
 
     res.json({
       source_id: req.params.id,
       available_channels: availableChannels.map(ch => ({
-        epg_id: ch.channel_epg_id,
-        program_count: ch.program_count
+        epg_id: ch.channel_id,
+        program_count: ch.program_count,
+        channel_name: ch.channel_name
       }))
     });
   } catch (error) {
-    logger.error('EPG source channels error:', error);
-    res.status(500).json({ error: 'Failed to fetch EPG source channels' });
+    console.error('EPG source channels error:', error);
+    res.status(500).json({ error: error.message || 'Failed to fetch EPG source channels' });
   }
 });
 
@@ -710,6 +715,38 @@ router.delete('/epg/sources/:id', async (req, res) => {
   } catch (error) {
     logger.error('EPG source delete error:', error);
     res.status(500).json({ error: 'Failed to delete EPG source' });
+  }
+});
+
+// Debug EPG data endpoint
+router.get('/debug/epg', async (req, res) => {
+  try {
+    // Get table schema
+    const tableInfo = await database.all(`PRAGMA table_info(epg_programs)`);
+    
+    // Get sample EPG programs
+    const samplePrograms = await database.all(`SELECT * FROM epg_programs LIMIT 5`);
+    
+    // Get distinct channel info
+    const distinctChannels = await database.all(`
+      SELECT DISTINCT 
+        channel_id, 
+        channel_name,
+        COUNT(*) as program_count 
+      FROM epg_programs 
+      WHERE channel_id IS NOT NULL 
+      GROUP BY channel_id 
+      ORDER BY program_count DESC 
+      LIMIT 10
+    `);
+
+    res.json({
+      table_schema: tableInfo,
+      sample_programs: samplePrograms,
+      distinct_channels: distinctChannels
+    });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
   }
 });
 

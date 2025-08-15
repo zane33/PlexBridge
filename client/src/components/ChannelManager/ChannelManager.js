@@ -35,6 +35,9 @@ import {
   MenuItem,
   ListItemIcon,
   ListItemText,
+  FormControl,
+  InputLabel,
+  Select,
 } from '@mui/material';
 import {
   Add as AddIcon,
@@ -61,6 +64,7 @@ function ChannelManager() {
   const [bulkMenuAnchor, setBulkMenuAnchor] = useState(null);
   const [page, setPage] = useState(0);
   const [rowsPerPage, setRowsPerPage] = useState(10);
+  const [availableEpgIds, setAvailableEpgIds] = useState([]);
   const [formData, setFormData] = useState({
     name: '',
     number: '',
@@ -105,6 +109,58 @@ function ChannelManager() {
     }
   };
 
+  const fetchAvailableEpgIds = async () => {
+    try {
+      console.log('Fetching available EPG IDs...');
+      
+      // Get all available EPG IDs from all sources
+      const sourcesResponse = await api.get('/api/epg/sources');
+      const sources = sourcesResponse.data.filter(s => s && s.enabled);
+      console.log('Found EPG sources:', sources.length);
+      
+      let allEpgIds = [];
+      for (const source of sources) {
+        try {
+          console.log(`Fetching channels for source: ${source.name} (${source.id})`);
+          const channelsResponse = await api.get(`/api/epg/sources/${source.id}/channels`);
+          console.log('EPG channels response:', channelsResponse.data);
+          
+          if (channelsResponse.data && channelsResponse.data.available_channels) {
+            const sourceIds = channelsResponse.data.available_channels
+              .filter(ch => ch && ch.epg_id) // Only include valid channels with EPG IDs
+              .map(ch => ({
+                epg_id: ch.epg_id,
+                program_count: ch.program_count || 0,
+                source_name: source.name || 'Unknown Source',
+                channel_name: ch.channel_name || ch.epg_id
+              }));
+            console.log(`Found ${sourceIds.length} EPG IDs from source ${source.name}`);
+            allEpgIds.push(...sourceIds);
+          } else {
+            console.warn(`No available_channels found for source ${source.name}`);
+          }
+        } catch (error) {
+          console.error(`Failed to fetch EPG IDs for source ${source.name}:`, error.response?.data || error);
+          enqueueSnackbar(`Failed to load EPG data from ${source.name}`, { variant: 'warning' });
+        }
+      }
+      
+      console.log('Total EPG IDs found:', allEpgIds.length);
+      setAvailableEpgIds(allEpgIds);
+      
+      if (allEpgIds.length === 0) {
+        enqueueSnackbar('No EPG channel IDs found. Check EPG sources and refresh.', { 
+          variant: 'info',
+          autoHideDuration: 6000
+        });
+      }
+    } catch (error) {
+      console.error('Failed to fetch available EPG IDs:', error);
+      enqueueSnackbar('Failed to load EPG data. Check EPG sources.', { variant: 'error' });
+      setAvailableEpgIds([]); // Ensure we have an empty array on error
+    }
+  };
+
   const handleCreate = () => {
     setEditingChannel(null);
     setFormData({
@@ -115,6 +171,7 @@ function ChannelManager() {
       epg_id: '',
     });
     setDialogOpen(true);
+    fetchAvailableEpgIds();
   };
 
   const handleEdit = (channel) => {
@@ -127,6 +184,7 @@ function ChannelManager() {
       epg_id: channel.epg_id || '',
     });
     setDialogOpen(true);
+    fetchAvailableEpgIds();
   };
 
   const handleSave = async () => {
@@ -599,15 +657,41 @@ function ChannelManager() {
             </Grid>
             
             <Grid item xs={12}>
-              <TextField
-                label="EPG ID"
-                fullWidth
-                variant="outlined"
-                value={formData.epg_id}
-                onChange={(e) => handleInputChange('epg_id', e.target.value)}
-                helperText="Optional - Used to match EPG data from guide sources"
-                disabled={saving}
-              />
+              <FormControl fullWidth variant="outlined">
+                <InputLabel>EPG ID</InputLabel>
+                <Select
+                  value={formData.epg_id}
+                  onChange={(e) => handleInputChange('epg_id', e.target.value)}
+                  label="EPG ID"
+                  disabled={saving}
+                >
+                  <MenuItem value="">
+                    <em>No EPG</em>
+                  </MenuItem>
+                  {availableEpgIds.filter(epgData => epgData && epgData.epg_id).map((epgData, index) => (
+                    <MenuItem key={index} value={epgData.epg_id || ''}>
+                      <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                        <Typography>{epgData.epg_id || 'Unknown'}</Typography>
+                        <Chip 
+                          label={`${epgData.program_count || 0} programs`} 
+                          size="small" 
+                          color="primary" 
+                        />
+                        {epgData.source_name && (
+                          <Chip 
+                            label={epgData.source_name} 
+                            size="small" 
+                            variant="outlined" 
+                          />
+                        )}
+                      </Box>
+                    </MenuItem>
+                  ))}
+                </Select>
+                <Typography variant="caption" color="text.secondary" sx={{ mt: 1 }}>
+                  Optional - Used to match EPG data from guide sources
+                </Typography>
+              </FormControl>
             </Grid>
             
             <Grid item xs={12}>

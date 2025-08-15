@@ -131,27 +131,53 @@ function EPGManager() {
 
   const fetchAvailableEpgIds = async () => {
     try {
+      console.log('EPG Manager: Fetching available EPG IDs...');
+      
       // Get all available EPG IDs from all sources
       const sourcesResponse = await api.get('/api/epg/sources');
-      const sources = sourcesResponse.data.filter(s => s.enabled);
+      const sources = sourcesResponse.data.filter(s => s && s.enabled);
+      console.log('EPG Manager: Found EPG sources:', sources.length);
       
       let allEpgIds = [];
       for (const source of sources) {
         try {
+          console.log(`EPG Manager: Fetching channels for source: ${source.name} (${source.id})`);
           const channelsResponse = await api.get(`/api/epg/sources/${source.id}/channels`);
-          const sourceIds = channelsResponse.data.available_channels.map(ch => ({
-            ...ch,
-            source_name: source.name
-          }));
-          allEpgIds.push(...sourceIds);
+          console.log('EPG Manager: EPG channels response:', channelsResponse.data);
+          
+          if (channelsResponse.data && channelsResponse.data.available_channels) {
+            const sourceIds = channelsResponse.data.available_channels
+              .filter(ch => ch && ch.epg_id) // Only include valid channels with EPG IDs
+              .map(ch => ({
+                epg_id: ch.epg_id,
+                program_count: ch.program_count || 0,
+                source_name: source.name || 'Unknown Source',
+                channel_name: ch.channel_name || ch.epg_id
+              }));
+            console.log(`EPG Manager: Found ${sourceIds.length} EPG IDs from source ${source.name}`);
+            allEpgIds.push(...sourceIds);
+          } else {
+            console.warn(`EPG Manager: No available_channels found for source ${source.name}`);
+          }
         } catch (error) {
-          console.warn(`Failed to fetch EPG IDs for source ${source.name}:`, error);
+          console.error(`EPG Manager: Failed to fetch EPG IDs for source ${source.name}:`, error.response?.data || error);
+          enqueueSnackbar(`Failed to load EPG data from ${source.name}`, { variant: 'warning' });
         }
       }
       
+      console.log('EPG Manager: Total EPG IDs found:', allEpgIds.length);
       setAvailableEpgIds(allEpgIds);
+      
+      if (allEpgIds.length === 0) {
+        enqueueSnackbar('No EPG channel IDs found. Check EPG sources and refresh.', { 
+          variant: 'info',
+          autoHideDuration: 6000
+        });
+      }
     } catch (error) {
-      console.error('Failed to fetch available EPG IDs:', error);
+      console.error('EPG Manager: Failed to fetch available EPG IDs:', error);
+      enqueueSnackbar('Failed to load EPG data. Check EPG sources.', { variant: 'error' });
+      setAvailableEpgIds([]); // Ensure we have an empty array on error
     }
   };
 
@@ -645,13 +671,30 @@ function EPGManager() {
                         
                         {editingChannelEpg === channel.id ? (
                           <Box display="flex" alignItems="center" gap={1}>
-                            <TextField
-                              size="small"
-                              value={tempEpgId}
-                              onChange={(e) => setTempEpgId(e.target.value)}
-                              placeholder="Enter EPG ID"
-                              sx={{ width: 200 }}
-                            />
+                            <FormControl size="small" sx={{ width: 200 }}>
+                              <InputLabel>Select EPG ID</InputLabel>
+                              <Select
+                                value={tempEpgId}
+                                onChange={(e) => setTempEpgId(e.target.value)}
+                                label="Select EPG ID"
+                              >
+                                <MenuItem value="">
+                                  <em>No EPG</em>
+                                </MenuItem>
+                                {availableEpgIds.filter(epgData => epgData && epgData.epg_id).map((epgData, index) => (
+                                  <MenuItem key={index} value={epgData.epg_id || ''}>
+                                    {epgData.epg_id || 'Unknown'} ({epgData.program_count || 0} programs)
+                                    {epgData.source_name && (
+                                      <Chip 
+                                        label={epgData.source_name} 
+                                        size="small" 
+                                        sx={{ ml: 1 }} 
+                                      />
+                                    )}
+                                  </MenuItem>
+                                ))}
+                              </Select>
+                            </FormControl>
                             <IconButton 
                               size="small" 
                               color="primary" 
