@@ -54,6 +54,8 @@ import {
   ExpandMore as ExpandMoreIcon,
   Visibility as PreviewIcon,
   Settings as SettingsIcon,
+  CloudUpload as ImportIcon,
+  List as ListIcon,
 } from '@mui/icons-material';
 import { useSnackbar } from 'notistack';
 import api from '../../services/api';
@@ -82,6 +84,16 @@ function StreamManager() {
   const [selectedStreams, setSelectedStreams] = useState([]);
   const [page, setPage] = useState(0);
   const [rowsPerPage, setRowsPerPage] = useState(10);
+  const [importDialogOpen, setImportDialogOpen] = useState(false);
+  const [importing, setImporting] = useState(false);
+  const [parsedChannels, setParsedChannels] = useState([]);
+  const [importFormData, setImportFormData] = useState({
+    url: '',
+    type: 'hls',
+    auth_username: '',
+    auth_password: '',
+    auto_create_channels: false,
+  });
   const [formData, setFormData] = useState({
     channel_id: '',
     name: '',
@@ -293,6 +305,82 @@ function StreamManager() {
     );
   };
 
+  const handleImportOpen = () => {
+    setImportDialogOpen(true);
+    setParsedChannels([]);
+    setImportFormData({
+      url: '',
+      type: 'hls',
+      auth_username: '',
+      auth_password: '',
+      auto_create_channels: false,
+    });
+  };
+
+  const handleImportInputChange = useCallback((field, value) => {
+    setImportFormData(prev => ({
+      ...prev,
+      [field]: value
+    }));
+  }, []);
+
+  const handleParseChannels = async () => {
+    if (!importFormData.url.trim()) {
+      enqueueSnackbar('Please enter a stream source URL', { variant: 'warning' });
+      return;
+    }
+
+    setImporting(true);
+    try {
+      const response = await api.post('/api/streams/import', {
+        ...importFormData,
+        auto_create_channels: false // Just parse, don't create yet
+      });
+
+      setParsedChannels(response.data.channels || []);
+      enqueueSnackbar(`Found ${response.data.channelsFound} channels! 🎉`, { variant: 'success' });
+    } catch (error) {
+      const errorMessage = error.response?.data?.error || 'Failed to parse stream source';
+      enqueueSnackbar(errorMessage, { variant: 'error' });
+    } finally {
+      setImporting(false);
+    }
+  };
+
+  const handleImportChannels = async () => {
+    if (parsedChannels.length === 0) {
+      enqueueSnackbar('No channels to import', { variant: 'warning' });
+      return;
+    }
+
+    if (!importFormData.auto_create_channels) {
+      enqueueSnackbar('Please enable "Auto-create channels" to import', { variant: 'warning' });
+      return;
+    }
+
+    setImporting(true);
+    try {
+      const response = await api.post('/api/streams/import', {
+        ...importFormData,
+        auto_create_channels: true
+      });
+
+      enqueueSnackbar(
+        `Successfully imported ${response.data.channelsCreated} channels and ${response.data.streamsCreated} streams! 🎉`,
+        { variant: 'success' }
+      );
+      
+      setImportDialogOpen(false);
+      fetchStreams();
+      fetchChannels();
+    } catch (error) {
+      const errorMessage = error.response?.data?.error || 'Failed to import channels';
+      enqueueSnackbar(errorMessage, { variant: 'error' });
+    } finally {
+      setImporting(false);
+    }
+  };
+
   const renderSkeletonTable = () => (
     <TableContainer component={Paper}>
       <Table>
@@ -358,14 +446,25 @@ function StreamManager() {
           )}
           
           {!isMobile ? (
-            <Button
-              variant="contained"
-              startIcon={<AddIcon />}
-              onClick={handleCreate}
-              size="large"
-            >
-              Add Stream
-            </Button>
+            <>
+              <Button
+                variant="outlined"
+                startIcon={<ImportIcon />}
+                onClick={handleImportOpen}
+                size="large"
+                color="info"
+              >
+                Import M3U
+              </Button>
+              <Button
+                variant="contained"
+                startIcon={<AddIcon />}
+                onClick={handleCreate}
+                size="large"
+              >
+                Add Stream
+              </Button>
+            </>
           ) : (
             <Fab
               color="primary"
@@ -712,6 +811,223 @@ function StreamManager() {
           >
             {saving ? 'Saving...' : 'Save Stream'}
           </Button>
+        </DialogActions>
+      </Dialog>
+
+      {/* Multi-Channel Import Dialog */}
+      <Dialog 
+        open={importDialogOpen} 
+        onClose={() => !importing && setImportDialogOpen(false)}
+        maxWidth="lg" 
+        fullWidth
+        fullScreen={isMobile}
+      >
+        <DialogTitle>
+          <Typography variant="h5" component="div">
+            📺 Import Multiple Channels from Stream Source
+          </Typography>
+        </DialogTitle>
+        
+        <DialogContent>
+          <Alert severity="info" sx={{ mb: 2 }}>
+            <Typography variant="body2">
+              🎯 Import multiple channels from M3U playlists, XMLTV files, or other multi-channel sources.
+              This will automatically create channels and streams for each entry found.
+            </Typography>
+          </Alert>
+
+          <Grid container spacing={2} sx={{ mt: 1 }}>
+            <Grid item xs={12}>
+              <TextField
+                autoFocus
+                label="Stream Source URL *"
+                fullWidth
+                variant="outlined"
+                value={importFormData.url}
+                onChange={(e) => handleImportInputChange('url', e.target.value)}
+                disabled={importing}
+                placeholder="https://example.com/playlist.m3u8"
+                helperText="M3U playlist, XMLTV file, or other multi-channel source"
+              />
+            </Grid>
+            
+            <Grid item xs={12} sm={6}>
+              <FormControl fullWidth variant="outlined">
+                <InputLabel>Default Stream Type</InputLabel>
+                <Select
+                  value={importFormData.type}
+                  onChange={(e) => handleImportInputChange('type', e.target.value)}
+                  label="Default Stream Type"
+                  disabled={importing}
+                >
+                  {STREAM_TYPES.map((type) => (
+                    <MenuItem key={type.value} value={type.value}>
+                      {type.label}
+                    </MenuItem>
+                  ))}
+                </Select>
+              </FormControl>
+            </Grid>
+
+            <Grid item xs={12} sm={6}>
+              <Button
+                variant="outlined"
+                onClick={handleParseChannels}
+                disabled={importing || !importFormData.url.trim()}
+                fullWidth
+                size="large"
+                startIcon={importing ? <CircularProgress size={20} /> : <ListIcon />}
+              >
+                {importing ? 'Parsing...' : 'Parse Channels'}
+              </Button>
+            </Grid>
+            
+            <Grid item xs={12} sm={6}>
+              <TextField
+                label="Username"
+                fullWidth
+                variant="outlined"
+                value={importFormData.auth_username}
+                onChange={(e) => handleImportInputChange('auth_username', e.target.value)}
+                disabled={importing}
+                helperText="Optional - For authenticated sources"
+              />
+            </Grid>
+            <Grid item xs={12} sm={6}>
+              <TextField
+                label="Password"
+                type="password"
+                fullWidth
+                variant="outlined"
+                value={importFormData.auth_password}
+                onChange={(e) => handleImportInputChange('auth_password', e.target.value)}
+                disabled={importing}
+                helperText="Optional - For authenticated sources"
+              />
+            </Grid>
+
+            <Grid item xs={12}>
+              <FormControlLabel
+                control={
+                  <Switch
+                    checked={importFormData.auto_create_channels}
+                    onChange={(e) => handleImportInputChange('auto_create_channels', e.target.checked)}
+                    disabled={importing}
+                    color="success"
+                  />
+                }
+                label={
+                  <Typography variant="body1">
+                    {importFormData.auto_create_channels 
+                      ? '✅ Auto-create channels and streams' 
+                      : '🔍 Preview only (don\'t create yet)'
+                    }
+                  </Typography>
+                }
+              />
+            </Grid>
+
+            {parsedChannels.length > 0 && (
+              <Grid item xs={12}>
+                <Typography variant="h6" sx={{ mb: 2 }}>
+                  📋 Found {parsedChannels.length} Channels:
+                </Typography>
+                
+                <TableContainer component={Paper} sx={{ maxHeight: 300 }}>
+                  <Table stickyHeader size="small">
+                    <TableHead>
+                      <TableRow>
+                        <TableCell>Number</TableCell>
+                        <TableCell>Name</TableCell>
+                        <TableCell>Type</TableCell>
+                        <TableCell>URL</TableCell>
+                        <TableCell>EPG ID</TableCell>
+                      </TableRow>
+                    </TableHead>
+                    <TableBody>
+                      {parsedChannels.slice(0, 50).map((channel, index) => (
+                        <TableRow key={index} hover>
+                          <TableCell>{channel.number}</TableCell>
+                          <TableCell>
+                            <Box display="flex" alignItems="center" gap={1}>
+                              {channel.logo && (
+                                <img 
+                                  src={channel.logo} 
+                                  alt="" 
+                                  style={{ width: 24, height: 24, objectFit: 'contain' }}
+                                  onError={(e) => { e.target.style.display = 'none'; }}
+                                />
+                              )}
+                              <Typography variant="body2">{channel.name}</Typography>
+                            </Box>
+                          </TableCell>
+                          <TableCell>
+                            <Chip 
+                              label={channel.type?.toUpperCase()} 
+                              size="small" 
+                              color="primary" 
+                              variant="outlined" 
+                            />
+                          </TableCell>
+                          <TableCell>
+                            <Typography 
+                              variant="body2" 
+                              sx={{ 
+                                maxWidth: 200, 
+                                overflow: 'hidden', 
+                                textOverflow: 'ellipsis',
+                                whiteSpace: 'nowrap'
+                              }}
+                            >
+                              {channel.url}
+                            </Typography>
+                          </TableCell>
+                          <TableCell>
+                            <Typography variant="body2" color="text.secondary">
+                              {channel.epg_id || '-'}
+                            </Typography>
+                          </TableCell>
+                        </TableRow>
+                      ))}
+                      {parsedChannels.length > 50 && (
+                        <TableRow>
+                          <TableCell colSpan={5} align="center">
+                            <Typography variant="body2" color="text.secondary">
+                              ... and {parsedChannels.length - 50} more channels
+                            </Typography>
+                          </TableCell>
+                        </TableRow>
+                      )}
+                    </TableBody>
+                  </Table>
+                </TableContainer>
+              </Grid>
+            )}
+          </Grid>
+        </DialogContent>
+        
+        <DialogActions sx={{ p: 3, gap: 1 }}>
+          <Button 
+            onClick={() => setImportDialogOpen(false)}
+            disabled={importing}
+            startIcon={<CancelIcon />}
+            color="inherit"
+          >
+            Cancel
+          </Button>
+          
+          {parsedChannels.length > 0 && (
+            <Button 
+              onClick={handleImportChannels}
+              variant="contained"
+              disabled={importing || !importFormData.auto_create_channels}
+              startIcon={importing ? <CircularProgress size={20} /> : <ImportIcon />}
+              color="success"
+              size="large"
+            >
+              {importing ? 'Importing...' : `Import ${parsedChannels.length} Channels`}
+            </Button>
+          )}
         </DialogActions>
       </Dialog>
     </Box>

@@ -314,6 +314,257 @@ router.delete('/streams/:id', async (req, res) => {
   }
 });
 
+// Multi-channel stream import endpoint
+router.post('/streams/import', async (req, res) => {
+  try {
+    const { url, type, auth_username, auth_password, auto_create_channels = false } = req.body;
+
+    if (!url) {
+      return res.status(400).json({ error: 'URL is required' });
+    }
+
+    logger.info('Multi-channel stream import requested', { url, type });
+
+    // Parse the stream source for multiple channels
+    const channels = await parseStreamSource(url, type, { auth_username, auth_password });
+    
+    if (channels.length === 0) {
+      return res.status(400).json({ error: 'No channels found in the provided source' });
+    }
+
+    // If auto_create_channels is true, create channels and streams automatically
+    if (auto_create_channels) {
+      const createdChannels = [];
+      const createdStreams = [];
+
+      await database.transaction(async (db) => {
+        for (const channelData of channels) {
+          // Create channel
+          const channelId = uuidv4();
+          await db.run(`
+            INSERT INTO channels (id, name, number, enabled, logo, epg_id)
+            VALUES (?, ?, ?, ?, ?, ?)
+          `, [
+            channelId,
+            channelData.name,
+            channelData.number || createdChannels.length + 1,
+            true,
+            channelData.logo || null,
+            channelData.epg_id || null
+          ]);
+
+          createdChannels.push({ id: channelId, ...channelData });
+
+          // Create stream for this channel
+          const streamId = uuidv4();
+          await db.run(`
+            INSERT INTO streams (id, channel_id, name, url, type, backup_urls, auth_username, auth_password, headers, protocol_options, enabled)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          `, [
+            streamId,
+            channelId,
+            `${channelData.name} Stream`,
+            channelData.url,
+            channelData.type || type || 'hls',
+            JSON.stringify([]),
+            auth_username || null,
+            auth_password || null,
+            JSON.stringify({}),
+            JSON.stringify({}),
+            true
+          ]);
+
+          createdStreams.push({ id: streamId, channel_id: channelId, ...channelData });
+        }
+      });
+
+      // Clear channel lineup cache
+      await cacheService.del('lineup:channels');
+
+      logger.info('Multi-channel import completed', { 
+        channelsCreated: createdChannels.length,
+        streamsCreated: createdStreams.length
+      });
+
+      return res.json({
+        message: 'Import completed successfully',
+        channelsCreated: createdChannels.length,
+        streamsCreated: createdStreams.length,
+        channels: createdChannels,
+        streams: createdStreams
+      });
+    } else {
+      // Return parsed channels for review
+      return res.json({
+        message: 'Channels parsed successfully',
+        channelsFound: channels.length,
+        channels: channels.map(ch => ({
+          name: ch.name,
+          number: ch.number,
+          url: ch.url,
+          logo: ch.logo,
+          epg_id: ch.epg_id,
+          type: ch.type || type || 'hls'
+        }))
+      });
+    }
+
+  } catch (error) {
+    logger.error('Multi-channel stream import failed:', error);
+    res.status(500).json({ error: error.message || 'Import failed' });
+  }
+});
+
+// Stream source parser function
+async function parseStreamSource(url, type, auth = {}) {
+  const channels = [];
+
+  try {
+    // Fetch the source
+    const headers = { 'User-Agent': 'PlexTV/1.0' };
+    if (auth.auth_username) {
+      headers['Authorization'] = `Basic ${Buffer.from(`${auth.auth_username}:${auth.auth_password}`).toString('base64')}`;
+    }
+
+    const response = await require('axios').get(url, {
+      timeout: 30000,
+      headers
+    });
+
+    const content = response.data;
+
+    // Parse M3U/M3U8 playlists
+    if (content.includes('#EXTM3U') || url.toLowerCase().includes('.m3u')) {
+      return parseM3UPlaylist(content, url);
+    }
+
+    // Parse XMLTV (for channel info, not streams)
+    if (content.includes('<tv') && content.includes('<channel')) {
+      return parseXMLTVChannels(content);
+    }
+
+    // If it's a single stream, return as one channel
+    return [{
+      name: 'Imported Channel',
+      url: url,
+      type: type || 'hls',
+      number: 1
+    }];
+
+  } catch (error) {
+    logger.error('Stream source parsing failed:', { url, error: error.message });
+    throw new Error(`Failed to parse stream source: ${error.message}`);
+  }
+}
+
+// M3U playlist parser
+function parseM3UPlaylist(content, baseUrl) {
+  const channels = [];
+  const lines = content.split('\n').map(line => line.trim()).filter(line => line);
+  
+  let currentChannel = null;
+  let channelNumber = 1;
+
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+
+    if (line.startsWith('#EXTINF:')) {
+      // Parse channel info from EXTINF line
+      currentChannel = {
+        number: channelNumber++,
+        name: 'Unknown Channel',
+        logo: null,
+        epg_id: null,
+        group: null
+      };
+
+      // Extract channel name (after the comma)
+      const nameMatch = line.match(/,(.+)$/);
+      if (nameMatch) {
+        currentChannel.name = nameMatch[1].trim();
+      }
+
+      // Extract additional info from attributes
+      const logoMatch = line.match(/tvg-logo="([^"]+)"/);
+      if (logoMatch) {
+        currentChannel.logo = logoMatch[1];
+      }
+
+      const epgIdMatch = line.match(/tvg-id="([^"]+)"/);
+      if (epgIdMatch) {
+        currentChannel.epg_id = epgIdMatch[1];
+      }
+
+      const groupMatch = line.match(/group-title="([^"]+)"/);
+      if (groupMatch) {
+        currentChannel.group = groupMatch[1];
+      }
+
+      const numberMatch = line.match(/tvg-chno="([^"]+)"/);
+      if (numberMatch) {
+        currentChannel.number = parseInt(numberMatch[1]) || currentChannel.number;
+      }
+
+    } else if (currentChannel && line && !line.startsWith('#')) {
+      // This should be the stream URL
+      currentChannel.url = line;
+      
+      // Determine stream type from URL
+      if (line.includes('.m3u8')) {
+        currentChannel.type = 'hls';
+      } else if (line.includes('.mpd')) {
+        currentChannel.type = 'dash';
+      } else if (line.startsWith('rtsp://')) {
+        currentChannel.type = 'rtsp';
+      } else if (line.startsWith('rtmp://')) {
+        currentChannel.type = 'rtmp';
+      } else if (line.startsWith('udp://')) {
+        currentChannel.type = 'udp';
+      } else {
+        currentChannel.type = 'http';
+      }
+
+      channels.push(currentChannel);
+      currentChannel = null;
+    }
+  }
+
+  return channels;
+}
+
+// XMLTV channel parser (for channel metadata)
+function parseXMLTVChannels(content) {
+  const channels = [];
+  
+  try {
+    const xml2js = require('xml2js');
+    const parser = new xml2js.Parser({ explicitArray: false, ignoreAttrs: false });
+    
+    parser.parseString(content, (err, result) => {
+      if (err || !result.tv || !result.tv.channel) return;
+      
+      const xmlChannels = Array.isArray(result.tv.channel) ? result.tv.channel : [result.tv.channel];
+      
+      xmlChannels.forEach((channel, index) => {
+        if (channel.$ && channel.$.id) {
+          channels.push({
+            name: channel['display-name']?._ || channel['display-name'] || `Channel ${index + 1}`,
+            number: index + 1,
+            epg_id: channel.$.id,
+            logo: channel.icon?.$.src || null,
+            url: '', // XMLTV doesn't contain stream URLs
+            type: 'hls'
+          });
+        }
+      });
+    });
+  } catch (error) {
+    logger.error('XMLTV parsing failed:', error);
+  }
+
+  return channels;
+}
+
 // EPG API
 router.get('/epg', async (req, res) => {
   try {
