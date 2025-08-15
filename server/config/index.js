@@ -175,10 +175,23 @@ function deepMerge(target, source) {
 
 // Create necessary directories with proper error handling
 function ensureDirectories(config) {
+  // Only create actual directory paths, not file paths
   const dirs = Object.values(config.paths);
+  
+  // Also ensure the database directory specifically exists (extract directory from file path)
+  const dbDir = path.dirname(config.database.path);
+  if (!dirs.includes(dbDir)) {
+    dirs.push(dbDir);
+  }
   
   dirs.forEach(dir => {
     try {
+      // Skip if this looks like a file path (contains extension)
+      if (path.extname(dir)) {
+        console.warn(`Skipping file path in directory creation: ${dir}`);
+        return;
+      }
+      
       if (!fs.existsSync(dir)) {
         fs.mkdirSync(dir, { recursive: true, mode: 0o755 });
         console.log(`Created directory: ${dir}`);
@@ -193,8 +206,7 @@ function ensureDirectories(config) {
     }
   });
   
-  // Also ensure the database directory specifically exists
-  const dbDir = path.dirname(config.database.path);
+  // Ensure the database directory specifically exists
   try {
     if (!fs.existsSync(dbDir)) {
       fs.mkdirSync(dbDir, { recursive: true, mode: 0o755 });

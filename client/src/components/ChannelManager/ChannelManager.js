@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import {
   Box,
   Typography,
@@ -28,7 +28,6 @@ import {
   useMediaQuery,
   Tooltip,
   Fab,
-  Slide,
   Backdrop,
 } from '@mui/material';
 import {
@@ -60,10 +59,23 @@ function ChannelManager() {
   const theme = useTheme();
   const isMobile = useMediaQuery(theme.breakpoints.down('md'));
 
-  // Transition component for dialog
-  const Transition = React.forwardRef(function Transition(props, ref) {
-    return <Slide direction="up" ref={ref} {...props} />;
-  });
+  // Optimized form input handlers to prevent unnecessary re-renders
+  const handleInputChange = useCallback((field, value) => {
+    setFormData(prev => ({
+      ...prev,
+      [field]: value
+    }));
+  }, []);
+
+  // Memoized validation to prevent constant re-computation
+  const formValidation = useMemo(() => {
+    return {
+      nameError: !formData.name.trim(),
+      numberError: !formData.number,
+      nameHelperText: !formData.name.trim() ? "Channel name is required" : "",
+      numberHelperText: !formData.number ? "Number required" : ""
+    };
+  }, [formData.name, formData.number]);
 
   useEffect(() => {
     fetchChannels();
@@ -105,7 +117,7 @@ function ChannelManager() {
   };
 
   const handleSave = async () => {
-    if (!formData.name.trim() || !formData.number) {
+    if (formValidation.nameError || formValidation.numberError) {
       enqueueSnackbar('Please fill in all required fields', { variant: 'warning' });
       return;
     }
@@ -350,10 +362,18 @@ function ChannelManager() {
         maxWidth="sm" 
         fullWidth
         fullScreen={isMobile}
-        TransitionComponent={Transition}
         BackdropComponent={Backdrop}
         BackdropProps={{
           sx: { backgroundColor: 'rgba(0, 0, 0, 0.7)' }
+        }}
+        sx={{
+          '& .MuiDialog-paper': {
+            position: 'fixed',
+            top: '50%',
+            left: '50%',
+            transform: 'translate(-50%, -50%) !important',
+            transition: 'none !important'
+          }
         }}
       >
         <DialogTitle sx={{ pb: 1 }}>
@@ -371,9 +391,9 @@ function ChannelManager() {
                 fullWidth
                 variant="outlined"
                 value={formData.name}
-                onChange={(e) => setFormData({ ...formData, name: e.target.value })}
-                error={!formData.name.trim()}
-                helperText={!formData.name.trim() ? "Channel name is required" : ""}
+                onChange={(e) => handleInputChange('name', e.target.value)}
+                error={formValidation.nameError}
+                helperText={formValidation.nameHelperText}
                 disabled={saving}
               />
             </Grid>
@@ -385,9 +405,9 @@ function ChannelManager() {
                 fullWidth
                 variant="outlined"
                 value={formData.number}
-                onChange={(e) => setFormData({ ...formData, number: e.target.value })}
-                error={!formData.number}
-                helperText={!formData.number ? "Number required" : ""}
+                onChange={(e) => handleInputChange('number', e.target.value)}
+                error={formValidation.numberError}
+                helperText={formValidation.numberHelperText}
                 disabled={saving}
                 inputProps={{ min: 1, max: 9999 }}
               />
@@ -399,7 +419,7 @@ function ChannelManager() {
                 fullWidth
                 variant="outlined"
                 value={formData.epg_id}
-                onChange={(e) => setFormData({ ...formData, epg_id: e.target.value })}
+                onChange={(e) => handleInputChange('epg_id', e.target.value)}
                 helperText="Optional - Used to match EPG data from guide sources"
                 disabled={saving}
               />
@@ -411,7 +431,7 @@ function ChannelManager() {
                 fullWidth
                 variant="outlined"
                 value={formData.logo}
-                onChange={(e) => setFormData({ ...formData, logo: e.target.value })}
+                onChange={(e) => handleInputChange('logo', e.target.value)}
                 helperText="Optional - URL to channel logo image (PNG, JPG, SVG)"
                 disabled={saving}
               />
@@ -422,7 +442,7 @@ function ChannelManager() {
                 control={
                   <Switch
                     checked={formData.enabled}
-                    onChange={(e) => setFormData({ ...formData, enabled: e.target.checked })}
+                    onChange={(e) => handleInputChange('enabled', e.target.checked)}
                     disabled={saving}
                     color="success"
                   />
@@ -449,7 +469,7 @@ function ChannelManager() {
           <Button 
             onClick={handleSave} 
             variant="contained"
-            disabled={saving || !formData.name.trim() || !formData.number}
+            disabled={saving || formValidation.nameError || formValidation.numberError}
             startIcon={saving ? <CircularProgress size={20} /> : <SaveIcon />}
             color="primary"
             size="large"
