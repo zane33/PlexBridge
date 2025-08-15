@@ -86,6 +86,9 @@ function EPGManager() {
   const [deleting, setDeleting] = useState(null);
   const [refreshing, setRefreshing] = useState(null);
   const [epgStatus, setEpgStatus] = useState(null);
+  const [availableEpgIds, setAvailableEpgIds] = useState([]);
+  const [editingChannelEpg, setEditingChannelEpg] = useState(null);
+  const [tempEpgId, setTempEpgId] = useState('');
   const [formData, setFormData] = useState({
     name: '',
     url: '',
@@ -121,8 +124,36 @@ function EPGManager() {
   useEffect(() => {
     if (activeTab === 1) {
       fetchEpgPrograms();
+    } else if (activeTab === 2) {
+      fetchAvailableEpgIds();
     }
   }, [activeTab]);
+
+  const fetchAvailableEpgIds = async () => {
+    try {
+      // Get all available EPG IDs from all sources
+      const sourcesResponse = await api.get('/api/epg/sources');
+      const sources = sourcesResponse.data.filter(s => s.enabled);
+      
+      let allEpgIds = [];
+      for (const source of sources) {
+        try {
+          const channelsResponse = await api.get(`/api/epg/sources/${source.id}/channels`);
+          const sourceIds = channelsResponse.data.available_channels.map(ch => ({
+            ...ch,
+            source_name: source.name
+          }));
+          allEpgIds.push(...sourceIds);
+        } catch (error) {
+          console.warn(`Failed to fetch EPG IDs for source ${source.name}:`, error);
+        }
+      }
+      
+      setAvailableEpgIds(allEpgIds);
+    } catch (error) {
+      console.error('Failed to fetch available EPG IDs:', error);
+    }
+  };
 
   const fetchEpgSources = async () => {
     try {
@@ -257,6 +288,33 @@ function EPGManager() {
     } finally {
       setRefreshing(null);
     }
+  };
+
+  const handleEpgIdEdit = (channel) => {
+    setEditingChannelEpg(channel.id);
+    setTempEpgId(channel.epg_id || '');
+  };
+
+  const handleEpgIdSave = async (channelId) => {
+    try {
+      const channel = channels.find(c => c.id === channelId);
+      await api.put(`/api/channels/${channelId}`, {
+        ...channel,
+        epg_id: tempEpgId.trim() || null
+      });
+      
+      enqueueSnackbar('EPG ID updated successfully! 🎉', { variant: 'success' });
+      setEditingChannelEpg(null);
+      setTempEpgId('');
+      fetchChannels();
+    } catch (error) {
+      enqueueSnackbar('Failed to update EPG ID', { variant: 'error' });
+    }
+  };
+
+  const handleEpgIdCancel = () => {
+    setEditingChannelEpg(null);
+    setTempEpgId('');
   };
 
   const renderSkeletonTable = () => (
@@ -542,9 +600,32 @@ function EPGManager() {
       <Alert severity="info" sx={{ mb: 2 }}>
         <Typography variant="body2">
           🔗 Map your channels to EPG IDs from your XMLTV sources to get program guide data.
-          EPG IDs should match the channel IDs in your XMLTV files.
+          Click the EPG ID chip to edit inline. Available EPG IDs are shown below.
         </Typography>
       </Alert>
+
+      {availableEpgIds.length > 0 && (
+        <Card sx={{ mb: 2 }}>
+          <CardContent>
+            <Typography variant="subtitle1" fontWeight="bold" mb={1}>
+              📺 Available EPG IDs from Sources:
+            </Typography>
+            <Box display="flex" flexWrap="wrap" gap={1}>
+              {availableEpgIds.map((epgData, index) => (
+                <Chip
+                  key={index}
+                  label={`${epgData.epg_id} (${epgData.program_count} programs)`}
+                  size="small"
+                  color="primary"
+                  variant="outlined"
+                  onClick={() => setTempEpgId(epgData.epg_id)}
+                  sx={{ cursor: 'pointer' }}
+                />
+              ))}
+            </Box>
+          </CardContent>
+        </Card>
+      )}
 
       <Card>
         <CardContent>
@@ -561,19 +642,38 @@ function EPGManager() {
                         <Typography variant="subtitle1" fontWeight="bold">
                           {channel.number} - {channel.name}
                         </Typography>
-                        {channel.epg_id ? (
-                          <Chip 
-                            label={`EPG: ${channel.epg_id}`} 
-                            size="small" 
-                            color="success" 
-                            variant="outlined"
-                          />
+                        
+                        {editingChannelEpg === channel.id ? (
+                          <Box display="flex" alignItems="center" gap={1}>
+                            <TextField
+                              size="small"
+                              value={tempEpgId}
+                              onChange={(e) => setTempEpgId(e.target.value)}
+                              placeholder="Enter EPG ID"
+                              sx={{ width: 200 }}
+                            />
+                            <IconButton 
+                              size="small" 
+                              color="primary" 
+                              onClick={() => handleEpgIdSave(channel.id)}
+                            >
+                              <SaveIcon />
+                            </IconButton>
+                            <IconButton 
+                              size="small" 
+                              onClick={handleEpgIdCancel}
+                            >
+                              <CancelIcon />
+                            </IconButton>
+                          </Box>
                         ) : (
                           <Chip 
-                            label="No EPG ID" 
+                            label={channel.epg_id ? `EPG: ${channel.epg_id}` : 'Set EPG ID'} 
                             size="small" 
-                            color="default" 
+                            color={channel.epg_id ? 'success' : 'default'}
                             variant="outlined"
+                            onClick={() => handleEpgIdEdit(channel)}
+                            sx={{ cursor: 'pointer' }}
                           />
                         )}
                       </Box>
@@ -581,8 +681,8 @@ function EPGManager() {
                     secondary={
                       <Typography variant="body2" color="text.secondary">
                         {channel.epg_id 
-                          ? 'Channel is mapped to EPG data'
-                          : 'Click edit in Channel Manager to set EPG ID'
+                          ? 'Channel is mapped to EPG data - click chip to edit'
+                          : 'Click chip to assign EPG ID from your sources'
                         }
                       </Typography>
                     }

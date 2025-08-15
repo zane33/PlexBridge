@@ -638,6 +638,54 @@ router.post('/epg/sources', validate(epgSourceSchema), async (req, res) => {
   }
 });
 
+router.put('/epg/sources/:id', validate(epgSourceSchema), async (req, res) => {
+  try {
+    const data = req.validatedBody;
+    
+    const result = await database.run(`
+      UPDATE epg_sources 
+      SET name = ?, url = ?, refresh_interval = ?, enabled = ?
+      WHERE id = ?
+    `, [data.name, data.url, data.refresh_interval, data.enabled, req.params.id]);
+
+    if (result.changes === 0) {
+      return res.status(404).json({ error: 'EPG source not found' });
+    }
+
+    const source = await database.get('SELECT * FROM epg_sources WHERE id = ?', [req.params.id]);
+    
+    logger.info('EPG source updated', { id: req.params.id, name: data.name });
+    res.json(source);
+  } catch (error) {
+    logger.error('EPG source update error:', error);
+    res.status(500).json({ error: 'Failed to update EPG source' });
+  }
+});
+
+router.get('/epg/sources/:id/channels', async (req, res) => {
+  try {
+    // Get unique channel IDs available in EPG data for this source
+    const availableChannels = await database.all(`
+      SELECT DISTINCT p.channel_epg_id, COUNT(*) as program_count
+      FROM epg_programs p
+      WHERE p.source_id = ?
+      GROUP BY p.channel_epg_id
+      ORDER BY p.channel_epg_id
+    `, [req.params.id]);
+
+    res.json({
+      source_id: req.params.id,
+      available_channels: availableChannels.map(ch => ({
+        epg_id: ch.channel_epg_id,
+        program_count: ch.program_count
+      }))
+    });
+  } catch (error) {
+    logger.error('EPG source channels error:', error);
+    res.status(500).json({ error: 'Failed to fetch EPG source channels' });
+  }
+});
+
 router.delete('/epg/sources/:id', async (req, res) => {
   try {
     await epgService.removeSource(req.params.id);

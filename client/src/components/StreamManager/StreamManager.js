@@ -69,6 +69,7 @@ const STREAM_TYPES = [
   { value: 'http', label: 'HTTP' },
   { value: 'mms', label: 'MMS' },
   { value: 'srt', label: 'SRT' },
+  { value: 'm3u_playlist', label: 'M3U Playlist (Auto-create channels)' },
 ];
 
 function StreamManager() {
@@ -118,15 +119,16 @@ function StreamManager() {
   }, []);
 
   const formValidation = useMemo(() => {
+    const isM3UPlaylist = formData.type === 'm3u_playlist';
     return {
       nameError: !formData.name.trim(),
       urlError: !formData.url.trim(),
-      channelError: !formData.channel_id,
+      channelError: !isM3UPlaylist && !formData.channel_id,
       nameHelperText: !formData.name.trim() ? "Stream name is required" : "",
       urlHelperText: !formData.url.trim() ? "Stream URL is required" : "",
-      channelHelperText: !formData.channel_id ? "Channel selection is required" : ""
+      channelHelperText: !isM3UPlaylist && !formData.channel_id ? "Channel selection is required" : ""
     };
-  }, [formData.name, formData.url, formData.channel_id]);
+  }, [formData.name, formData.url, formData.channel_id, formData.type]);
 
   useEffect(() => {
     fetchStreams();
@@ -228,6 +230,21 @@ function StreamManager() {
   const handleSave = async () => {
     if (formValidation.nameError || formValidation.urlError || formValidation.channelError) {
       enqueueSnackbar('Please fill in all required fields', { variant: 'warning' });
+      return;
+    }
+
+    // If M3U playlist type is selected, redirect to import functionality
+    if (formData.type === 'm3u_playlist' && !editingStream) {
+      setDialogOpen(false);
+      setImportFormData({
+        url: formData.url.trim(),
+        type: formData.type.startsWith('m3u') ? 'hls' : formData.type, // Default to HLS for M3U
+        auth_username: formData.auth_username || '',
+        auth_password: formData.auth_password || '',
+        auto_create_channels: true, // Enable by default for M3U imports
+      });
+      setImportDialogOpen(true);
+      enqueueSnackbar('M3U import ready - auto-create is enabled to import all channels', { variant: 'success' });
       return;
     }
 
@@ -337,11 +354,18 @@ function StreamManager() {
         auto_create_channels: false // Just parse, don't create yet
       });
 
-      setParsedChannels(response.data.channels || []);
-      enqueueSnackbar(`Found ${response.data.channelsFound} channels! 🎉`, { variant: 'success' });
+      const channels = response.data.channels || [];
+      setParsedChannels(channels);
+      
+      if (channels.length > 0) {
+        enqueueSnackbar(`Found ${channels.length} channels! 🎉`, { variant: 'success' });
+      } else {
+        enqueueSnackbar('No channels found in the source', { variant: 'warning' });
+      }
     } catch (error) {
       const errorMessage = error.response?.data?.error || 'Failed to parse stream source';
       enqueueSnackbar(errorMessage, { variant: 'error' });
+      console.error('Parse error:', error);
     } finally {
       setImporting(false);
     }
@@ -365,17 +389,22 @@ function StreamManager() {
         auto_create_channels: true
       });
 
+      const channelsCreated = response.data.channelsCreated || 0;
+      const streamsCreated = response.data.streamsCreated || 0;
+
       enqueueSnackbar(
-        `Successfully imported ${response.data.channelsCreated} channels and ${response.data.streamsCreated} streams! 🎉`,
+        `Successfully imported ${channelsCreated} channels and ${streamsCreated} streams! 🎉`,
         { variant: 'success' }
       );
       
       setImportDialogOpen(false);
+      setParsedChannels([]);
       fetchStreams();
       fetchChannels();
     } catch (error) {
       const errorMessage = error.response?.data?.error || 'Failed to import channels';
       enqueueSnackbar(errorMessage, { variant: 'error' });
+      console.error('Import error:', error);
     } finally {
       setImporting(false);
     }
@@ -679,18 +708,26 @@ function StreamManager() {
             
             <Grid item xs={12} sm={4}>
               <FormControl fullWidth variant="outlined" error={formValidation.channelError}>
-                <InputLabel>Channel *</InputLabel>
+                <InputLabel>
+                  {formData.type === 'm3u_playlist' ? 'Channel (Optional for M3U)' : 'Channel *'}
+                </InputLabel>
                 <Select
                   value={formData.channel_id}
                   onChange={(e) => handleInputChange('channel_id', e.target.value)}
-                  label="Channel *"
-                  disabled={saving}
+                  label={formData.type === 'm3u_playlist' ? 'Channel (Optional for M3U)' : 'Channel *'}
+                  disabled={saving || formData.type === 'm3u_playlist'}
                 >
-                  {channels.map((channel) => (
-                    <MenuItem key={channel.id} value={channel.id}>
-                      {channel.number} - {channel.name}
+                  {formData.type === 'm3u_playlist' ? (
+                    <MenuItem value="" disabled>
+                      M3U will auto-create channels
                     </MenuItem>
-                  ))}
+                  ) : (
+                    channels.map((channel) => (
+                      <MenuItem key={channel.id} value={channel.id}>
+                        {channel.number} - {channel.name}
+                      </MenuItem>
+                    ))
+                  )}
                 </Select>
               </FormControl>
             </Grid>
