@@ -29,6 +29,12 @@ import {
   Tooltip,
   Fab,
   Backdrop,
+  Checkbox,
+  TablePagination,
+  Menu,
+  MenuItem,
+  ListItemIcon,
+  ListItemText,
 } from '@mui/material';
 import {
   Add as AddIcon,
@@ -37,6 +43,9 @@ import {
   Tv as TvIcon,
   Save as SaveIcon,
   Cancel as CancelIcon,
+  CheckBox as CheckBoxIcon,
+  CheckBoxOutlineBlank as CheckBoxOutlineBlankIcon,
+  PlayArrow as StreamIcon,
 } from '@mui/icons-material';
 import { useSnackbar } from 'notistack';
 import api from '../../services/api';
@@ -48,6 +57,10 @@ function ChannelManager() {
   const [editingChannel, setEditingChannel] = useState(null);
   const [saving, setSaving] = useState(false);
   const [deleting, setDeleting] = useState(null);
+  const [selectedChannels, setSelectedChannels] = useState([]);
+  const [bulkMenuAnchor, setBulkMenuAnchor] = useState(null);
+  const [page, setPage] = useState(0);
+  const [rowsPerPage, setRowsPerPage] = useState(10);
   const [formData, setFormData] = useState({
     name: '',
     number: '',
@@ -178,11 +191,99 @@ function ChannelManager() {
     }
   };
 
+  const handleSelectAll = (event) => {
+    if (event.target.checked) {
+      setSelectedChannels(channels.map(channel => channel.id));
+    } else {
+      setSelectedChannels([]);
+    }
+  };
+
+  const handleSelectChannel = (channelId) => {
+    setSelectedChannels(prev => 
+      prev.includes(channelId) 
+        ? prev.filter(id => id !== channelId)
+        : [...prev, channelId]
+    );
+  };
+
+  const handleBulkAction = (action) => {
+    setBulkMenuAnchor(null);
+    
+    if (selectedChannels.length === 0) {
+      enqueueSnackbar('No channels selected', { variant: 'warning' });
+      return;
+    }
+
+    switch (action) {
+      case 'enable':
+        handleBulkEnable(true);
+        break;
+      case 'disable':
+        handleBulkEnable(false);
+        break;
+      case 'delete':
+        handleBulkDelete();
+        break;
+      default:
+        break;
+    }
+  };
+
+  const handleBulkEnable = async (enabled) => {
+    const action = enabled ? 'enable' : 'disable';
+    
+    if (window.confirm(`Are you sure you want to ${action} ${selectedChannels.length} selected channels?`)) {
+      try {
+        await Promise.all(
+          selectedChannels.map(async (channelId) => {
+            const channel = channels.find(c => c.id === channelId);
+            if (channel) {
+              await api.put(`/api/channels/${channelId}`, {
+                ...channel,
+                enabled
+              });
+            }
+          })
+        );
+        
+        enqueueSnackbar(`${selectedChannels.length} channels ${action}d successfully! 🎉`, { 
+          variant: 'success' 
+        });
+        setSelectedChannels([]);
+        fetchChannels();
+      } catch (error) {
+        enqueueSnackbar(`Failed to ${action} some channels`, { variant: 'error' });
+      }
+    }
+  };
+
+  const handleBulkDelete = async () => {
+    if (window.confirm(`Are you sure you want to delete ${selectedChannels.length} selected channels? This action cannot be undone.`)) {
+      try {
+        await Promise.all(
+          selectedChannels.map(channelId => api.delete(`/api/channels/${channelId}`))
+        );
+        
+        enqueueSnackbar(`${selectedChannels.length} channels deleted successfully! 🗑️`, { 
+          variant: 'success' 
+        });
+        setSelectedChannels([]);
+        fetchChannels();
+      } catch (error) {
+        enqueueSnackbar('Failed to delete some channels', { variant: 'error' });
+      }
+    }
+  };
+
   const renderSkeletonTable = () => (
     <TableContainer component={Paper}>
       <Table>
         <TableHead>
           <TableRow>
+            <TableCell padding="checkbox">
+              <Skeleton width={24} height={24} />
+            </TableCell>
             <TableCell>Number</TableCell>
             <TableCell>Name</TableCell>
             <TableCell>EPG ID</TableCell>
@@ -194,6 +295,9 @@ function ChannelManager() {
         <TableBody>
           {[...Array(5)].map((_, index) => (
             <TableRow key={index}>
+              <TableCell padding="checkbox">
+                <Skeleton width={24} height={24} />
+              </TableCell>
               <TableCell><Skeleton width={40} /></TableCell>
               <TableCell><Skeleton width={120} /></TableCell>
               <TableCell><Skeleton width={80} /></TableCell>
@@ -206,6 +310,8 @@ function ChannelManager() {
       </Table>
     </TableContainer>
   );
+
+  const paginatedChannels = channels.slice(page * rowsPerPage, page * rowsPerPage + rowsPerPage);
 
   return (
     <Box>
@@ -221,30 +327,42 @@ function ChannelManager() {
           Channel Manager
         </Typography>
         
-        {!isMobile ? (
-          <Button
-            variant="contained"
-            startIcon={<AddIcon />}
-            onClick={handleCreate}
-            size="large"
-          >
-            Add Channel
-          </Button>
-        ) : (
-          <Fab
-            color="primary"
-            aria-label="add"
-            onClick={handleCreate}
-            sx={{
-              position: 'fixed',
-              bottom: 16,
-              right: 16,
-              zIndex: 1000,
-            }}
-          >
-            <AddIcon />
-          </Fab>
-        )}
+        <Box display="flex" gap={1} flexWrap="wrap">
+          {selectedChannels.length > 0 && (
+            <Button
+              variant="outlined"
+              onClick={(e) => setBulkMenuAnchor(e.currentTarget)}
+              size={isMobile ? "small" : "medium"}
+            >
+              Bulk Actions ({selectedChannels.length})
+            </Button>
+          )}
+          
+          {!isMobile ? (
+            <Button
+              variant="contained"
+              startIcon={<AddIcon />}
+              onClick={handleCreate}
+              size="large"
+            >
+              Add Channel
+            </Button>
+          ) : (
+            <Fab
+              color="primary"
+              aria-label="add"
+              onClick={handleCreate}
+              sx={{
+                position: 'fixed',
+                bottom: 16,
+                right: 16,
+                zIndex: 1000,
+              }}
+            >
+              <AddIcon />
+            </Fab>
+          )}
+        </Box>
       </Box>
 
       <Card>
@@ -260,6 +378,13 @@ function ChannelManager() {
               <Table stickyHeader={isMobile}>
                 <TableHead>
                   <TableRow>
+                    <TableCell padding="checkbox">
+                      <Checkbox
+                        indeterminate={selectedChannels.length > 0 && selectedChannels.length < channels.length}
+                        checked={channels.length > 0 && selectedChannels.length === channels.length}
+                        onChange={handleSelectAll}
+                      />
+                    </TableCell>
                     <TableCell sx={{ minWidth: 60 }}>Number</TableCell>
                     <TableCell sx={{ minWidth: 150 }}>Name</TableCell>
                     <TableCell sx={{ minWidth: 100, display: { xs: 'none', sm: 'table-cell' } }}>EPG ID</TableCell>
@@ -269,8 +394,14 @@ function ChannelManager() {
                   </TableRow>
                 </TableHead>
                 <TableBody>
-                  {channels.map((channel) => (
+                  {paginatedChannels.map((channel) => (
                     <TableRow key={channel.id} hover>
+                      <TableCell padding="checkbox">
+                        <Checkbox
+                          checked={selectedChannels.includes(channel.id)}
+                          onChange={() => handleSelectChannel(channel.id)}
+                        />
+                      </TableCell>
                       <TableCell>
                         <Typography variant="body2" fontWeight="bold">
                           {channel.number}
@@ -290,12 +421,25 @@ function ChannelManager() {
                         </Typography>
                       </TableCell>
                       <TableCell>
-                        <Chip
-                          label={channel.stream_count || 0}
-                          size="small"
-                          color={channel.stream_count > 0 ? 'primary' : 'default'}
-                          variant="outlined"
-                        />
+                        <Box display="flex" alignItems="center" gap={1}>
+                          <Chip
+                            label={channel.stream_count || 0}
+                            size="small"
+                            color={channel.stream_count > 0 ? 'primary' : 'default'}
+                            variant="outlined"
+                          />
+                          {channel.stream_count > 0 && (
+                            <Tooltip title="Manage Streams">
+                              <IconButton 
+                                onClick={() => window.location.href = `/streams?channel=${channel.id}`}
+                                size="small"
+                                color="info"
+                              >
+                                <StreamIcon />
+                              </IconButton>
+                            </Tooltip>
+                          )}
+                        </Box>
                       </TableCell>
                       <TableCell>
                         <Chip
@@ -335,7 +479,7 @@ function ChannelManager() {
                   ))}
                   {channels.length === 0 && !loading && (
                     <TableRow>
-                      <TableCell colSpan={6} align="center" sx={{ py: 8 }}>
+                      <TableCell colSpan={7} align="center" sx={{ py: 8 }}>
                         <Box display="flex" flexDirection="column" alignItems="center" gap={2}>
                           <TvIcon sx={{ fontSize: 64, color: 'text.disabled' }} />
                           <Typography variant="h6" color="text.secondary">
@@ -352,8 +496,49 @@ function ChannelManager() {
               </Table>
             </TableContainer>
           )}
+          
+          {!loading && channels.length > 0 && (
+            <TablePagination
+              component="div"
+              count={channels.length}
+              page={page}
+              onPageChange={(event, newPage) => setPage(newPage)}
+              rowsPerPage={rowsPerPage}
+              onRowsPerPageChange={(event) => {
+                setRowsPerPage(parseInt(event.target.value, 10));
+                setPage(0);
+              }}
+              rowsPerPageOptions={[5, 10, 25, 50]}
+            />
+          )}
         </CardContent>
       </Card>
+
+      {/* Bulk Actions Menu */}
+      <Menu
+        anchorEl={bulkMenuAnchor}
+        open={Boolean(bulkMenuAnchor)}
+        onClose={() => setBulkMenuAnchor(null)}
+      >
+        <MenuItem onClick={() => handleBulkAction('enable')}>
+          <ListItemIcon>
+            <CheckBoxIcon />
+          </ListItemIcon>
+          <ListItemText>Enable Selected</ListItemText>
+        </MenuItem>
+        <MenuItem onClick={() => handleBulkAction('disable')}>
+          <ListItemIcon>
+            <CheckBoxOutlineBlankIcon />
+          </ListItemIcon>
+          <ListItemText>Disable Selected</ListItemText>
+        </MenuItem>
+        <MenuItem onClick={() => handleBulkAction('delete')} sx={{ color: 'error.main' }}>
+          <ListItemIcon>
+            <DeleteIcon color="error" />
+          </ListItemIcon>
+          <ListItemText>Delete Selected</ListItemText>
+        </MenuItem>
+      </Menu>
 
       {/* Channel Dialog */}
       <Dialog 
