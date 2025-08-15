@@ -45,7 +45,7 @@ COPY config/ ./config/
 
 # Copy and build React frontend
 COPY client/package*.json ./client/
-RUN cd client && npm ci --only=production
+RUN cd client && npm install --only=production
 
 COPY client/ ./client/
 RUN cd client && npm run build && \
