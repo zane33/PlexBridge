@@ -325,4 +325,70 @@ router.post('/stop-all', (req, res) => {
   }
 });
 
+// M3U playlist endpoint for Plex
+router.get('/playlist.m3u', async (req, res) => {
+  try {
+    logger.stream('M3U playlist request', { 
+      clientIP: req.ip,
+      userAgent: req.get('User-Agent')
+    });
+
+    // Get all enabled channels with streams
+    const channels = await database.all(`
+      SELECT c.id, c.name, c.number, c.logo, c.epg_id, s.url, s.type
+      FROM channels c 
+      JOIN streams s ON c.id = s.channel_id 
+      WHERE c.enabled = 1 AND s.enabled = 1
+      ORDER BY c.number
+    `);
+
+    if (channels.length === 0) {
+      return res.status(404).type('text/plain').send('# No channels available');
+    }
+
+    // Get server host for stream URLs
+    const serverHost = req.get('host') || `${req.hostname}:${process.env.PORT || 8080}`;
+    const protocol = req.secure ? 'https' : 'http';
+
+    // Generate M3U playlist
+    let m3u = '#EXTM3U\n';
+    
+    for (const channel of channels) {
+      const streamUrl = `${protocol}://${serverHost}/stream/${channel.id}`;
+      
+      // Add channel entry
+      m3u += `#EXTINF:-1`;
+      
+      // Add channel number
+      if (channel.number) {
+        m3u += ` tvg-chno="${channel.number}"`;
+      }
+      
+      // Add EPG ID
+      if (channel.epg_id) {
+        m3u += ` tvg-id="${channel.epg_id}"`;
+      }
+      
+      // Add logo
+      if (channel.logo) {
+        m3u += ` tvg-logo="${channel.logo}"`;
+      }
+      
+      // Add channel name
+      m3u += `,${channel.name}\n`;
+      
+      // Add stream URL
+      m3u += `${streamUrl}\n`;
+    }
+
+    res.set('Content-Type', 'application/vnd.apple.mpegurl');
+    res.set('Content-Disposition', 'attachment; filename="plextv.m3u"');
+    res.send(m3u);
+
+  } catch (error) {
+    logger.error('M3U playlist error', { error: error.message });
+    res.status(500).type('text/plain').send('# M3U playlist generation failed');
+  }
+});
+
 module.exports = router;

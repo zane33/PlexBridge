@@ -338,22 +338,37 @@ router.post('/streams/import', async (req, res) => {
       const createdStreams = [];
 
       await database.transaction(async (db) => {
+        // Get the highest existing channel number to avoid conflicts
+        const maxChannelResult = await db.get('SELECT MAX(number) as max_number FROM channels');
+        let nextChannelNumber = (maxChannelResult?.max_number || 0) + 1;
+
         for (const channelData of channels) {
-          // Create channel
+          // Create channel with unique number
           const channelId = uuidv4();
+          
+          // Use original number if specified and not conflicting, otherwise assign next available
+          let channelNumber = channelData.number || nextChannelNumber;
+          
+          // Check if channel number already exists, if so, use next available
+          const existingChannel = await db.get('SELECT id FROM channels WHERE number = ?', [channelNumber]);
+          if (existingChannel) {
+            channelNumber = nextChannelNumber;
+          }
+          
           await db.run(`
             INSERT INTO channels (id, name, number, enabled, logo, epg_id)
             VALUES (?, ?, ?, ?, ?, ?)
           `, [
             channelId,
             channelData.name,
-            channelData.number || createdChannels.length + 1,
+            channelNumber,
             true,
             channelData.logo || null,
             channelData.epg_id || null
           ]);
 
-          createdChannels.push({ id: channelId, ...channelData });
+          createdChannels.push({ id: channelId, ...channelData, number: channelNumber });
+          nextChannelNumber = Math.max(nextChannelNumber, channelNumber) + 1;
 
           // Create stream for this channel
           const streamId = uuidv4();
@@ -695,6 +710,66 @@ router.delete('/epg/sources/:id', async (req, res) => {
   } catch (error) {
     logger.error('EPG source delete error:', error);
     res.status(500).json({ error: 'Failed to delete EPG source' });
+  }
+});
+
+// Server information endpoint
+router.get('/server/info', (req, res) => {
+  try {
+    const os = require('os');
+    const config = require('../config');
+    
+    // Get network interfaces
+    const networkInterfaces = os.networkInterfaces();
+    const ipAddresses = [];
+    
+    Object.keys(networkInterfaces).forEach(interfaceName => {
+      const addresses = networkInterfaces[interfaceName];
+      addresses.forEach(address => {
+        if (address.family === 'IPv4' && !address.internal) {
+          ipAddresses.push({
+            interface: interfaceName,
+            address: address.address,
+            netmask: address.netmask
+          });
+        }
+      });
+    });
+
+    // Get primary server host
+    const serverHost = req.get('host') || `${req.hostname}:${process.env.PORT || 8080}`;
+    const protocol = req.secure ? 'https' : 'http';
+    const baseUrl = `${protocol}://${serverHost}`;
+
+    const serverInfo = {
+      hostname: os.hostname(),
+      platform: os.platform(),
+      arch: os.arch(),
+      nodeVersion: process.version,
+      port: process.env.PORT || 8080,
+      baseUrl,
+      ipAddresses,
+      urls: {
+        webInterface: baseUrl,
+        m3uPlaylist: `${baseUrl}/playlist.m3u`,
+        epgXml: `${baseUrl}/epg/xmltv`,
+        tunerDiscovery: `${baseUrl}/device.xml`,
+        channelLineup: `${baseUrl}/lineup.json`
+      },
+      tuner: {
+        deviceType: 'SiliconDust HDHomeRun',
+        friendlyName: process.env.DEVICE_NAME || 'PlexTV Bridge',
+        manufacturer: 'PlexTV Bridge',
+        modelName: 'PlexTV Bridge',
+        deviceId: process.env.DEVICE_ID || 'PLEXTV001',
+        firmwareVersion: '1.0.0'
+      }
+    };
+
+    res.json(serverInfo);
+  } catch (error) {
+    logger.error('Server info error:', error);
+    res.status(500).json({ error: 'Failed to get server information' });
   }
 });
 

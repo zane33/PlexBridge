@@ -40,6 +40,7 @@ import {
   LinearProgress,
   Checkbox,
   TablePagination,
+  InputAdornment,
 } from '@mui/material';
 import {
   Add as AddIcon,
@@ -56,6 +57,7 @@ import {
   Settings as SettingsIcon,
   CloudUpload as ImportIcon,
   List as ListIcon,
+  ContentCopy as ContentCopyIcon,
 } from '@mui/icons-material';
 import { useSnackbar } from 'notistack';
 import api from '../../services/api';
@@ -93,7 +95,8 @@ function StreamManager() {
     type: 'hls',
     auth_username: '',
     auth_password: '',
-    auto_create_channels: false,
+    auto_create_channels: true, // Default to true for M3U imports
+    isM3UMode: false, // Track if this is an M3U import
   });
   const [formData, setFormData] = useState({
     channel_id: '',
@@ -238,10 +241,11 @@ function StreamManager() {
       setDialogOpen(false);
       setImportFormData({
         url: formData.url.trim(),
-        type: formData.type.startsWith('m3u') ? 'hls' : formData.type, // Default to HLS for M3U
+        type: 'hls', // Always default to HLS for M3U imports
         auth_username: formData.auth_username || '',
         auth_password: formData.auth_password || '',
         auto_create_channels: true, // Enable by default for M3U imports
+        isM3UMode: true, // Mark as M3U mode
       });
       setImportDialogOpen(true);
       enqueueSnackbar('M3U import ready - auto-create is enabled to import all channels', { variant: 'success' });
@@ -397,8 +401,7 @@ function StreamManager() {
         { variant: 'success' }
       );
       
-      setImportDialogOpen(false);
-      setParsedChannels([]);
+      handleImportDialogClose();
       fetchStreams();
       fetchChannels();
     } catch (error) {
@@ -408,6 +411,19 @@ function StreamManager() {
     } finally {
       setImporting(false);
     }
+  };
+
+  const handleImportDialogClose = () => {
+    setImportDialogOpen(false);
+    setParsedChannels([]);
+    setImportFormData({
+      url: '',
+      type: 'hls',
+      auth_username: '',
+      auth_password: '',
+      auto_create_channels: true,
+      isM3UMode: false,
+    });
   };
 
   const renderSkeletonTable = () => (
@@ -581,6 +597,29 @@ function StreamManager() {
                           >
                             {stream.url}
                           </Typography>
+                          <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mt: 0.5 }}>
+                            <Typography 
+                              variant="caption" 
+                              color="primary"
+                              sx={{ 
+                                fontSize: '0.7rem'
+                              }}
+                            >
+                              📡 Proxied via /stream/{stream.channel_id?.substring(0, 8)}...
+                            </Typography>
+                            <Tooltip title="Copy direct stream URL">
+                              <IconButton
+                                size="small"
+                                onClick={() => {
+                                  navigator.clipboard.writeText(stream.url);
+                                  enqueueSnackbar('Direct stream URL copied! 📋', { variant: 'success' });
+                                }}
+                                sx={{ p: 0.25 }}
+                              >
+                                <ContentCopyIcon sx={{ fontSize: '0.8rem' }} />
+                              </IconButton>
+                            </Tooltip>
+                          </Box>
                         </TableCell>
                         <TableCell>
                           <Chip
@@ -746,6 +785,37 @@ function StreamManager() {
               />
             </Grid>
             
+            {editingStream && (
+              <Grid item xs={12}>
+                <TextField
+                  label="📡 PlexBridge Proxy URL (for Plex)"
+                  fullWidth
+                  variant="outlined"
+                  value={`${window.location.origin}/stream/${editingStream.channel_id}`}
+                  InputProps={{
+                    readOnly: true,
+                    endAdornment: (
+                      <InputAdornment position="end">
+                        <Tooltip title="Copy PlexBridge URL">
+                          <IconButton
+                            onClick={() => {
+                              navigator.clipboard.writeText(`${window.location.origin}/stream/${editingStream.channel_id}`);
+                              enqueueSnackbar('PlexBridge URL copied to clipboard! 📋', { variant: 'success' });
+                            }}
+                            edge="end"
+                          >
+                            <ContentCopyIcon />
+                          </IconButton>
+                        </Tooltip>
+                      </InputAdornment>
+                    ),
+                  }}
+                  helperText="This is the URL Plex uses to access this stream through PlexBridge"
+                  size="small"
+                />
+              </Grid>
+            )}
+            
             <Grid item xs={12} sm={4}>
               <Box display="flex" gap={1}>
                 <FormControl fullWidth variant="outlined">
@@ -890,19 +960,30 @@ function StreamManager() {
             
             <Grid item xs={12} sm={6}>
               <FormControl fullWidth variant="outlined">
-                <InputLabel>Default Stream Type</InputLabel>
-                <Select
-                  value={importFormData.type}
-                  onChange={(e) => handleImportInputChange('type', e.target.value)}
-                  label="Default Stream Type"
-                  disabled={importing}
-                >
-                  {STREAM_TYPES.map((type) => (
-                    <MenuItem key={type.value} value={type.value}>
-                      {type.label}
-                    </MenuItem>
-                  ))}
-                </Select>
+                <InputLabel>Stream Type</InputLabel>
+                {importFormData.isM3UMode ? (
+                  <TextField
+                    value="HLS (.m3u8) - M3U Playlist"
+                    label="Stream Type"
+                    variant="outlined"
+                    disabled
+                    helperText="Stream type is automatically detected from M3U playlist"
+                  />
+                ) : (
+                  <Select
+                    value={importFormData.type}
+                    onChange={(e) => handleImportInputChange('type', e.target.value)}
+                    label="Stream Type"
+                    disabled={importing}
+                  >
+                    <MenuItem value="hls">HLS (.m3u8)</MenuItem>
+                    <MenuItem value="dash">DASH (.mpd)</MenuItem>
+                    <MenuItem value="rtsp">RTSP</MenuItem>
+                    <MenuItem value="rtmp">RTMP</MenuItem>
+                    <MenuItem value="udp">UDP</MenuItem>
+                    <MenuItem value="http">HTTP</MenuItem>
+                  </Select>
+                )}
               </FormControl>
             </Grid>
 
@@ -1045,7 +1126,7 @@ function StreamManager() {
         
         <DialogActions sx={{ p: 3, gap: 1 }}>
           <Button 
-            onClick={() => setImportDialogOpen(false)}
+            onClick={handleImportDialogClose}
             disabled={importing}
             startIcon={<CancelIcon />}
             color="inherit"

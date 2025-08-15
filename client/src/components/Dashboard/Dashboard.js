@@ -18,6 +18,15 @@ import {
   useMediaQuery,
   Alert,
   Skeleton,
+  IconButton,
+  TextField,
+  InputAdornment,
+  Tooltip,
+  List,
+  ListItem,
+  ListItemIcon,
+  ListItemText,
+  Divider,
 } from '@mui/material';
 import {
   Stream as StreamIcon,
@@ -26,26 +35,34 @@ import {
   Storage as StorageIcon,
   Refresh as RefreshIcon,
   Error as ErrorIcon,
+  ContentCopy as CopyIcon,
+  Tv as TvIcon,
+  Router as RouterIcon,
+  Public as PublicIcon,
 } from '@mui/icons-material';
-import { Chart as ChartJS, CategoryScale, LinearScale, PointElement, LineElement, Title, Tooltip, Legend, ArcElement } from 'chart.js';
+import { Chart as ChartJS, CategoryScale, LinearScale, PointElement, LineElement, Title, Tooltip as ChartTooltip, Legend, ArcElement } from 'chart.js';
 import { Doughnut } from 'react-chartjs-2';
 import { format } from 'date-fns';
 import api from '../../services/api';
 import socketService from '../../services/socket';
+import { useSnackbar } from 'notistack';
 
-ChartJS.register(CategoryScale, LinearScale, PointElement, LineElement, Title, Tooltip, Legend, ArcElement);
+ChartJS.register(CategoryScale, LinearScale, PointElement, LineElement, Title, ChartTooltip, Legend, ArcElement);
 
 function Dashboard() {
   const [metrics, setMetrics] = useState(null);
   const [activeStreams, setActiveStreams] = useState([]);
+  const [serverInfo, setServerInfo] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const theme = useTheme();
   const isMobile = useMediaQuery(theme.breakpoints.down('md'));
+  const { enqueueSnackbar } = useSnackbar();
 
   useEffect(() => {
     fetchMetrics();
     fetchActiveStreams();
+    fetchServerInfo();
     
     // Set up real-time updates via Socket.IO
     const unsubscribeMetrics = socketService.on('metrics:update', (data) => {
@@ -91,10 +108,19 @@ function Dashboard() {
 
   const fetchActiveStreams = async () => {
     try {
-      const response = await api.get('/stream/active');
+      const response = await api.get('/streams/active');
       setActiveStreams(response.data.streams || []);
     } catch (error) {
       console.error('Failed to fetch active streams:', error);
+    }
+  };
+
+  const fetchServerInfo = async () => {
+    try {
+      const response = await api.get('/api/server/info');
+      setServerInfo(response.data);
+    } catch (error) {
+      console.error('Failed to fetch server info:', error);
     }
   };
 
@@ -111,6 +137,16 @@ function Dashboard() {
     const hours = Math.floor((seconds % 86400) / 3600);
     const minutes = Math.floor((seconds % 3600) / 60);
     return `${days}d ${hours}h ${minutes}m`;
+  };
+
+  const copyToClipboard = async (text, label) => {
+    try {
+      await navigator.clipboard.writeText(text);
+      enqueueSnackbar(`${label} copied to clipboard! 📋`, { variant: 'success' });
+    } catch (error) {
+      console.error('Failed to copy to clipboard:', error);
+      enqueueSnackbar('Failed to copy to clipboard', { variant: 'error' });
+    }
   };
 
   if (loading) {
@@ -427,6 +463,195 @@ function Dashboard() {
           </Card>
         </Grid>
       </Grid>
+
+      {/* PlexTV Server Information */}
+      {serverInfo && (
+        <Grid container spacing={3} sx={{ mt: 1 }}>
+          <Grid item xs={12}>
+            <Card>
+              <CardContent>
+                <Typography variant="h6" gutterBottom sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                  <TvIcon color="primary" />
+                  PlexTV Server Information
+                </Typography>
+
+                {/* Server Details */}
+                <Grid container spacing={3} sx={{ mb: 3 }}>
+                  <Grid item xs={12} md={6}>
+                    <Typography variant="subtitle1" fontWeight="bold" gutterBottom>
+                      Server Details
+                    </Typography>
+                    <List dense>
+                      <ListItem>
+                        <ListItemIcon><RouterIcon /></ListItemIcon>
+                        <ListItemText 
+                          primary="Hostname" 
+                          secondary={serverInfo.hostname}
+                        />
+                      </ListItem>
+                      <ListItem>
+                        <ListItemIcon><PublicIcon /></ListItemIcon>
+                        <ListItemText 
+                          primary="Port" 
+                          secondary={serverInfo.port}
+                        />
+                      </ListItem>
+                      <ListItem>
+                        <ListItemIcon><TvIcon /></ListItemIcon>
+                        <ListItemText 
+                          primary="Device Name" 
+                          secondary={serverInfo.tuner?.friendlyName}
+                        />
+                      </ListItem>
+                    </List>
+                  </Grid>
+
+                  <Grid item xs={12} md={6}>
+                    <Typography variant="subtitle1" fontWeight="bold" gutterBottom>
+                      Network Interfaces
+                    </Typography>
+                    <List dense>
+                      {serverInfo.ipAddresses?.map((ip, index) => (
+                        <ListItem key={index}>
+                          <ListItemIcon><PublicIcon /></ListItemIcon>
+                          <ListItemText 
+                            primary={ip.interface}
+                            secondary={`${ip.address} (${ip.netmask})`}
+                          />
+                        </ListItem>
+                      ))}
+                    </List>
+                  </Grid>
+                </Grid>
+
+                <Divider sx={{ my: 2 }} />
+
+                {/* Plex Configuration URLs */}
+                <Typography variant="subtitle1" fontWeight="bold" gutterBottom>
+                  📺 Plex Configuration URLs
+                </Typography>
+                <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
+                  Copy these URLs to configure Plex with your PlexTV Bridge server:
+                </Typography>
+
+                <Grid container spacing={2}>
+                  <Grid item xs={12}>
+                    <TextField
+                      label="📻 M3U Playlist URL (for Channel Setup)"
+                      fullWidth
+                      value={serverInfo.urls?.m3uPlaylist || ''}
+                      variant="outlined"
+                      size="small"
+                      InputProps={{
+                        readOnly: true,
+                        endAdornment: (
+                          <InputAdornment position="end">
+                            <Tooltip title="Copy M3U URL">
+                              <IconButton
+                                onClick={() => copyToClipboard(serverInfo.urls?.m3uPlaylist, 'M3U Playlist URL')}
+                                edge="end"
+                              >
+                                <CopyIcon />
+                              </IconButton>
+                            </Tooltip>
+                          </InputAdornment>
+                        ),
+                      }}
+                      helperText="Use this URL in Plex Settings > Live TV & DVR > Add a tuner > Network Attached Tuner"
+                    />
+                  </Grid>
+
+                  <Grid item xs={12}>
+                    <TextField
+                      label="📺 EPG XML URL (for Program Guide)"
+                      fullWidth
+                      value={serverInfo.urls?.epgXml || ''}
+                      variant="outlined"
+                      size="small"
+                      InputProps={{
+                        readOnly: true,
+                        endAdornment: (
+                          <InputAdornment position="end">
+                            <Tooltip title="Copy EPG XML URL">
+                              <IconButton
+                                onClick={() => copyToClipboard(serverInfo.urls?.epgXml, 'EPG XML URL')}
+                                edge="end"
+                              >
+                                <CopyIcon />
+                              </IconButton>
+                            </Tooltip>
+                          </InputAdornment>
+                        ),
+                      }}
+                      helperText="Use this URL in Plex Settings > Live TV & DVR > Electronic Program Guide"
+                    />
+                  </Grid>
+
+                  <Grid item xs={12}>
+                    <TextField
+                      label="📡 Tuner Discovery URL (for DVR Setup)"
+                      fullWidth
+                      value={serverInfo.urls?.tunerDiscovery || ''}
+                      variant="outlined"
+                      size="small"
+                      InputProps={{
+                        readOnly: true,
+                        endAdornment: (
+                          <InputAdornment position="end">
+                            <Tooltip title="Copy Tuner URL">
+                              <IconButton
+                                onClick={() => copyToClipboard(serverInfo.urls?.tunerDiscovery, 'Tuner Discovery URL')}
+                                edge="end"
+                              >
+                                <CopyIcon />
+                              </IconButton>
+                            </Tooltip>
+                          </InputAdornment>
+                        ),
+                      }}
+                      helperText="Auto-discovery URL for HDHomeRun compatible tuner setup"
+                    />
+                  </Grid>
+
+                  <Grid item xs={12}>
+                    <TextField
+                      label="📋 Channel Lineup URL (for Channel List)"
+                      fullWidth
+                      value={serverInfo.urls?.channelLineup || ''}
+                      variant="outlined"
+                      size="small"
+                      InputProps={{
+                        readOnly: true,
+                        endAdornment: (
+                          <InputAdornment position="end">
+                            <Tooltip title="Copy Channel Lineup URL">
+                              <IconButton
+                                onClick={() => copyToClipboard(serverInfo.urls?.channelLineup, 'Channel Lineup URL')}
+                                edge="end"
+                              >
+                                <CopyIcon />
+                              </IconButton>
+                            </Tooltip>
+                          </InputAdornment>
+                        ),
+                      }}
+                      helperText="JSON endpoint for channel lineup information"
+                    />
+                  </Grid>
+                </Grid>
+
+                <Alert severity="info" sx={{ mt: 2 }}>
+                  <Typography variant="body2">
+                    💡 <strong>Setup Instructions:</strong> Add your PlexTV Bridge as a network tuner in Plex using the M3U URL above. 
+                    Then configure the EPG XML URL for program guide data. Your server will appear as "{serverInfo.tuner?.friendlyName}" in Plex.
+                  </Typography>
+                </Alert>
+
+              </CardContent>
+            </Card>
+          </Grid>
+        </Grid>
+      )}
     </Box>
   );
 }
