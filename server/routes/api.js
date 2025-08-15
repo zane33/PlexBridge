@@ -680,15 +680,19 @@ router.put('/epg/sources/:id', validate(epgSourceSchema), async (req, res) => {
 router.get('/epg/sources/:id/channels', async (req, res) => {
   try {
     // Get all unique channel IDs from EPG programs
+    // First check what columns actually exist
+    const sampleRow = await database.get('SELECT * FROM epg_programs LIMIT 1');
+    console.log('EPG programs sample row columns:', Object.keys(sampleRow || {}));
+    
+    // Use the correct column names based on the actual table structure
     const availableChannels = await database.all(`
       SELECT DISTINCT 
         channel_id,
-        channel_name,
         COUNT(*) as program_count
       FROM epg_programs
       WHERE channel_id IS NOT NULL
-      GROUP BY channel_id, channel_name
-      ORDER BY channel_name
+      GROUP BY channel_id
+      ORDER BY channel_id
       LIMIT 100
     `);
 
@@ -697,7 +701,7 @@ router.get('/epg/sources/:id/channels', async (req, res) => {
       available_channels: availableChannels.map(ch => ({
         epg_id: ch.channel_id,
         program_count: ch.program_count,
-        channel_name: ch.channel_name
+        channel_name: ch.channel_id // Use channel_id as fallback for name
       }))
     });
   } catch (error) {
