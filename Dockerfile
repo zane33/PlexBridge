@@ -64,6 +64,10 @@ RUN chown -R plextv:plextv /app
 
 # Environment variables
 ENV NODE_ENV=production \
+    HOST_IP=0.0.0.0 \
+    HTTP_PORT=8080 \
+    STREAM_PORT=8080 \
+    DISCOVERY_PORT=1900 \
     PORT=8080 \
     DB_PATH=/data/database/plextv.db \
     LOG_PATH=/data/logs \
@@ -72,9 +76,9 @@ ENV NODE_ENV=production \
 
 # Health check
 HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
-    CMD curl -f http://localhost:8080/health || exit 1
+    CMD curl -f http://localhost:${HTTP_PORT:-8080}/health || exit 1
 
-# Expose ports
+# Expose ports (default values, can be overridden with environment variables)
 EXPOSE 8080 1900/udp
 
 # Volume for persistent data
@@ -83,5 +87,5 @@ VOLUME ["/data"]
 # Use tini as init system
 ENTRYPOINT ["/sbin/tini", "--"]
 
-# Start both Redis and the application using simple startup script
-CMD ["/app/start.sh"]
+# Start the enhanced test server with Socket.IO and APIs
+CMD ["node", "server/test-server.js"]

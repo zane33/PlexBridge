@@ -144,8 +144,8 @@ class EPGService {
       // Download EPG data
       const epgData = await this.downloadEPG(source);
       
-      // Parse EPG XML
-      const programs = await this.parseEPG(epgData);
+      // Parse EPG XML (now includes storing channel information)
+      const programs = await this.parseEPG(epgData, sourceId);
       
       // Store programs in database
       await this.storePrograms(programs);
@@ -214,7 +214,7 @@ class EPGService {
     }
   }
 
-  async parseEPG(xmlData) {
+  async parseEPG(xmlData, sourceId) {
     try {
       const result = await this.parser.parseStringPromise(xmlData);
       
@@ -230,16 +230,34 @@ class EPGService {
         programmeCount: programmes.length 
       });
 
-      // Process channels first
+      // Process and store channel information first
       const channelMap = new Map();
+      const epgChannels = [];
+      
       for (const channel of channels) {
         if (channel.id) {
+          const displayName = this.extractText(channel['display-name']);
+          const iconUrl = channel.icon?.src || null;
+          
           channelMap.set(channel.id, {
             id: channel.id,
-            name: this.extractText(channel['display-name']),
-            icon: channel.icon?.src || null
+            name: displayName,
+            icon: iconUrl
+          });
+
+          // Prepare for database storage
+          epgChannels.push({
+            epg_id: channel.id,
+            display_name: displayName,
+            icon_url: iconUrl,
+            source_id: sourceId
           });
         }
+      }
+
+      // Store EPG channels in database
+      if (epgChannels.length > 0) {
+        await this.storeEPGChannels(epgChannels, sourceId);
       }
 
       // Process programmes
@@ -350,6 +368,46 @@ class EPGService {
 
   normalizeArray(item) {
     return Array.isArray(item) ? item : [item];
+  }
+
+  async storeEPGChannels(epgChannels, sourceId) {
+    if (epgChannels.length === 0) {
+      return;
+    }
+
+    try {
+      await database.transaction(async (db) => {
+        // Clear old EPG channels for this source
+        await db.run('DELETE FROM epg_channels WHERE source_id = ?', [sourceId]);
+
+        // Insert new EPG channels in batches
+        const batchSize = 1000;
+        const insertSQL = `
+          INSERT OR REPLACE INTO epg_channels 
+          (epg_id, display_name, icon_url, source_id)
+          VALUES (?, ?, ?, ?)
+        `;
+
+        for (let i = 0; i < epgChannels.length; i += batchSize) {
+          const batch = epgChannels.slice(i, i + batchSize);
+          
+          for (const channel of batch) {
+            await db.run(insertSQL, [
+              channel.epg_id,
+              channel.display_name,
+              channel.icon_url,
+              channel.source_id
+            ]);
+          }
+        }
+      });
+
+      logger.epg('EPG channels stored', { count: epgChannels.length, sourceId });
+
+    } catch (error) {
+      logger.error('EPG channels storage failed:', error);
+      throw error;
+    }
   }
 
   async storePrograms(programs) {
@@ -507,7 +565,9 @@ class EPGService {
       // Remove from database
       await database.run('DELETE FROM epg_sources WHERE id = ?', [sourceId]);
 
-      // Remove associated programs
+      // Remove associated EPG channels and programs
+      await database.run('DELETE FROM epg_channels WHERE source_id = ?', [sourceId]);
+      
       await database.run(`
         DELETE FROM epg_programs 
         WHERE channel_id IN (

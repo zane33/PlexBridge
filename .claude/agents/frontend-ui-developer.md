@@ -24,6 +24,7 @@ When approaching UI development tasks:
 6. Test across different screen sizes and devices
 7. Optimize for performance (minimize CSS, use efficient selectors)
 8. Follow modern design principles (proper contrast ratios, intuitive navigation, clear visual hierarchy)
+9. Rebuild container in docker desktop after any change right at the end
 
 For each UI task:
 - Analyze the requirements and suggest improvements for better UX

@@ -25,6 +25,9 @@ const colors = {
 // Add colors to winston
 winston.addColors(colors);
 
+// Database logger instance (will be initialized later)
+let dbLogger = null;
+
 // Create custom format
 const customFormat = winston.format.combine(
   winston.format.timestamp({ format: 'YYYY-MM-DD HH:mm:ss' }),
@@ -66,7 +69,7 @@ if (process.env.NODE_ENV !== 'production') {
 }
 
 // File transports for all environments
-const logDir = config.logging.path;
+const logDir = config.logging.path || path.join(__dirname, '../../data/logs');
 
 // Ensure log directory exists and is writable
 let fileLoggingEnabled = true;
@@ -163,18 +166,86 @@ const logger = winston.createLogger({
 // Add custom logging methods
 logger.stream = function(message, meta = {}) {
   this.info(message, { ...meta, category: 'stream' });
+  if (dbLogger) {
+    dbLogger.log('info', message, { ...meta, category: 'stream' });
+  }
 };
 
 logger.security = function(message, meta = {}) {
   this.warn(message, { ...meta, category: 'security' });
+  if (dbLogger) {
+    dbLogger.log('warn', message, { ...meta, category: 'security' });
+  }
 };
 
 logger.performance = function(message, meta = {}) {
   this.info(message, { ...meta, category: 'performance' });
+  if (dbLogger) {
+    dbLogger.log('info', message, { ...meta, category: 'performance' });
+  }
 };
 
 logger.epg = function(message, meta = {}) {
   this.info(message, { ...meta, category: 'epg' });
+  if (dbLogger) {
+    dbLogger.log('info', message, { ...meta, category: 'epg' });
+  }
+};
+
+// Override default logging methods to also log to database
+const originalInfo = logger.info.bind(logger);
+const originalWarn = logger.warn.bind(logger);
+const originalError = logger.error.bind(logger);
+const originalDebug = logger.debug.bind(logger);
+
+logger.info = function(message, meta = {}) {
+  originalInfo(message, meta);
+  if (dbLogger) {
+    dbLogger.log('info', message, meta);
+  }
+};
+
+logger.warn = function(message, meta = {}) {
+  originalWarn(message, meta);
+  if (dbLogger) {
+    dbLogger.log('warn', message, meta);
+  }
+};
+
+logger.error = function(message, meta = {}) {
+  originalError(message, meta);
+  if (dbLogger) {
+    dbLogger.log('error', message, meta);
+  }
+};
+
+logger.debug = function(message, meta = {}) {
+  originalDebug(message, meta);
+  if (dbLogger) {
+    dbLogger.log('debug', message, meta);
+  }
+};
+
+// Initialize database logger
+logger.initDatabaseLogger = function(database) {
+  dbLogger = new DatabaseLogger(database);
+  logger.info('Database logger initialized');
+};
+
+// Get logs from database
+logger.getLogs = async function(options = {}) {
+  if (dbLogger) {
+    return await dbLogger.getLogs(options);
+  }
+  return [];
+};
+
+// Cleanup old logs
+logger.cleanupLogs = async function(daysToKeep = 30) {
+  if (dbLogger) {
+    return await dbLogger.cleanupLogs(daysToKeep);
+  }
+  return 0;
 };
 
 // Database logger for storing logs in SQLite
@@ -204,7 +275,9 @@ class DatabaseLogger {
         limit = 100,
         offset = 0,
         startDate = null,
-        endDate = null
+        endDate = null,
+        category = null,
+        search = null
       } = options;
 
       let query = 'SELECT * FROM logs WHERE 1=1';
@@ -223,6 +296,16 @@ class DatabaseLogger {
       if (endDate) {
         query += ' AND timestamp <= ?';
         params.push(endDate);
+      }
+
+      if (category) {
+        query += ' AND (meta LIKE ? OR message LIKE ?)';
+        params.push(`%"category":"${category}"%`, `%${category}%`);
+      }
+
+      if (search) {
+        query += ' AND (message LIKE ? OR meta LIKE ?)';
+        params.push(`%${search}%`, `%${search}%`);
       }
 
       query += ' ORDER BY timestamp DESC LIMIT ? OFFSET ?';

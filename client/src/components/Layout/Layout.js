@@ -110,13 +110,62 @@ function Layout({ children }) {
   const drawer = (
     <Box sx={{ height: '100%', display: 'flex', flexDirection: 'column' }}>
       <Toolbar sx={{ justifyContent: 'space-between' }}>
-        <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-          <Avatar sx={{ bgcolor: 'primary.main', width: 32, height: 32 }}>
-            📺
-          </Avatar>
-          <Typography variant="h6" noWrap component="div">
-            PlexTV
-          </Typography>
+        <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5 }}>
+          <Box 
+            sx={{ 
+              width: 36, 
+              height: 36, 
+              borderRadius: 2,
+              background: 'linear-gradient(135deg, #6366f1 0%, #8b5cf6 100%)',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              boxShadow: '0 4px 12px rgba(99, 102, 241, 0.4)',
+              transition: 'all 0.3s ease',
+              '&:hover': {
+                transform: 'scale(1.05) rotate(5deg)',
+                boxShadow: '0 6px 16px rgba(99, 102, 241, 0.6)',
+              }
+            }}
+          >
+            <Box 
+              component="svg" 
+              sx={{ width: 20, height: 20 }}
+              viewBox="0 0 24 24" 
+              fill="white"
+            >
+              <path d="M20 6h-2v6h2V6zm0 10h-2v2h2v-2zM4 8v8c0 1.1.9 2 2 2h8v-2H6V8h8V6H6c-1.1 0-2 .9-2 2zm10-2v4h2V8h2V6h-4zm0 6v4h4v-2h-2v-2h-2z"/>
+            </Box>
+          </Box>
+          <Box>
+            <Typography 
+              variant="h6" 
+              noWrap 
+              component="div"
+              sx={{ 
+                fontWeight: 700,
+                background: 'linear-gradient(135deg, #6366f1 0%, #8b5cf6 100%)',
+                backgroundClip: 'text',
+                WebkitBackgroundClip: 'text',
+                WebkitTextFillColor: 'transparent',
+                letterSpacing: '-0.025em'
+              }}
+            >
+              PlexBridge
+            </Typography>
+            <Typography 
+              variant="caption" 
+              sx={{ 
+                color: 'text.secondary',
+                fontSize: '0.65rem',
+                fontWeight: 500,
+                textTransform: 'uppercase',
+                letterSpacing: '0.1em'
+              }}
+            >
+              Media Server
+            </Typography>
+          </Box>
         </Box>
         {isMobile && (
           <IconButton 
@@ -134,7 +183,33 @@ function Layout({ children }) {
           label={connectionStatus.charAt(0).toUpperCase() + connectionStatus.slice(1)}
           color={getConnectionStatusColor()}
           size="small"
-          sx={{ width: '100%' }}
+          sx={{ 
+            width: '100%',
+            background: connectionStatus === 'connected' 
+              ? 'linear-gradient(135deg, #10b981 0%, #059669 100%)'
+              : connectionStatus === 'error'
+              ? 'linear-gradient(135deg, #f59e0b 0%, #d97706 100%)'
+              : 'linear-gradient(135deg, #ef4444 0%, #dc2626 100%)',
+            color: '#ffffff',
+            fontWeight: 600,
+            fontSize: '0.7rem',
+            animation: connectionStatus !== 'connected' ? 'pulse 2s infinite' : 'none',
+            '@keyframes pulse': {
+              '0%': { opacity: 1 },
+              '50%': { opacity: 0.7 },
+              '100%': { opacity: 1 },
+            },
+            '&::before': {
+              content: connectionStatus === 'connected' ? '"●"' : connectionStatus === 'error' ? '"⚠"' : '"●"',
+              marginRight: '6px',
+              animation: connectionStatus === 'connected' ? 'none' : 'blink 1s infinite',
+            },
+            '@keyframes blink': {
+              '0%': { opacity: 1 },
+              '50%': { opacity: 0 },
+              '100%': { opacity: 1 },
+            }
+          }}
         />
       </Box>
       
@@ -146,23 +221,75 @@ function Layout({ children }) {
             <ListItemButton
               selected={location.pathname === item.path}
               onClick={() => handleNavigation(item.path)}
+              aria-label={`Navigate to ${item.text}`}
+              aria-current={location.pathname === item.path ? 'page' : undefined}
               sx={{
-                borderRadius: 2,
+                borderRadius: 3,
                 mx: 1,
+                my: 0.5,
+                position: 'relative',
+                overflow: 'hidden',
+                transition: 'all 0.3s cubic-bezier(0.4, 0, 0.2, 1)',
+                '&::before': {
+                  content: '""',
+                  position: 'absolute',
+                  top: 0,
+                  left: 0,
+                  right: 0,
+                  bottom: 0,
+                  background: 'linear-gradient(135deg, rgba(99, 102, 241, 0.1) 0%, rgba(139, 92, 246, 0.1) 100%)',
+                  transform: 'translateX(-100%)',
+                  transition: 'transform 0.3s ease',
+                },
+                '&:hover': {
+                  backgroundColor: 'rgba(99, 102, 241, 0.08)',
+                  transform: 'translateX(4px)',
+                  '&::before': {
+                    transform: 'translateX(0)',
+                  },
+                  '& .MuiListItemIcon-root': {
+                    transform: 'scale(1.1)',
+                  },
+                },
+                '&:focus-visible': {
+                  outline: '2px solid #6366f1',
+                  outlineOffset: '2px',
+                },
                 '&.Mui-selected': {
-                  backgroundColor: 'primary.main',
+                  background: 'linear-gradient(135deg, #6366f1 0%, #8b5cf6 100%)',
+                  color: '#ffffff',
+                  boxShadow: '0 4px 12px rgba(99, 102, 241, 0.4)',
                   '&:hover': {
-                    backgroundColor: 'primary.dark',
+                    background: 'linear-gradient(135deg, #4f46e5 0%, #7c3aed 100%)',
+                    boxShadow: '0 6px 16px rgba(99, 102, 241, 0.5)',
+                  },
+                  '& .MuiListItemIcon-root': {
+                    color: '#ffffff',
+                  },
+                  '& .MuiListItemText-primary': {
+                    fontWeight: 600,
                   },
                 },
               }}
             >
-              <ListItemIcon sx={{ minWidth: 40 }}>
+              <ListItemIcon 
+                sx={{ 
+                  minWidth: 44,
+                  transition: 'all 0.2s ease',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                }}
+              >
                 {item.icon}
               </ListItemIcon>
               <ListItemText 
                 primary={item.text}
-                primaryTypographyProps={{ fontSize: '0.95rem' }}
+                primaryTypographyProps={{ 
+                  fontSize: '0.95rem',
+                  fontWeight: 500,
+                  transition: 'all 0.2s ease'
+                }}
               />
             </ListItemButton>
           </ListItem>
@@ -170,9 +297,41 @@ function Layout({ children }) {
       </List>
       
       <Box sx={{ p: 2, mt: 'auto' }}>
-        <Typography variant="caption" color="text.secondary" align="center" display="block">
-          v1.0.0
-        </Typography>
+        <Box 
+          sx={{ 
+            textAlign: 'center',
+            p: 1.5,
+            borderRadius: 2,
+            background: 'linear-gradient(135deg, rgba(99, 102, 241, 0.1) 0%, rgba(139, 92, 246, 0.1) 100%)',
+            border: '1px solid rgba(99, 102, 241, 0.2)',
+            backdropFilter: 'blur(10px)',
+          }}
+        >
+          <Typography 
+            variant="caption" 
+            sx={{ 
+              color: 'text.secondary', 
+              fontSize: '0.7rem',
+              fontWeight: 600,
+              textTransform: 'uppercase',
+              letterSpacing: '0.1em'
+            }}
+          >
+            PlexBridge
+          </Typography>
+          <Typography 
+            variant="caption" 
+            sx={{ 
+              display: 'block',
+              color: 'primary.main', 
+              fontSize: '0.65rem',
+              fontWeight: 500,
+              mt: 0.5
+            }}
+          >
+            v1.0.0
+          </Typography>
+        </Box>
       </Box>
     </Box>
   );
@@ -197,16 +356,68 @@ function Layout({ children }) {
           >
             <MenuIcon />
           </IconButton>
-          <Typography variant="h6" noWrap component="div" sx={{ flexGrow: 1 }}>
-            {menuItems.find(item => item.path === location.pathname)?.text || 'PlexTV'}
-          </Typography>
+          <Box sx={{ flexGrow: 1 }}>
+            <Typography 
+              variant="h5" 
+              noWrap 
+              component="div" 
+              sx={{ 
+                fontWeight: 700,
+                background: 'linear-gradient(135deg, #6366f1 0%, #8b5cf6 100%)',
+                backgroundClip: 'text',
+                WebkitBackgroundClip: 'text',
+                WebkitTextFillColor: 'transparent',
+                letterSpacing: '-0.025em',
+                fontSize: { xs: '1.25rem', sm: '1.5rem' }
+              }}
+            >
+              {menuItems.find(item => item.path === location.pathname)?.text || 'PlexBridge'}
+            </Typography>
+            <Typography 
+              variant="caption" 
+              sx={{ 
+                color: 'text.secondary',
+                fontSize: '0.75rem',
+                fontWeight: 500,
+                display: { xs: 'none', sm: 'block' },
+                textTransform: 'uppercase',
+                letterSpacing: '0.1em'
+              }}
+            >
+              Professional IPTV Management
+            </Typography>
+          </Box>
           
           {!isMobile && (
             <Chip
               label={connectionStatus.charAt(0).toUpperCase() + connectionStatus.slice(1)}
-              color={getConnectionStatusColor()}
               size="small"
-              variant="outlined"
+              sx={{ 
+                background: connectionStatus === 'connected' 
+                  ? 'linear-gradient(135deg, #10b981 0%, #059669 100%)'
+                  : connectionStatus === 'error'
+                  ? 'linear-gradient(135deg, #f59e0b 0%, #d97706 100%)'
+                  : 'linear-gradient(135deg, #ef4444 0%, #dc2626 100%)',
+                color: '#ffffff',
+                fontWeight: 600,
+                fontSize: '0.7rem',
+                animation: connectionStatus !== 'connected' ? 'pulse 2s infinite' : 'none',
+                '@keyframes pulse': {
+                  '0%': { opacity: 1 },
+                  '50%': { opacity: 0.7 },
+                  '100%': { opacity: 1 },
+                },
+                '&::before': {
+                  content: connectionStatus === 'connected' ? '"●"' : connectionStatus === 'error' ? '"⚠"' : '"●"',
+                  marginRight: '6px',
+                  animation: connectionStatus === 'connected' ? 'none' : 'blink 1s infinite',
+                },
+                '@keyframes blink': {
+                  '0%': { opacity: 1 },
+                  '50%': { opacity: 0 },
+                  '100%': { opacity: 1 },
+                }
+              }}
             />
           )}
         </Toolbar>
@@ -223,6 +434,7 @@ function Layout({ children }) {
           ModalProps={{
             keepMounted: true,
           }}
+          aria-label="Navigation menu"
           sx={{
             display: { xs: 'block', md: 'none' },
             '& .MuiDrawer-paper': { 

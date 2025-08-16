@@ -65,3 +65,4 @@ config/development.json
 # Test files
 test-results/
 test-reports/
+/.claude

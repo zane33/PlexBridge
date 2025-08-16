@@ -19,6 +19,49 @@
     "transcodeEnabled": true,
     "ffmpegPath": "/usr/bin/ffmpeg"
   },
+  "plexlive": {
+    "ssdp": {
+      "enabled": true,
+      "discoverableInterval": 30000,
+      "announceInterval": 1800000
+    },
+    "streaming": {
+      "maxConcurrentStreams": 10,
+      "streamTimeout": 60000,
+      "reconnectAttempts": 5,
+      "bufferSize": 131072,
+      "adaptiveBitrate": true
+    },
+    "transcoding": {
+      "enabled": true,
+      "hardwareAcceleration": true,
+      "preset": "fast",
+      "defaultProfile": "high"
+    },
+    "caching": {
+      "enabled": true,
+      "duration": 7200,
+      "maxSize": 5368709120,
+      "cleanup": {
+        "enabled": true,
+        "interval": 1800000,
+        "maxAge": 172800000
+      }
+    },
+    "device": {
+      "name": "PlexTV",
+      "tunerCount": 8
+    },
+    "network": {
+      "advertisedHost": null,
+      "ipv6Enabled": true
+    },
+    "compatibility": {
+      "hdHomeRunMode": true,
+      "plexPassRequired": false,
+      "gracePeriod": 15000
+    }
+  },
   "logging": {
     "level": "info",
     "maxFiles": 30,

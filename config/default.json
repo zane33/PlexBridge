@@ -61,10 +61,74 @@
     "maxFileSize": 104857600,
     "timeout": 60000
   },
+  "plexlive": {
+    "ssdp": {
+      "enabled": true,
+      "discoverableInterval": 30000,
+      "announceInterval": 1800000,
+      "multicastAddress": "239.255.255.250",
+      "deviceDescription": "IPTV to Plex Bridge Interface"
+    },
+    "streaming": {
+      "maxConcurrentStreams": 5,
+      "maxConcurrentPerChannel": 3,
+      "streamTimeout": 30000,
+      "sessionTimeout": 3600000,
+      "reconnectAttempts": 3,
+      "bufferSize": 65536,
+      "adaptiveBitrate": true,
+      "preferredProtocol": "hls",
+      "enforceUniqueSessions": true
+    },
+    "transcoding": {
+      "enabled": true,
+      "hardwareAcceleration": false,
+      "preset": "medium",
+      "videoCodec": "h264",
+      "audioCodec": "aac",
+      "qualityProfiles": {
+        "low": { "resolution": "720x480", "bitrate": "1000k" },
+        "medium": { "resolution": "1280x720", "bitrate": "2500k" },
+        "high": { "resolution": "1920x1080", "bitrate": "5000k" }
+      },
+      "defaultProfile": "medium"
+    },
+    "caching": {
+      "enabled": true,
+      "duration": 3600,
+      "maxSize": 1073741824,
+      "cleanup": {
+        "enabled": true,
+        "interval": 3600000,
+        "maxAge": 86400000
+      }
+    },
+    "device": {
+      "name": "PlexTV Development",
+      "id": "PLEXTV001",
+      "tunerCount": 4,
+      "firmware": "1.0.0",
+      "baseUrl": "http://localhost:8080"
+    },
+    "network": {
+      "bindAddress": "0.0.0.0",
+      "advertisedHost": null,
+      "streamingPort": 8080,
+      "discoveryPort": 1900,
+      "ipv6Enabled": false
+    },
+    "compatibility": {
+      "hdHomeRunMode": true,
+      "plexPassRequired": false,
+      "gracePeriod": 10000,
+      "channelLogoFallback": true
+    }
+  },
   "logging": {
     "level": "debug",
     "maxFiles": 14,
-    "maxSize": "10m"
+    "maxSize": "10m",
+    "path": "./data/logs"
   },
   "security": {
     "sessionTimeout": 86400,

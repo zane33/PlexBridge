@@ -179,6 +179,10 @@ const initializeApp = async () => {
       try {
         await database.initialize();
         logger.info('Database initialized successfully');
+        
+        // Initialize database logger
+        logger.initDatabaseLogger(database);
+        
         dbInitialized = true;
       } catch (dbError) {
         dbRetries--;
@@ -217,8 +221,8 @@ const initializeApp = async () => {
     logger.info('Database health check passed');
 
     // Start HTTP server
-    const PORT = process.env.PORT || config.server.port || 8080;
-    const HOST = config.server.host || '0.0.0.0';
+    const PORT = config.server.port;
+    const HOST = config.server.host;
     
     await new Promise((resolve, reject) => {
       const serverStartTimeout = setTimeout(() => {

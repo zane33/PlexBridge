@@ -1,19 +1,26 @@
 {
   "short_name": "PlexBridge",
-  "name": "PlexBridge - IPTV to Plex Bridge Interface",
-  "description": "Web interface for managing IPTV streams, channels, and Electronic Program Guide for Plex integration",
+  "name": "PlexBridge - Professional IPTV Management",
+  "description": "Modern web interface for managing IPTV streams, channels, and Electronic Program Guide for Plex integration",
   "icons": [
     {
-      "src": "favicon.ico",
-      "sizes": "64x64 32x32 24x24 16x16",
-      "type": "image/x-icon"
+      "src": "favicon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml"
+    },
+    {
+      "src": "logo192.png",
+      "sizes": "192x192",
+      "type": "image/png"
     }
   ],
   "start_url": ".",
   "display": "standalone",
-  "orientation": "portrait-primary",
-  "theme_color": "#1976d2",
-  "background_color": "#121212",
-  "categories": ["entertainment", "utilities"],
-  "lang": "en-US"
+  "orientation": "any",
+  "theme_color": "#6366f1",
+  "background_color": "#0f0f23",
+  "categories": ["entertainment", "utilities", "productivity"],
+  "lang": "en-US",
+  "scope": "/",
+  "id": "plexbridge-app"
 }

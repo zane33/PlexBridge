@@ -11,6 +11,9 @@ class StreamManager {
     this.activeStreams = new Map();
     this.streamProcesses = new Map();
     this.streamStats = new Map();
+    this.channelStreams = new Map(); // Track streams per channel
+    this.clientSessions = new Map(); // Track client sessions to prevent sharing
+    this.streamTimeouts = new Map(); // Track stream timeouts
   }
 
   // Universal stream format detection
@@ -433,13 +436,44 @@ class StreamManager {
     try {
       logger.stream('Creating stream proxy', { streamId, url: streamData.url });
 
-      const sessionId = `${streamId}_${Date.now()}`;
+      const clientIdentifier = this.generateClientIdentifier(req);
+      const sessionId = `${streamId}_${clientIdentifier}_${Date.now()}`;
       const { url, type, auth, headers: customHeaders = {} } = streamData;
 
-      // Check concurrent stream limit
+      // Check if client already has an active session for this stream
+      if (this.hasActiveClientSession(streamId, clientIdentifier)) {
+        logger.stream('Client already has active session for this stream', { 
+          streamId, 
+          clientIdentifier,
+          activeSession: this.getClientActiveSession(streamId, clientIdentifier)
+        });
+        res.status(409).json({ 
+          error: 'Client already has an active stream session for this channel',
+          activeSessionId: this.getClientActiveSession(streamId, clientIdentifier)
+        });
+        return;
+      }
+
+      // Check global concurrent stream limit
       if (this.activeStreams.size >= config.streams.maxConcurrent) {
         logger.stream('Maximum concurrent streams reached', { limit: config.streams.maxConcurrent });
         res.status(503).json({ error: 'Maximum concurrent streams reached' });
+        return;
+      }
+
+      // Check per-channel concurrent stream limit
+      const channelConcurrentLimit = config.plexlive?.streaming?.maxConcurrentPerChannel || 3;
+      const channelStreamCount = this.getChannelStreamCount(streamId);
+      if (channelStreamCount >= channelConcurrentLimit) {
+        logger.stream('Maximum concurrent streams per channel reached', { 
+          streamId, 
+          current: channelStreamCount, 
+          limit: channelConcurrentLimit 
+        });
+        res.status(503).json({ 
+          error: `Maximum concurrent streams per channel reached (${channelConcurrentLimit})`,
+          currentCount: channelStreamCount
+        });
         return;
       }
 
@@ -477,15 +511,33 @@ class StreamManager {
         return;
       }
 
-      // Store active stream
-      this.activeStreams.set(sessionId, {
+      // Store active stream with enhanced tracking
+      const streamInfo = {
         streamId,
         sessionId,
         process: streamProcess,
         startTime: Date.now(),
         clientIP: req.ip,
-        userAgent: req.get('User-Agent')
-      });
+        userAgent: req.get('User-Agent'),
+        clientIdentifier,
+        url: streamData.url,
+        type: streamData.type,
+        isUnique: true // Ensure stream uniqueness
+      };
+      
+      this.activeStreams.set(sessionId, streamInfo);
+      
+      // Track channel streams
+      if (!this.channelStreams.has(streamId)) {
+        this.channelStreams.set(streamId, new Set());
+      }
+      this.channelStreams.get(streamId).add(sessionId);
+      
+      // Track client sessions
+      if (!this.clientSessions.has(clientIdentifier)) {
+        this.clientSessions.set(clientIdentifier, new Map());
+      }
+      this.clientSessions.get(clientIdentifier).set(streamId, sessionId);
 
       // Track stream statistics
       this.streamStats.set(sessionId, {
@@ -527,10 +579,23 @@ class StreamManager {
         }
       });
 
+      // Set stream timeout
+      const streamTimeout = config.plexlive?.streaming?.streamTimeout || 30000;
+      const timeoutId = setTimeout(() => {
+        logger.stream('Stream timeout reached', { sessionId, timeout: streamTimeout });
+        this.cleanupStream(sessionId, 'timeout');
+      }, streamTimeout);
+      this.streamTimeouts.set(sessionId, timeoutId);
+
       // Cleanup on client disconnect
       req.on('close', () => {
         logger.stream('Client disconnected', { sessionId });
-        this.cleanupStream(sessionId);
+        this.cleanupStream(sessionId, 'disconnect');
+      });
+
+      // Reset timeout on data transfer (keep-alive)
+      streamProcess.stdout.on('data', () => {
+        this.resetStreamTimeout(sessionId, streamTimeout);
       });
 
       // Store in cache for session tracking
@@ -626,13 +691,63 @@ class StreamManager {
     return spawn(config.streams.ffmpegPath, args);
   }
 
-  cleanupStream(sessionId) {
+  // Generate unique client identifier
+  generateClientIdentifier(req) {
+    const ip = req.ip || req.connection.remoteAddress;
+    const userAgent = req.get('User-Agent') || 'unknown';
+    const xForwardedFor = req.get('X-Forwarded-For');
+    
+    // Create a more unique identifier including forwarded IP if available
+    const baseIdentifier = `${xForwardedFor || ip}_${userAgent}`;
+    return Buffer.from(baseIdentifier).toString('base64').substring(0, 16);
+  }
+
+  // Check if client has active session for stream
+  hasActiveClientSession(streamId, clientIdentifier) {
+    const clientSessions = this.clientSessions.get(clientIdentifier);
+    return clientSessions && clientSessions.has(streamId);
+  }
+
+  // Get client's active session for stream
+  getClientActiveSession(streamId, clientIdentifier) {
+    const clientSessions = this.clientSessions.get(clientIdentifier);
+    return clientSessions ? clientSessions.get(streamId) : null;
+  }
+
+  // Get number of active streams for a channel
+  getChannelStreamCount(streamId) {
+    const channelStreams = this.channelStreams.get(streamId);
+    return channelStreams ? channelStreams.size : 0;
+  }
+
+  // Reset stream timeout
+  resetStreamTimeout(sessionId, timeoutMs) {
+    // Clear existing timeout
+    const existingTimeout = this.streamTimeouts.get(sessionId);
+    if (existingTimeout) {
+      clearTimeout(existingTimeout);
+    }
+
+    // Set new timeout
+    const newTimeout = setTimeout(() => {
+      logger.stream('Stream timeout reached after reset', { sessionId, timeout: timeoutMs });
+      this.cleanupStream(sessionId, 'timeout');
+    }, timeoutMs);
+    
+    this.streamTimeouts.set(sessionId, newTimeout);
+  }
+
+  cleanupStream(sessionId, reason = 'manual') {
     const stream = this.activeStreams.get(sessionId);
     if (stream && stream.process) {
       try {
+        // Send SIGTERM first for graceful shutdown
         stream.process.kill('SIGTERM');
+        
+        // Force kill after 5 seconds if process still running
         setTimeout(() => {
           if (!stream.process.killed) {
+            logger.stream('Force killing unresponsive stream process', { sessionId });
             stream.process.kill('SIGKILL');
           }
         }, 5000);
@@ -641,11 +756,41 @@ class StreamManager {
       }
     }
 
+    // Clear timeout
+    const timeout = this.streamTimeouts.get(sessionId);
+    if (timeout) {
+      clearTimeout(timeout);
+      this.streamTimeouts.delete(sessionId);
+    }
+
+    // Remove from active streams
     this.activeStreams.delete(sessionId);
     this.streamStats.delete(sessionId);
+    
+    // Remove from channel streams tracking
+    if (stream) {
+      const channelStreams = this.channelStreams.get(stream.streamId);
+      if (channelStreams) {
+        channelStreams.delete(sessionId);
+        if (channelStreams.size === 0) {
+          this.channelStreams.delete(stream.streamId);
+        }
+      }
+      
+      // Remove from client sessions tracking
+      const clientSessions = this.clientSessions.get(stream.clientIdentifier);
+      if (clientSessions) {
+        clientSessions.delete(stream.streamId);
+        if (clientSessions.size === 0) {
+          this.clientSessions.delete(stream.clientIdentifier);
+        }
+      }
+    }
+    
+    // Remove from cache
     cacheService.removeStreamSession(sessionId);
     
-    logger.stream('Stream cleaned up', { sessionId });
+    logger.stream('Stream cleaned up', { sessionId, reason, streamId: stream?.streamId });
   }
 
   getActiveStreams() {
@@ -659,21 +804,128 @@ class StreamManager {
         duration: Date.now() - stream.startTime,
         clientIP: stream.clientIP,
         userAgent: stream.userAgent,
+        clientIdentifier: stream.clientIdentifier,
+        url: stream.url,
+        type: stream.type,
+        isUnique: stream.isUnique,
         bytesTransferred: stats?.bytesTransferred || 0
       });
     }
     return streams;
   }
 
+  // Get streams grouped by channel
+  getStreamsByChannel() {
+    const channelGroups = new Map();
+    
+    for (const [sessionId, stream] of this.activeStreams) {
+      const streamId = stream.streamId;
+      if (!channelGroups.has(streamId)) {
+        channelGroups.set(streamId, []);
+      }
+      
+      const stats = this.streamStats.get(sessionId);
+      channelGroups.get(streamId).push({
+        sessionId,
+        startTime: stream.startTime,
+        duration: Date.now() - stream.startTime,
+        clientIP: stream.clientIP,
+        userAgent: stream.userAgent,
+        clientIdentifier: stream.clientIdentifier,
+        bytesTransferred: stats?.bytesTransferred || 0
+      });
+    }
+    
+    return Object.fromEntries(channelGroups);
+  }
+
+  // Get concurrency metrics
+  getConcurrencyMetrics() {
+    const totalStreams = this.activeStreams.size;
+    const maxConcurrent = config.streams.maxConcurrent;
+    const channelCounts = new Map();
+    
+    for (const [channelId, sessions] of this.channelStreams) {
+      channelCounts.set(channelId, sessions.size);
+    }
+    
+    return {
+      totalActiveStreams: totalStreams,
+      maxConcurrentStreams: maxConcurrent,
+      utilizationPercentage: Math.round((totalStreams / maxConcurrent) * 100),
+      channelStreamCounts: Object.fromEntries(channelCounts),
+      uniqueClients: this.clientSessions.size
+    };
+  }
+
+  // Force cleanup specific client sessions
+  cleanupClientSessions(clientIdentifier, reason = 'forced') {
+    const clientSessions = this.clientSessions.get(clientIdentifier);
+    if (clientSessions) {
+      const sessionIds = Array.from(clientSessions.values());
+      logger.stream('Cleaning up client sessions', { 
+        clientIdentifier, 
+        sessionCount: sessionIds.length, 
+        reason 
+      });
+      
+      sessionIds.forEach(sessionId => {
+        this.cleanupStream(sessionId, reason);
+      });
+    }
+  }
+
+  // Force cleanup streams for a specific channel
+  cleanupChannelStreams(streamId, reason = 'forced') {
+    const channelStreams = this.channelStreams.get(streamId);
+    if (channelStreams) {
+      const sessionIds = Array.from(channelStreams);
+      logger.stream('Cleaning up channel streams', { 
+        streamId, 
+        sessionCount: sessionIds.length, 
+        reason 
+      });
+      
+      sessionIds.forEach(sessionId => {
+        this.cleanupStream(sessionId, reason);
+      });
+    }
+  }
+
   async cleanup() {
     logger.info('Cleaning up all active streams');
-    for (const sessionId of this.activeStreams.keys()) {
-      this.cleanupStream(sessionId);
+    const sessionIds = Array.from(this.activeStreams.keys());
+    
+    for (const sessionId of sessionIds) {
+      this.cleanupStream(sessionId, 'shutdown');
     }
+    
+    // Clear all tracking maps
+    this.channelStreams.clear();
+    this.clientSessions.clear();
+    
+    // Clear all timeouts
+    for (const timeout of this.streamTimeouts.values()) {
+      clearTimeout(timeout);
+    }
+    this.streamTimeouts.clear();
   }
 }
 
 // Create singleton instance
 const streamManager = new StreamManager();
+
+// Periodic cleanup of stale sessions (every 5 minutes)
+setInterval(() => {
+  const now = Date.now();
+  const maxSessionAge = 60 * 60 * 1000; // 1 hour
+  
+  for (const [sessionId, stream] of streamManager.activeStreams) {
+    if (now - stream.startTime > maxSessionAge) {
+      logger.stream('Cleaning up stale session', { sessionId, age: now - stream.startTime });
+      streamManager.cleanupStream(sessionId, 'stale');
+    }
+  }
+}, 5 * 60 * 1000);
 
 module.exports = streamManager;

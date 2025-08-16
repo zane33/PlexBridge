@@ -1,0 +1,381 @@
+// Updated with express.json() middleware fix - v2
+const express = require('express');
+const http = require('http');
+const socketIo = require('socket.io');
+const path = require('path');
+
+const app = express();
+const server = http.createServer(app);
+const io = socketIo(server, {
+  cors: {
+    origin: "*",
+    methods: ["GET", "POST"]
+  }
+});
+const PORT = 8080;
+
+// Basic middleware
+app.use(express.json());
+app.use(express.urlencoded({ extended: true }));
+
+// Serve static files from client/build
+app.use(express.static(path.join(__dirname, '../client/build')));
+
+const M3UParser = require('./services/m3uParser');
+
+// Real-time data tracking
+const activeStreams = new Map(); // Track active streaming sessions
+const streamSessions = [];
+let channelData = [];
+let streamData = [];
+
+// Function to get real metrics
+function getRealMetrics() {
+  const memUsage = process.memoryUsage();
+  
+  return {
+    streams: {
+      active: activeStreams.size,
+      maximum: 10, // Configuration-based
+      utilization: Math.round((activeStreams.size / 10) * 100)
+    },
+    system: {
+      uptime: Math.floor(process.uptime()),
+      platform: process.platform,
+      nodeVersion: process.version,
+      memory: {
+        heapUsed: memUsage.heapUsed,
+        heapTotal: memUsage.heapTotal,
+        rss: memUsage.rss,
+        external: memUsage.external
+      }
+    },
+    database: {
+      status: 'healthy'
+    },
+    cache: {
+      status: 'connected'
+    },
+    epg: {
+      sources: [],
+      programs: {
+        total: 0,
+        upcoming24h: 0
+      },
+      isInitialized: false
+    }
+  };
+}
+
+// Health check
+app.get('/health', (req, res) => {
+  res.json({ status: 'ok', message: 'Test server running' });
+});
+
+// Basic API endpoints
+app.get('/api/status', (req, res) => {
+  res.json({ status: 'running', mode: 'simplified' });
+});
+
+app.get('/api/metrics', (req, res) => {
+  res.json(getRealMetrics());
+});
+
+// Channel Manager API endpoints
+app.get('/api/channels', (req, res) => {
+  res.json(channelData);
+});
+
+app.get('/api/streams', (req, res) => {
+  res.json(streamData);
+});
+
+app.post('/api/channels', (req, res) => {
+  res.json({ success: true, message: 'Channel created (mock)' });
+});
+
+app.put('/api/channels/:id', (req, res) => {
+  res.json({ success: true, message: 'Channel updated (mock)' });
+});
+
+app.delete('/api/channels/:id', (req, res) => {
+  res.json({ success: true, message: 'Channel deleted (mock)' });
+});
+
+// Stream Manager API endpoints
+app.post('/api/streams', (req, res) => {
+  res.json({ success: true, message: 'Stream created (mock)' });
+});
+
+app.post('/api/streams/import', async (req, res) => {
+  try {
+    const { url, auth_username, auth_password, auto_create_channels, validate_streams } = req.body;
+
+    if (!url) {
+      return res.status(400).json({ 
+        success: false, 
+        error: 'URL is required' 
+      });
+    }
+
+    console.log(`Starting M3U import from: ${url}`);
+    
+    const parser = new M3UParser();
+    const channels = await parser.parseFromUrl(url, {
+      auth_username,
+      auth_password
+    });
+
+    if (validate_streams) {
+      console.log('Validating stream URLs...');
+      const validatedChannels = await parser.validateChannels(channels, {
+        validate_streams: true,
+        include_invalid: true
+      });
+      
+      if (auto_create_channels) {
+        // Store channels and streams in memory for this demo
+        let channelNumber = channelData.length + 1;
+        
+        for (const channel of validatedChannels) {
+          if (channel.status === 'valid' || !validate_streams) {
+            // Create channel
+            const newChannel = {
+              id: `ch_${Date.now()}_${channelNumber}`,
+              number: channelNumber++,
+              name: channel.name,
+              enabled: true,
+              logo: channel.logo || null,
+              epg_id: channel.epg_id || null,
+              group: channel.group || 'General',
+              created_at: new Date().toISOString()
+            };
+            
+            // Create stream
+            const newStream = {
+              id: `st_${Date.now()}_${channelNumber}`,
+              channel_id: newChannel.id,
+              name: `${channel.name} Stream`,
+              url: channel.url,
+              type: channel.type,
+              enabled: true,
+              auth_username: auth_username || null,
+              auth_password: auth_password || null,
+              created_at: new Date().toISOString()
+            };
+            
+            channelData.push(newChannel);
+            streamData.push(newStream);
+          }
+        }
+        
+        console.log(`Successfully imported ${validatedChannels.filter(c => c.status === 'valid').length} channels`);
+      }
+
+      return res.json({
+        success: true,
+        message: `M3U imported successfully`,
+        imported_count: validatedChannels.filter(c => c.status === 'valid').length,
+        total_found: channels.length,
+        validation_results: validatedChannels,
+        auto_created: auto_create_channels
+      });
+    } else {
+      if (auto_create_channels) {
+        // Store channels without validation
+        let channelNumber = channelData.length + 1;
+        
+        for (const channel of channels) {
+          const newChannel = {
+            id: `ch_${Date.now()}_${channelNumber}`,
+            number: channelNumber++,
+            name: channel.name,
+            enabled: true,
+            logo: channel.logo || null,
+            epg_id: channel.epg_id || null,
+            group: channel.group || 'General',
+            created_at: new Date().toISOString()
+          };
+          
+          const newStream = {
+            id: `st_${Date.now()}_${channelNumber}`,
+            channel_id: newChannel.id,
+            name: `${channel.name} Stream`,
+            url: channel.url,
+            type: channel.type,
+            enabled: true,
+            auth_username: auth_username || null,
+            auth_password: auth_password || null,
+            created_at: new Date().toISOString()
+          };
+          
+          channelData.push(newChannel);
+          streamData.push(newStream);
+        }
+      }
+
+      return res.json({
+        success: true,
+        message: `M3U parsed successfully`,
+        imported_count: channels.length,
+        channels: channels,
+        auto_created: auto_create_channels
+      });
+    }
+  } catch (error) {
+    console.error('M3U import error:', error);
+    res.status(500).json({
+      success: false,
+      error: error.message
+    });
+  }
+});
+
+app.put('/api/streams/:id', (req, res) => {
+  res.json({ success: true, message: 'Stream updated (mock)' });
+});
+
+app.delete('/api/streams/:id', (req, res) => {
+  const { id } = req.params;
+  
+  // Find the stream to delete
+  const streamIndex = streamData.findIndex(stream => stream.id === id);
+  
+  if (streamIndex === -1) {
+    return res.status(404).json({ 
+      success: false, 
+      error: 'Stream not found' 
+    });
+  }
+  
+  const deletedStream = streamData[streamIndex];
+  
+  // Remove the stream from the array
+  streamData.splice(streamIndex, 1);
+  
+  // Remove the associated channel if it exists
+  const channelIndex = channelData.findIndex(channel => channel.id === deletedStream.channel_id);
+  if (channelIndex !== -1) {
+    channelData.splice(channelIndex, 1);
+  }
+  
+  console.log(`Stream deleted: ${deletedStream.name} (ID: ${id})`);
+  
+  res.json({ 
+    success: true, 
+    message: 'Stream deleted successfully',
+    deleted_stream: {
+      id: deletedStream.id,
+      name: deletedStream.name
+    }
+  });
+});
+
+// EPG Manager API endpoints
+app.get('/api/epg/sources', (req, res) => {
+  res.json([]);
+});
+
+app.get('/api/epg/channels', (req, res) => {
+  res.json([]);
+});
+
+app.get('/api/epg/programs', (req, res) => {
+  res.json([]);
+});
+
+// Settings API endpoints
+app.get('/api/settings', (req, res) => {
+  res.json({});
+});
+
+app.post('/api/settings', (req, res) => {
+  res.json({ success: true, message: 'Settings saved (mock)' });
+});
+
+// Stream playback endpoints for testing
+app.get('/stream/:streamId', (req, res) => {
+  const { streamId } = req.params;
+  const clientId = req.ip + '_' + Date.now();
+  
+  console.log(`Stream request for ${streamId} from ${req.ip}`);
+  
+  // Track active stream session
+  activeStreams.set(clientId, {
+    streamId,
+    clientIp: req.ip,
+    startTime: new Date(),
+    userAgent: req.get('User-Agent')
+  });
+  
+  // Find the stream
+  const stream = streamData.find(s => s.id === streamId);
+  if (!stream) {
+    return res.status(404).json({ error: 'Stream not found' });
+  }
+  
+  // For testing, redirect to the actual stream URL
+  // In production, this would proxy/transcode the stream
+  res.redirect(302, stream.url);
+  
+  // Remove from active streams after 30 seconds (demo)
+  setTimeout(() => {
+    activeStreams.delete(clientId);
+    console.log(`Stream session ended for ${streamId}`);
+  }, 30000);
+});
+
+app.get('/streams/:streamId/info', (req, res) => {
+  const { streamId } = req.params;
+  const stream = streamData.find(s => s.id === streamId);
+  
+  if (!stream) {
+    return res.status(404).json({ error: 'Stream not found' });
+  }
+  
+  res.json({
+    ...stream,
+    playback_url: `/stream/${streamId}`,
+    active_sessions: Array.from(activeStreams.values()).filter(s => s.streamId === streamId).length
+  });
+});
+
+// Socket.IO connection handling
+io.on('connection', (socket) => {
+  console.log(`Client connected: ${socket.id}`);
+  
+  // Send initial real metrics
+  socket.emit('metrics:update', getRealMetrics());
+  
+  socket.on('join-logs', () => {
+    socket.join('logs');
+    console.log(`Client ${socket.id} joined logs room`);
+  });
+
+  socket.on('join-metrics', () => {
+    socket.join('metrics');
+    console.log(`Client ${socket.id} joined metrics room`);
+  });
+
+  socket.on('disconnect', () => {
+    console.log(`Client disconnected: ${socket.id}`);
+  });
+});
+
+// Send real-time metrics updates every 5 seconds
+setInterval(() => {
+  io.to('metrics').emit('metrics:update', getRealMetrics());
+}, 5000);
+
+// Serve React app for all other routes
+app.get('*', (req, res) => {
+  res.sendFile(path.join(__dirname, '../client/build/index.html'));
+});
+
+// Start server
+server.listen(PORT, '0.0.0.0', () => {
+  console.log(`✅ Test server running on http://0.0.0.0:${PORT}`);
+  console.log(`📱 Web interface: http://localhost:${PORT}`);
+  console.log(`🔍 Health check: http://localhost:${PORT}/health`);
+  console.log(`🔌 Socket.IO server ready`);
+});

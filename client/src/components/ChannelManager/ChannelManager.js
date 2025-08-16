@@ -113,42 +113,34 @@ function ChannelManager() {
     try {
       console.log('Fetching available EPG IDs...');
       
-      // Get all available EPG IDs from all sources
-      const sourcesResponse = await api.get('/api/epg/sources');
-      const sources = sourcesResponse.data.filter(s => s && s.enabled);
-      console.log('Found EPG sources:', sources.length);
+      // Get all available EPG channels from the consolidated endpoint
+      const channelsResponse = await api.get('/api/epg/channels');
+      console.log('EPG channels response:', channelsResponse.data);
       
-      let allEpgIds = [];
-      for (const source of sources) {
-        try {
-          console.log(`Fetching channels for source: ${source.name} (${source.id})`);
-          const channelsResponse = await api.get(`/api/epg/sources/${source.id}/channels`);
-          console.log('EPG channels response:', channelsResponse.data);
-          
-          if (channelsResponse.data && channelsResponse.data.available_channels) {
-            const sourceIds = channelsResponse.data.available_channels
-              .filter(ch => ch && ch.epg_id) // Only include valid channels with EPG IDs
-              .map(ch => ({
-                epg_id: ch.epg_id,
-                program_count: ch.program_count || 0,
-                source_name: source.name || 'Unknown Source',
-                channel_name: ch.channel_name || ch.epg_id
-              }));
-            console.log(`Found ${sourceIds.length} EPG IDs from source ${source.name}`);
-            allEpgIds.push(...sourceIds);
-          } else {
-            console.warn(`No available_channels found for source ${source.name}`);
-          }
-        } catch (error) {
-          console.error(`Failed to fetch EPG IDs for source ${source.name}:`, error.response?.data || error);
-          enqueueSnackbar(`Failed to load EPG data from ${source.name}`, { variant: 'warning' });
+      if (channelsResponse.data && channelsResponse.data.available_channels) {
+        const allEpgIds = channelsResponse.data.available_channels
+          .filter(ch => ch && ch.epg_id) // Only include valid channels with EPG IDs
+          .map(ch => ({
+            epg_id: ch.epg_id,
+            program_count: ch.program_count || 0,
+            source_name: ch.source_name || 'Unknown Source',
+            channel_name: ch.channel_name || ch.epg_id,
+            icon_url: ch.icon_url,
+            source_id: ch.source_id
+          }));
+        
+        console.log('Total EPG IDs found:', allEpgIds.length);
+        setAvailableEpgIds(allEpgIds);
+        
+        if (allEpgIds.length === 0) {
+          enqueueSnackbar('No EPG channel IDs found. Check EPG sources and refresh.', { 
+            variant: 'info',
+            autoHideDuration: 6000
+          });
         }
-      }
-      
-      console.log('Total EPG IDs found:', allEpgIds.length);
-      setAvailableEpgIds(allEpgIds);
-      
-      if (allEpgIds.length === 0) {
+      } else {
+        console.warn('No available_channels found in response');
+        setAvailableEpgIds([]);
         enqueueSnackbar('No EPG channel IDs found. Check EPG sources and refresh.', { 
           variant: 'info',
           autoHideDuration: 6000
@@ -377,13 +369,36 @@ function ChannelManager() {
         display="flex" 
         justifyContent="space-between" 
         alignItems={isMobile ? 'flex-start' : 'center'} 
-        mb={3}
+        mb={4}
         flexDirection={isMobile ? 'column' : 'row'}
         gap={isMobile ? 2 : 0}
       >
-        <Typography variant="h4" sx={{ mb: isMobile ? 1 : 0 }}>
-          Channel Manager
-        </Typography>
+        <Box>
+          <Typography 
+            variant="h4" 
+            sx={{ 
+              fontWeight: 700,
+              background: 'linear-gradient(135deg, #6366f1 0%, #8b5cf6 100%)',
+              backgroundClip: 'text',
+              WebkitBackgroundClip: 'text',
+              WebkitTextFillColor: 'transparent',
+              letterSpacing: '-0.025em',
+              mb: 0.5
+            }}
+          >
+            Channel Manager
+          </Typography>
+          <Typography 
+            variant="body2" 
+            sx={{ 
+              color: 'text.secondary',
+              fontWeight: 500,
+              display: { xs: 'none', sm: 'block' },
+            }}
+          >
+            Manage your IPTV channels and streaming configuration
+          </Typography>
+        </Box>
         
         <Box display="flex" gap={1} flexWrap="wrap">
           {selectedChannels.length > 0 && (
@@ -423,8 +438,15 @@ function ChannelManager() {
         </Box>
       </Box>
 
-      <Card>
-        <CardContent sx={{ p: { xs: 1, sm: 3 } }}>
+      <Card 
+        sx={{ 
+          background: 'linear-gradient(135deg, rgba(99, 102, 241, 0.05) 0%, rgba(139, 92, 246, 0.05) 100%)',
+          border: '1px solid rgba(99, 102, 241, 0.15)',
+          borderRadius: 3,
+          overflow: 'hidden'
+        }}
+      >
+        <CardContent sx={{ p: { xs: 2, sm: 3 } }}>
           {loading ? renderSkeletonTable() : (
             <TableContainer 
               component={Paper} 
@@ -452,25 +474,103 @@ function ChannelManager() {
                   </TableRow>
                 </TableHead>
                 <TableBody>
-                  {paginatedChannels.map((channel) => (
-                    <TableRow key={channel.id} hover>
+                  {paginatedChannels.map((channel, index) => (
+                    <TableRow 
+                      key={channel.id} 
+                      hover
+                      sx={{
+                        transition: 'all 0.2s ease',
+                        animation: `fadeInUp 0.3s ease ${index * 0.05}s both`,
+                        '@keyframes fadeInUp': {
+                          '0%': {
+                            opacity: 0,
+                            transform: 'translateY(20px)'
+                          },
+                          '100%': {
+                            opacity: 1,
+                            transform: 'translateY(0)'
+                          }
+                        },
+                        '&:hover': {
+                          backgroundColor: 'rgba(99, 102, 241, 0.08)',
+                          transform: 'scale(1.01)',
+                          boxShadow: '0 4px 12px rgba(99, 102, 241, 0.15)',
+                        }
+                      }}
+                    >
                       <TableCell padding="checkbox">
                         <Checkbox
                           checked={selectedChannels.includes(channel.id)}
                           onChange={() => handleSelectChannel(channel.id)}
+                          sx={{
+                            transition: 'all 0.2s ease',
+                            '&:hover': {
+                              transform: 'scale(1.1)',
+                            }
+                          }}
                         />
                       </TableCell>
                       <TableCell>
-                        <Typography variant="body2" fontWeight="bold">
+                        <Box 
+                          sx={{ 
+                            width: 32, 
+                            height: 32,
+                            borderRadius: 2,
+                            background: 'linear-gradient(135deg, #6366f1 0%, #8b5cf6 100%)',
+                            display: 'flex',
+                            alignItems: 'center',
+                            justifyContent: 'center',
+                            color: 'white',
+                            fontWeight: 700,
+                            fontSize: '0.875rem'
+                          }}
+                        >
                           {channel.number}
-                        </Typography>
+                        </Box>
                       </TableCell>
                       <TableCell>
                         <Box display="flex" alignItems="center">
-                          <TvIcon sx={{ mr: 1, color: 'primary.main' }} />
-                          <Typography variant="body2" noWrap>
-                            {channel.name}
-                          </Typography>
+                          <Box 
+                            sx={{ 
+                              width: 32, 
+                              height: 32,
+                              borderRadius: 2,
+                              background: 'linear-gradient(135deg, rgba(99, 102, 241, 0.1) 0%, rgba(139, 92, 246, 0.1) 100%)',
+                              display: 'flex',
+                              alignItems: 'center',
+                              justifyContent: 'center',
+                              mr: 2,
+                              transition: 'all 0.2s ease',
+                              '&:hover': {
+                                transform: 'rotate(5deg) scale(1.1)',
+                              }
+                            }}
+                          >
+                            <TvIcon sx={{ fontSize: 18, color: 'primary.main' }} />
+                          </Box>
+                          <Box>
+                            <Typography 
+                              variant="body2" 
+                              sx={{ 
+                                fontWeight: 600,
+                                color: 'text.primary',
+                                mb: 0.25
+                              }}
+                            >
+                              {channel.name}
+                            </Typography>
+                            {channel.epg_id && (
+                              <Typography 
+                                variant="caption" 
+                                sx={{ 
+                                  color: 'text.secondary',
+                                  fontSize: '0.7rem'
+                                }}
+                              >
+                                EPG: {channel.epg_id}
+                              </Typography>
+                            )}
+                          </Box>
                         </Box>
                       </TableCell>
                       <TableCell sx={{ display: { xs: 'none', sm: 'table-cell' } }}>
@@ -479,21 +579,39 @@ function ChannelManager() {
                         </Typography>
                       </TableCell>
                       <TableCell>
-                        <Box display="flex" alignItems="center" gap={1}>
+                        <Box display="flex" alignItems="center" gap={1.5}>
                           <Chip
-                            label={channel.stream_count || 0}
+                            label={`${channel.stream_count || 0} streams`}
                             size="small"
-                            color={channel.stream_count > 0 ? 'primary' : 'default'}
-                            variant="outlined"
+                            sx={{
+                              background: channel.stream_count > 0 
+                                ? 'linear-gradient(135deg, #6366f1 0%, #8b5cf6 100%)'
+                                : 'rgba(148, 163, 184, 0.2)',
+                              color: channel.stream_count > 0 ? '#ffffff' : 'text.secondary',
+                              fontWeight: 600,
+                              fontSize: '0.7rem',
+                              transition: 'all 0.2s ease',
+                              '&:hover': {
+                                transform: 'scale(1.05)',
+                              }
+                            }}
                           />
                           {channel.stream_count > 0 && (
                             <Tooltip title="Manage Streams">
                               <IconButton 
                                 onClick={() => window.location.href = `/streams?channel=${channel.id}`}
                                 size="small"
-                                color="info"
+                                sx={{
+                                  background: 'linear-gradient(135deg, rgba(59, 130, 246, 0.1) 0%, rgba(29, 78, 216, 0.1) 100%)',
+                                  transition: 'all 0.2s ease',
+                                  '&:hover': {
+                                    background: 'linear-gradient(135deg, #3b82f6 0%, #1d4ed8 100%)',
+                                    color: 'white',
+                                    transform: 'scale(1.1)',
+                                  }
+                                }}
                               >
-                                <StreamIcon />
+                                <StreamIcon sx={{ fontSize: 16 }} />
                               </IconButton>
                             </Tooltip>
                           )}
@@ -501,8 +619,23 @@ function ChannelManager() {
                       </TableCell>
                       <TableCell>
                         <Chip
-                          label={channel.enabled ? 'Enabled' : 'Disabled'}
-                          color={channel.enabled ? 'success' : 'default'}
+                          label={channel.enabled ? 'Active' : 'Inactive'}
+                          sx={{
+                            background: channel.enabled 
+                              ? 'linear-gradient(135deg, #10b981 0%, #059669 100%)'
+                              : 'linear-gradient(135deg, #6b7280 0%, #4b5563 100%)',
+                            color: '#ffffff',
+                            fontWeight: 600,
+                            fontSize: '0.7rem',
+                            transition: 'all 0.2s ease',
+                            '&:hover': {
+                              transform: 'scale(1.05)',
+                            },
+                            '&::before': {
+                              content: channel.enabled ? '"●"' : '"○"',
+                              marginRight: '4px',
+                            }
+                          }}
                           size="small"
                         />
                       </TableCell>
@@ -512,22 +645,53 @@ function ChannelManager() {
                             <IconButton 
                               onClick={() => handleEdit(channel)} 
                               size="small"
-                              color="primary"
+                              sx={{
+                                background: 'linear-gradient(135deg, rgba(99, 102, 241, 0.1) 0%, rgba(139, 92, 246, 0.1) 100%)',
+                                transition: 'all 0.2s ease',
+                                '&:hover': {
+                                  background: 'linear-gradient(135deg, #6366f1 0%, #8b5cf6 100%)',
+                                  color: 'white',
+                                  transform: 'scale(1.1) rotate(5deg)',
+                                  boxShadow: '0 4px 12px rgba(99, 102, 241, 0.4)',
+                                }
+                              }}
                             >
-                              <EditIcon />
+                              <EditIcon sx={{ fontSize: 16 }} />
                             </IconButton>
                           </Tooltip>
                           <Tooltip title="Delete Channel">
                             <IconButton
                               onClick={() => handleDelete(channel)}
                               size="small"
-                              color="error"
                               disabled={deleting === channel.id}
+                              sx={{
+                                background: 'linear-gradient(135deg, rgba(239, 68, 68, 0.1) 0%, rgba(220, 38, 38, 0.1) 100%)',
+                                transition: 'all 0.2s ease',
+                                '&:hover:not(:disabled)': {
+                                  background: 'linear-gradient(135deg, #ef4444 0%, #dc2626 100%)',
+                                  color: 'white',
+                                  transform: 'scale(1.1)',
+                                  boxShadow: '0 4px 12px rgba(239, 68, 68, 0.4)',
+                                },
+                                '&:disabled': {
+                                  background: 'rgba(148, 163, 184, 0.1)',
+                                }
+                              }}
                             >
                               {deleting === channel.id ? (
-                                <CircularProgress size={20} />
+                                <CircularProgress 
+                                  size={16} 
+                                  sx={{ 
+                                    color: 'primary.main',
+                                    animation: 'spin 1s linear infinite',
+                                    '@keyframes spin': {
+                                      '0%': { transform: 'rotate(0deg)' },
+                                      '100%': { transform: 'rotate(360deg)' },
+                                    }
+                                  }} 
+                                />
                               ) : (
-                                <DeleteIcon />
+                                <DeleteIcon sx={{ fontSize: 16 }} />
                               )}
                             </IconButton>
                           </Tooltip>
@@ -670,20 +834,29 @@ function ChannelManager() {
                   </MenuItem>
                   {availableEpgIds.filter(epgData => epgData && epgData.epg_id).map((epgData, index) => (
                     <MenuItem key={index} value={epgData.epg_id || ''}>
-                      <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-                        <Typography>{epgData.epg_id || 'Unknown'}</Typography>
-                        <Chip 
-                          label={`${epgData.program_count || 0} programs`} 
-                          size="small" 
-                          color="primary" 
-                        />
-                        {epgData.source_name && (
+                      <Box sx={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-start', gap: 0.5, py: 0.5 }}>
+                        <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                          <Typography fontWeight="bold" color="primary">
+                            {epgData.channel_name || epgData.epg_id || 'Unknown'}
+                          </Typography>
                           <Chip 
-                            label={epgData.source_name} 
+                            label={`${epgData.program_count || 0} programs`} 
                             size="small" 
-                            variant="outlined" 
+                            color="primary" 
                           />
-                        )}
+                        </Box>
+                        <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                          <Typography variant="caption" color="text.secondary">
+                            ID: {epgData.epg_id || 'Unknown'}
+                          </Typography>
+                          {epgData.source_name && (
+                            <Chip 
+                              label={epgData.source_name} 
+                              size="small" 
+                              variant="outlined" 
+                            />
+                          )}
+                        </Box>
                       </Box>
                     </MenuItem>
                   ))}

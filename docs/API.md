@@ -1,29 +1,37 @@
-# PlexTV API Documentation
+# PlexBridge API Documentation
 
 ## API Overview
 
-PlexTV provides a comprehensive REST API for managing channels, streams, EPG data, and system configuration. The API follows RESTful conventions and returns JSON responses.
+PlexBridge provides a comprehensive REST API for managing channels, streams, EPG data, and system configuration. The API follows RESTful conventions with full input validation and structured error responses.
 
 **Base URL**: `http://localhost:8080`  
 **Content-Type**: `application/json`  
-**Rate Limiting**: 1000 requests per 15 minutes per IP
+**Rate Limiting**: 1000 requests per 15 minutes per IP address  
+**Validation**: Joi schema validation on all inputs  
+**Caching**: Redis-backed response caching with automatic invalidation
 
-## Authentication
+## Authentication & Security
 
-Currently, the API uses IP-based rate limiting. Future versions will include JWT-based authentication.
+- **Rate Limiting**: 1000 requests per 15-minute window per IP address
+- **Input Validation**: All request bodies validated using Joi schemas
+- **CORS Policy**: Configurable cross-origin resource sharing
+- **Security Headers**: Helmet.js middleware for security headers
+- **Error Sanitization**: Sensitive information filtered from error responses
 
 ## API Endpoints
 
 ### 1. Channel Management
 
 #### GET /api/channels
-Retrieve all channels with stream counts.
+Retrieve all channels with stream statistics and ordering by channel number.
+
+**Query Parameters**: None
 
 **Response**:
 ```json
 [
   {
-    "id": "uuid-string",
+    "id": "550e8400-e29b-41d4-a716-446655440000",
     "name": "CNN HD",
     "number": 101,
     "enabled": 1,
@@ -31,22 +39,27 @@ Retrieve all channels with stream counts.
     "epg_id": "cnn.us",
     "stream_count": 2,
     "has_active_stream": 1,
-    "created_at": "2024-01-01T00:00:00.000Z",
-    "updated_at": "2024-01-01T00:00:00.000Z"
+    "created_at": "2024-01-15T12:00:00.000Z",
+    "updated_at": "2024-01-15T12:00:00.000Z"
   }
 ]
 ```
 
+**Features**:
+- Results ordered by channel number
+- Includes stream count and active stream status
+- Automatic cache invalidation on changes
+
 #### GET /api/channels/:id
-Retrieve a specific channel with its streams.
+Retrieve a specific channel with associated streams.
 
 **Parameters**:
-- `id` (path): Channel UUID
+- `id` (path, required): Channel UUID
 
 **Response**:
 ```json
 {
-  "id": "uuid-string",
+  "id": "550e8400-e29b-41d4-a716-446655440000",
   "name": "CNN HD", 
   "number": 101,
   "enabled": 1,
@@ -55,18 +68,29 @@ Retrieve a specific channel with its streams.
   "stream_count": 2,
   "streams": [
     {
-      "id": "stream-uuid",
-      "name": "CNN Primary",
-      "url": "https://cnn.example.com/playlist.m3u8",
+      "id": "stream-uuid-here",
+      "channel_id": "550e8400-e29b-41d4-a716-446655440000",
+      "name": "CNN Primary Stream",
+      "url": "https://cnn-live.example.com/playlist.m3u8",
       "type": "hls",
-      "enabled": 1
+      "backup_urls": "[]",
+      "auth_username": null,
+      "auth_password": null,
+      "headers": "{}",
+      "protocol_options": "{}",
+      "enabled": 1,
+      "created_at": "2024-01-15T12:00:00.000Z",
+      "updated_at": "2024-01-15T12:00:00.000Z"
     }
   ]
 }
 ```
 
+**Error Responses**:
+- `404` - Channel not found
+
 #### POST /api/channels
-Create a new channel.
+Create a new channel with full validation.
 
 **Request Body**:
 ```json
@@ -79,30 +103,54 @@ Create a new channel.
 }
 ```
 
-**Validation Rules**:
-- `name`: Required, max 255 characters
-- `number`: Required, integer 1-9999, must be unique
-- `enabled`: Boolean, default true
-- `logo`: Optional, valid URL, max 500 characters
-- `epg_id`: Optional, max 255 characters
+**Validation Schema**:
+```javascript
+{
+  "name": "string, required, max 255 characters",
+  "number": "integer, required, 1-9999, unique",
+  "enabled": "boolean, default true",
+  "logo": "string/null, max 500 characters, valid URI",
+  "epg_id": "string/null, max 255 characters"
+}
+```
 
-**Response**: Created channel object with generated UUID
+**Response** (201 Created):
+```json
+{
+  "id": "generated-uuid",
+  "name": "BBC News HD",
+  "number": 102,
+  "enabled": 1,
+  "logo": "https://example.com/bbc-logo.png",
+  "epg_id": "bbc.uk",
+  "created_at": "2024-01-15T12:30:00.000Z",
+  "updated_at": "2024-01-15T12:30:00.000Z"
+}
+```
+
+**Error Responses**:
+- `400` - Validation error or channel number already exists
 
 #### PUT /api/channels/:id
 Update an existing channel.
 
 **Parameters**:
-- `id` (path): Channel UUID
+- `id` (path, required): Channel UUID
 
-**Request Body**: Same as POST, all fields required
+**Request Body**: Same validation as POST endpoint
 
 **Response**: Updated channel object
 
+**Features**:
+- Automatic cache invalidation (`lineup:channels`)
+- Structured logging of changes
+- Unique constraint validation on channel number
+
 #### DELETE /api/channels/:id
-Delete a channel and all associated streams.
+Delete a channel and cascade delete associated streams.
 
 **Parameters**:
-- `id` (path): Channel UUID
+- `id` (path, required): Channel UUID
 
 **Response**:
 ```json
@@ -110,6 +158,11 @@ Delete a channel and all associated streams.
   "message": "Channel deleted successfully"
 }
 ```
+
+**Features**:
+- Cascades to delete associated streams
+- Cache invalidation
+- Returns 404 if channel doesn't exist
 
 ### 2. Stream Management
 

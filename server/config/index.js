@@ -26,8 +26,8 @@ const dataDir = process.env.DATA_PATH || getDataDir();
 // Default configuration
 const defaultConfig = {
   server: {
-    port: process.env.PORT || 8080,
-    host: '0.0.0.0',
+    port: parseInt(process.env.HTTP_PORT) || parseInt(process.env.PORT) || 8080,
+    host: process.env.HOST_IP || process.env.BIND_ADDRESS || '0.0.0.0',
     environment: process.env.NODE_ENV || 'development'
   },
   database: {
@@ -115,6 +115,75 @@ const defaultConfig = {
     logs: process.env.LOG_PATH || path.join(dataDir, 'logs'),
     database: process.env.DB_PATH || path.join(dataDir, 'database'),
     logos: process.env.LOGOS_PATH || path.join(dataDir, 'logos')
+  },
+  plexlive: {
+    ssdp: {
+      enabled: process.env.SSDP_ENABLED !== 'false',
+      discoverableInterval: parseInt(process.env.SSDP_DISCOVERABLE_INTERVAL) || 30000,
+      announceInterval: parseInt(process.env.SSDP_ANNOUNCE_INTERVAL) || 1800000,
+      multicastAddress: process.env.SSDP_MULTICAST_ADDRESS || '239.255.255.250',
+      deviceDescription: process.env.SSDP_DEVICE_DESCRIPTION || 'IPTV to Plex Bridge Interface'
+    },
+    streaming: {
+      maxConcurrentStreams: parseInt(process.env.MAX_CONCURRENT_STREAMS) || 10,
+      streamTimeout: parseInt(process.env.STREAM_TIMEOUT) || 30000,
+      reconnectAttempts: parseInt(process.env.RECONNECT_ATTEMPTS) || 3,
+      bufferSize: parseInt(process.env.STREAM_BUFFER_SIZE) || 65536,
+      adaptiveBitrate: process.env.ADAPTIVE_BITRATE !== 'false',
+      preferredProtocol: process.env.PREFERRED_PROTOCOL || 'hls'
+    },
+    transcoding: {
+      enabled: process.env.TRANSCODE_ENABLED !== 'false',
+      hardwareAcceleration: process.env.HW_ACCELERATION === 'true',
+      preset: process.env.TRANSCODE_PRESET || 'medium',
+      videoCodec: process.env.VIDEO_CODEC || 'h264',
+      audioCodec: process.env.AUDIO_CODEC || 'aac',
+      qualityProfiles: {
+        low: {
+          resolution: process.env.LOW_RESOLUTION || '720x480',
+          bitrate: process.env.LOW_BITRATE || '1000k'
+        },
+        medium: {
+          resolution: process.env.MEDIUM_RESOLUTION || '1280x720',
+          bitrate: process.env.MEDIUM_BITRATE || '2500k'
+        },
+        high: {
+          resolution: process.env.HIGH_RESOLUTION || '1920x1080',
+          bitrate: process.env.HIGH_BITRATE || '5000k'
+        }
+      },
+      defaultProfile: process.env.DEFAULT_QUALITY_PROFILE || 'medium'
+    },
+    caching: {
+      enabled: process.env.CACHE_ENABLED !== 'false',
+      duration: parseInt(process.env.CACHE_DURATION) || 3600,
+      maxSize: parseInt(process.env.CACHE_MAX_SIZE) || 1073741824, // 1GB
+      cleanup: {
+        enabled: process.env.CACHE_CLEANUP_ENABLED !== 'false',
+        interval: parseInt(process.env.CACHE_CLEANUP_INTERVAL) || 3600000, // 1 hour
+        maxAge: parseInt(process.env.CACHE_MAX_AGE) || 86400000 // 24 hours
+      }
+    },
+    device: {
+      name: process.env.DEVICE_NAME || 'PlexTV',
+      id: process.env.DEVICE_ID || 'PLEXTV001',
+      tunerCount: parseInt(process.env.TUNER_COUNT) || 4,
+      firmware: process.env.FIRMWARE_VERSION || '1.0.0',
+      baseUrl: process.env.BASE_URL || `http://${process.env.ADVERTISED_HOST || 'localhost'}:${process.env.HTTP_PORT || process.env.PORT || 8080}`
+    },
+    network: {
+      bindAddress: process.env.HOST_IP || process.env.BIND_ADDRESS || '0.0.0.0',
+      advertisedHost: process.env.ADVERTISED_HOST || null,
+      streamingPort: parseInt(process.env.STREAM_PORT) || parseInt(process.env.STREAMING_PORT) || parseInt(process.env.HTTP_PORT) || parseInt(process.env.PORT) || 8080,
+      discoveryPort: parseInt(process.env.DISCOVERY_PORT) || parseInt(process.env.SSDP_PORT) || 1900,
+      ipv6Enabled: process.env.IPV6_ENABLED === 'true'
+    },
+    compatibility: {
+      hdHomeRunMode: process.env.HDHOMERUN_MODE !== 'false',
+      plexPassRequired: process.env.PLEX_PASS_REQUIRED === 'true',
+      gracePeriod: parseInt(process.env.GRACE_PERIOD) || 10000,
+      channelLogoFallback: process.env.CHANNEL_LOGO_FALLBACK !== 'false'
+    }
   }
 };
 
@@ -144,18 +213,45 @@ function loadCustomConfig() {
     path.join(__dirname, '../../config/default.json')
   ];
 
+  let mergedConfig = defaultConfig;
+
   for (const configPath of configPaths) {
     if (fs.existsSync(configPath)) {
       try {
         const customConfig = JSON.parse(fs.readFileSync(configPath, 'utf8'));
-        return deepMerge(defaultConfig, customConfig);
+        // Merge file config with defaults, but environment variables (in defaultConfig) take precedence
+        mergedConfig = deepMerge(mergedConfig, customConfig);
       } catch (error) {
         console.warn(`Failed to load config from ${configPath}:`, error.message);
       }
     }
   }
 
-  return defaultConfig;
+  // Apply environment variable overrides again to ensure they take precedence over file configs
+  const envOverrides = {
+    server: {
+      port: parseInt(process.env.HTTP_PORT) || parseInt(process.env.PORT) || mergedConfig.server.port,
+      host: process.env.HOST_IP || process.env.BIND_ADDRESS || mergedConfig.server.host,
+      environment: process.env.NODE_ENV || mergedConfig.server.environment
+    },
+    plexlive: {
+      ...mergedConfig.plexlive,
+      network: {
+        ...mergedConfig.plexlive.network,
+        bindAddress: process.env.HOST_IP || process.env.BIND_ADDRESS || mergedConfig.plexlive.network.bindAddress,
+        advertisedHost: process.env.ADVERTISED_HOST || mergedConfig.plexlive.network.advertisedHost,
+        streamingPort: parseInt(process.env.STREAM_PORT) || parseInt(process.env.STREAMING_PORT) || parseInt(process.env.HTTP_PORT) || parseInt(process.env.PORT) || mergedConfig.plexlive.network.streamingPort,
+        discoveryPort: parseInt(process.env.DISCOVERY_PORT) || parseInt(process.env.SSDP_PORT) || mergedConfig.plexlive.network.discoveryPort,
+        ipv6Enabled: process.env.IPV6_ENABLED === 'true' || mergedConfig.plexlive.network.ipv6Enabled
+      },
+      device: {
+        ...mergedConfig.plexlive.device,
+        baseUrl: process.env.BASE_URL || `http://${process.env.ADVERTISED_HOST || 'localhost'}:${process.env.HTTP_PORT || process.env.PORT || mergedConfig.server.port}`
+      }
+    }
+  };
+
+  return deepMerge(mergedConfig, envOverrides);
 }
 
 // Deep merge utility
@@ -218,8 +314,76 @@ function ensureDirectories(config) {
   }
 }
 
+// Configuration validation and logging
+let configLogged = false;
+function validateAndLogConfig(config) {
+  if (!configLogged) {
+    console.log('🔧 PlexBridge Configuration:');
+    console.log(`   Environment: ${config.server.environment}`);
+    console.log(`   HTTP Server: ${config.server.host}:${config.server.port}`);
+    console.log(`   Data Directory: ${config.paths.data}`);
+  
+  // Network configuration
+  console.log('🌐 Network Configuration:');
+  console.log(`   Bind Address: ${config.plexlive.network.bindAddress}`);
+  console.log(`   Streaming Port: ${config.plexlive.network.streamingPort}`);
+  console.log(`   Discovery Port: ${config.plexlive.network.discoveryPort}`);
+  console.log(`   Advertised Host: ${config.plexlive.network.advertisedHost || 'auto-detect'}`);
+  console.log(`   Base URL: ${config.plexlive.device.baseUrl}`);
+  console.log(`   IPv6 Enabled: ${config.plexlive.network.ipv6Enabled}`);
+  
+  // Environment variables override log
+  const envVars = [
+    'HOST_IP', 'BIND_ADDRESS', 'HTTP_PORT', 'PORT', 'STREAM_PORT', 
+    'STREAMING_PORT', 'ADVERTISED_HOST', 'BASE_URL', 'DISCOVERY_PORT', 
+    'SSDP_PORT', 'IPV6_ENABLED'
+  ];
+  
+  const activeEnvVars = envVars.filter(varName => process.env[varName]);
+  if (activeEnvVars.length > 0) {
+    console.log('📝 Active Environment Variable Overrides:');
+    activeEnvVars.forEach(varName => {
+      console.log(`   ${varName}=${process.env[varName]}`);
+    });
+  }
+  
+  // Validation warnings
+  const warnings = [];
+  
+  // Check for port conflicts
+  if (config.server.port === config.plexlive.network.discoveryPort) {
+    warnings.push('HTTP port and SSDP discovery port are the same - this may cause conflicts');
+  }
+  
+  // Check bind address validity
+  const bindAddress = config.plexlive.network.bindAddress;
+  if (bindAddress !== '0.0.0.0' && bindAddress !== 'localhost' && bindAddress !== '127.0.0.1') {
+    // Simple IP validation
+    const ipRegex = /^(\d{1,3}\.){3}\d{1,3}$/;
+    if (!ipRegex.test(bindAddress)) {
+      warnings.push(`Bind address "${bindAddress}" may not be a valid IP address`);
+    }
+  }
+  
+  // Check advertised host
+  if (config.plexlive.network.advertisedHost) {
+    console.log(`   ⚠️  Using custom advertised host: ${config.plexlive.network.advertisedHost}`);
+  }
+  
+    if (warnings.length > 0) {
+      console.log('⚠️  Configuration Warnings:');
+      warnings.forEach(warning => console.log(`   • ${warning}`));
+    }
+    
+    configLogged = true;
+  }
+  
+  return config;
+}
+
 // Initialize configuration
 const config = loadCustomConfig();
 ensureDirectories(config);
+const validatedConfig = validateAndLogConfig(config);
 
-module.exports = config;
+module.exports = validatedConfig;

@@ -1,5 +1,29 @@
 version: '3.8'
 
+# PlexBridge Docker Compose Configuration
+# 
+# Network Configuration Examples:
+# 
+# 1. Default configuration (bind to all interfaces on port 8080):
+#    - HOST_IP=0.0.0.0
+#    - HTTP_PORT=8080
+#
+# 2. Custom port configuration:
+#    - HTTP_PORT=9090
+#    - ports: ["9090:9090", "1900:1900/udp"]
+#
+# 3. Specific interface binding:
+#    - HOST_IP=192.168.1.100
+#    - ADVERTISED_HOST=192.168.1.100
+#
+# 4. External hostname/domain:
+#    - ADVERTISED_HOST=plextv.yourdomain.com
+#    - BASE_URL=http://plextv.yourdomain.com:8080
+#
+# 5. Different streaming and HTTP ports:
+#    - HTTP_PORT=8080
+#    - STREAM_PORT=8081
+
 services:
   plextv:
     build: .
@@ -12,14 +36,35 @@ services:
       - ./data:/data
       - ./config:/app/config:ro
     environment:
+      # Application environment
       - NODE_ENV=production
+      
+      # Network configuration - customize these for your deployment
+      - HOST_IP=0.0.0.0                    # Bind address (0.0.0.0 for all interfaces)
+      - HTTP_PORT=8080                     # Main HTTP server port
+      - STREAM_PORT=8080                   # Streaming port (usually same as HTTP_PORT)
+      - DISCOVERY_PORT=1900                # SSDP discovery port
+      # - ADVERTISED_HOST=your-hostname    # Hostname/IP that clients should connect to
+      # - BASE_URL=http://your-host:8080   # Complete base URL for the service
+      # - IPV6_ENABLED=false               # Enable/disable IPv6 support
+      
+      # Storage paths
       - DB_PATH=/data/database/plextv.db
       - LOG_PATH=/data/logs
       - CACHE_PATH=/data/cache
       - LOGOS_PATH=/data/logos
-      # Use internal Redis (single container)
+      
+      # Redis configuration (internal Redis)
       - REDIS_HOST=localhost
       - REDIS_PORT=6379
+      
+      # Optional: Device identification
+      # - DEVICE_NAME=PlexTV
+      # - DEVICE_ID=PLEXTV001
+      # - TUNER_COUNT=4
+      
+      # Optional: Legacy PORT support (HTTP_PORT takes precedence)
+      - PORT=8080
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
       interval: 30s
