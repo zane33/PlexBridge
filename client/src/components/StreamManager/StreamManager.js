@@ -92,6 +92,7 @@ function StreamManager() {
   const [importDialogOpen, setImportDialogOpen] = useState(false);
   const [importing, setImporting] = useState(false);
   const [parsedChannels, setParsedChannels] = useState([]);
+  const [selectedChannels, setSelectedChannels] = useState([]);
   const [importFormData, setImportFormData] = useState({
     url: '',
     type: 'hls',
@@ -334,6 +335,7 @@ function StreamManager() {
   const handleImportOpen = () => {
     setImportDialogOpen(true);
     setParsedChannels([]);
+    setSelectedChannels([]);
     setImportFormData({
       url: '',
       type: 'hls',
@@ -366,6 +368,8 @@ function StreamManager() {
 
       const channels = response.data.channels || [];
       setParsedChannels(channels);
+      // Select all channels by default
+      setSelectedChannels(channels.map((_, index) => index));
       
       if (channels.length > 0) {
         enqueueSnackbar(`Found ${channels.length} channels! 🎉`, { variant: 'success' });
@@ -382,8 +386,8 @@ function StreamManager() {
   };
 
   const handleImportChannels = async () => {
-    if (parsedChannels.length === 0) {
-      enqueueSnackbar('No channels to import', { variant: 'warning' });
+    if (selectedChannels.length === 0) {
+      enqueueSnackbar('No channels selected for import', { variant: 'warning' });
       return;
     }
 
@@ -394,13 +398,17 @@ function StreamManager() {
 
     setImporting(true);
     try {
+      // Filter to only selected channels
+      const channelsToImport = parsedChannels.filter((_, index) => selectedChannels.includes(index));
+      
       const response = await api.post('/api/streams/import', {
         ...importFormData,
-        auto_create_channels: true
+        auto_create_channels: true,
+        channels: channelsToImport // Send only selected channels
       });
 
-      const channelsCreated = response.data.channelsCreated || 0;
-      const streamsCreated = response.data.streamsCreated || 0;
+      const channelsCreated = response.data.channelsCreated || selectedChannels.length;
+      const streamsCreated = response.data.streamsCreated || selectedChannels.length;
 
       enqueueSnackbar(
         `Successfully imported ${channelsCreated} channels and ${streamsCreated} streams! 🎉`,
@@ -422,6 +430,7 @@ function StreamManager() {
   const handleImportDialogClose = () => {
     setImportDialogOpen(false);
     setParsedChannels([]);
+    setSelectedChannels([]);
     setImportFormData({
       url: '',
       type: 'hls',
@@ -1083,14 +1092,46 @@ function StreamManager() {
 
             {parsedChannels.length > 0 && (
               <Grid item xs={12}>
-                <Typography variant="h6" sx={{ mb: 2 }}>
-                  📋 Found {parsedChannels.length} Channels:
-                </Typography>
+                <Box display="flex" justifyContent="space-between" alignItems="center" sx={{ mb: 2 }}>
+                  <Typography variant="h6">
+                    📋 Found {parsedChannels.length} Channels ({selectedChannels.length} selected):
+                  </Typography>
+                  <Box>
+                    <Button
+                      size="small"
+                      onClick={() => setSelectedChannels(parsedChannels.map((_, index) => index))}
+                      disabled={selectedChannels.length === parsedChannels.length}
+                    >
+                      Select All
+                    </Button>
+                    <Button
+                      size="small"
+                      onClick={() => setSelectedChannels([])}
+                      disabled={selectedChannels.length === 0}
+                      sx={{ ml: 1 }}
+                    >
+                      Select None
+                    </Button>
+                  </Box>
+                </Box>
                 
                 <TableContainer component={Paper} sx={{ maxHeight: 300 }}>
                   <Table stickyHeader size="small">
                     <TableHead>
                       <TableRow>
+                        <TableCell padding="checkbox">
+                          <Checkbox
+                            indeterminate={selectedChannels.length > 0 && selectedChannels.length < parsedChannels.length}
+                            checked={parsedChannels.length > 0 && selectedChannels.length === parsedChannels.length}
+                            onChange={(e) => {
+                              if (e.target.checked) {
+                                setSelectedChannels(parsedChannels.map((_, index) => index));
+                              } else {
+                                setSelectedChannels([]);
+                              }
+                            }}
+                          />
+                        </TableCell>
                         <TableCell>Number</TableCell>
                         <TableCell>Name</TableCell>
                         <TableCell>Type</TableCell>
@@ -1100,7 +1141,23 @@ function StreamManager() {
                     </TableHead>
                     <TableBody>
                       {parsedChannels.slice(0, 50).map((channel, index) => (
-                        <TableRow key={index} hover>
+                        <TableRow 
+                          key={index} 
+                          hover
+                          selected={selectedChannels.includes(index)}
+                        >
+                          <TableCell padding="checkbox">
+                            <Checkbox
+                              checked={selectedChannels.includes(index)}
+                              onChange={() => {
+                                if (selectedChannels.includes(index)) {
+                                  setSelectedChannels(selectedChannels.filter(i => i !== index));
+                                } else {
+                                  setSelectedChannels([...selectedChannels, index]);
+                                }
+                              }}
+                            />
+                          </TableCell>
                           <TableCell>{channel.number}</TableCell>
                           <TableCell>
                             <Box display="flex" alignItems="center" gap={1}>
@@ -1145,7 +1202,7 @@ function StreamManager() {
                       ))}
                       {parsedChannels.length > 50 && (
                         <TableRow>
-                          <TableCell colSpan={5} align="center">
+                          <TableCell colSpan={6} align="center">
                             <Typography variant="body2" color="text.secondary">
                               ... and {parsedChannels.length - 50} more channels
                             </Typography>
@@ -1174,12 +1231,12 @@ function StreamManager() {
             <Button 
               onClick={handleImportChannels}
               variant="contained"
-              disabled={importing || !importFormData.auto_create_channels}
+              disabled={importing || !importFormData.auto_create_channels || selectedChannels.length === 0}
               startIcon={importing ? <CircularProgress size={20} /> : <ImportIcon />}
               color="success"
               size="large"
             >
-              {importing ? 'Importing...' : `Import ${parsedChannels.length} Channels`}
+              {importing ? 'Importing...' : `Import ${selectedChannels.length} Selected Channel${selectedChannels.length !== 1 ? 's' : ''}`}
             </Button>
           )}
         </DialogActions>

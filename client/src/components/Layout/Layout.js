@@ -387,39 +387,6 @@ function Layout({ children }) {
               Professional IPTV Management
             </Typography>
           </Box>
-          
-          {!isMobile && (
-            <Chip
-              label={connectionStatus.charAt(0).toUpperCase() + connectionStatus.slice(1)}
-              size="small"
-              sx={{ 
-                background: connectionStatus === 'connected' 
-                  ? 'linear-gradient(135deg, #10b981 0%, #059669 100%)'
-                  : connectionStatus === 'error'
-                  ? 'linear-gradient(135deg, #f59e0b 0%, #d97706 100%)'
-                  : 'linear-gradient(135deg, #ef4444 0%, #dc2626 100%)',
-                color: '#ffffff',
-                fontWeight: 600,
-                fontSize: '0.7rem',
-                animation: connectionStatus !== 'connected' ? 'pulse 2s infinite' : 'none',
-                '@keyframes pulse': {
-                  '0%': { opacity: 1 },
-                  '50%': { opacity: 0.7 },
-                  '100%': { opacity: 1 },
-                },
-                '&::before': {
-                  content: connectionStatus === 'connected' ? '"●"' : connectionStatus === 'error' ? '"⚠"' : '"●"',
-                  marginRight: '6px',
-                  animation: connectionStatus === 'connected' ? 'none' : 'blink 1s infinite',
-                },
-                '@keyframes blink': {
-                  '0%': { opacity: 1 },
-                  '50%': { opacity: 0 },
-                  '100%': { opacity: 1 },
-                }
-              }}
-            />
-          )}
         </Toolbar>
       </AppBar>
       <Box

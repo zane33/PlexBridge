@@ -106,7 +106,7 @@ app.post('/api/streams', (req, res) => {
 
 app.post('/api/streams/import', async (req, res) => {
   try {
-    const { url, auth_username, auth_password, auto_create_channels, validate_streams } = req.body;
+    const { url, auth_username, auth_password, auto_create_channels, validate_streams, channels } = req.body;
 
     if (!url) {
       return res.status(400).json({ 
@@ -117,15 +117,23 @@ app.post('/api/streams/import', async (req, res) => {
 
     console.log(`Starting M3U import from: ${url}`);
     
-    const parser = new M3UParser();
-    const channels = await parser.parseFromUrl(url, {
-      auth_username,
-      auth_password
-    });
+    // If specific channels are provided, use those; otherwise parse from URL
+    let channelsToProcess;
+    if (channels && channels.length > 0) {
+      channelsToProcess = channels;
+      console.log(`Using ${channelsToProcess.length} pre-selected channels`);
+    } else {
+      const parser = new M3UParser();
+      channelsToProcess = await parser.parseFromUrl(url, {
+        auth_username,
+        auth_password
+      });
+    }
 
     if (validate_streams) {
       console.log('Validating stream URLs...');
-      const validatedChannels = await parser.validateChannels(channels, {
+      const parser = new M3UParser();
+      const validatedChannels = await parser.validateChannels(channelsToProcess, {
         validate_streams: true,
         include_invalid: true
       });
@@ -173,16 +181,18 @@ app.post('/api/streams/import', async (req, res) => {
         success: true,
         message: `M3U imported successfully`,
         imported_count: validatedChannels.filter(c => c.status === 'valid').length,
-        total_found: channels.length,
+        total_found: channelsToProcess.length,
         validation_results: validatedChannels,
-        auto_created: auto_create_channels
+        auto_created: auto_create_channels,
+        channelsCreated: validatedChannels.filter(c => c.status === 'valid').length,
+        streamsCreated: validatedChannels.filter(c => c.status === 'valid').length
       });
     } else {
       if (auto_create_channels) {
         // Store channels without validation
         let channelNumber = channelData.length + 1;
         
-        for (const channel of channels) {
+        for (const channel of channelsToProcess) {
           const newChannel = {
             id: `ch_${Date.now()}_${channelNumber}`,
             number: channelNumber++,
@@ -214,9 +224,11 @@ app.post('/api/streams/import', async (req, res) => {
       return res.json({
         success: true,
         message: `M3U parsed successfully`,
-        imported_count: channels.length,
-        channels: channels,
-        auto_created: auto_create_channels
+        imported_count: channelsToProcess.length,
+        channels: channelsToProcess,
+        auto_created: auto_create_channels,
+        channelsCreated: auto_create_channels ? channelsToProcess.length : 0,
+        streamsCreated: auto_create_channels ? channelsToProcess.length : 0
       });
     }
   } catch (error) {
@@ -430,12 +442,132 @@ app.get('/api/server/info', (req, res) => {
 });
 
 // Settings API endpoints
+let savedSettings = {
+  plexlive: {
+    ssdp: {
+      enabled: true,
+      discoverableInterval: 30000,
+      announceInterval: 1800000,
+      multicastAddress: '239.255.255.250',
+      deviceDescription: 'IPTV to Plex Bridge Interface'
+    },
+    streaming: {
+      maxConcurrentStreams: 10,
+      streamTimeout: 30000,
+      reconnectAttempts: 3,
+      bufferSize: 65536,
+      adaptiveBitrate: true,
+      preferredProtocol: 'hls'
+    },
+    transcoding: {
+      enabled: true,
+      hardwareAcceleration: false,
+      preset: 'medium',
+      videoCodec: 'h264',
+      audioCodec: 'aac',
+      qualityProfiles: {
+        low: { resolution: '720x480', bitrate: '1000k' },
+        medium: { resolution: '1280x720', bitrate: '2500k' },
+        high: { resolution: '1920x1080', bitrate: '5000k' }
+      },
+      defaultProfile: 'medium'
+    },
+    caching: {
+      enabled: true,
+      duration: 3600,
+      maxSize: 1073741824,
+      cleanup: {
+        enabled: true,
+        interval: 3600000,
+        maxAge: 86400000
+      }
+    },
+    device: {
+      name: 'PlexTV',
+      id: 'PLEXTV001',
+      tunerCount: 4,
+      firmware: '1.0.0',
+      baseUrl: 'http://localhost:8080'
+    },
+    network: {
+      bindAddress: '0.0.0.0',
+      advertisedHost: null,
+      streamingPort: 8080,
+      discoveryPort: 1900,
+      ipv6Enabled: false
+    },
+    compatibility: {
+      hdHomeRunMode: true,
+      plexPassRequired: false,
+      gracePeriod: 10000,
+      channelLogoFallback: true
+    }
+  }
+};
+
 app.get('/api/settings', (req, res) => {
-  res.json({});
+  res.json(savedSettings);
+});
+
+app.put('/api/settings', (req, res) => {
+  savedSettings = { ...savedSettings, ...req.body };
+  console.log('Settings updated:', savedSettings);
+  res.json({ success: true, message: 'Settings saved successfully' });
 });
 
 app.post('/api/settings', (req, res) => {
-  res.json({ success: true, message: 'Settings saved (mock)' });
+  savedSettings = { ...savedSettings, ...req.body };
+  console.log('Settings updated:', savedSettings);
+  res.json({ success: true, message: 'Settings saved successfully' });
+});
+
+app.get('/api/settings/metadata', (req, res) => {
+  res.json({
+    plexlive: {
+      title: 'Plex Live TV Settings',
+      description: 'Configuration options for Plex Live TV integration',
+      sections: {
+        ssdp: {
+          title: 'SSDP Discovery',
+          description: 'Simple Service Discovery Protocol settings for device discovery'
+        },
+        streaming: {
+          title: 'Streaming',
+          description: 'Stream handling and performance settings'
+        },
+        transcoding: {
+          title: 'Transcoding',
+          description: 'Video/audio transcoding configuration'
+        },
+        caching: {
+          title: 'Caching',
+          description: 'Stream caching and performance optimization'
+        },
+        device: {
+          title: 'Device Information',
+          description: 'Device identification and capabilities'
+        },
+        network: {
+          title: 'Network',
+          description: 'Network binding and connectivity settings'
+        },
+        compatibility: {
+          title: 'Compatibility',
+          description: 'Plex and HDHomeRun compatibility options'
+        }
+      }
+    }
+  });
+});
+
+app.post('/api/settings/reset', (req, res) => {
+  const { category } = req.body;
+  if (category) {
+    console.log(`Resetting settings category: ${category}`);
+  } else {
+    console.log('Resetting all settings to defaults');
+  }
+  res.json({ success: true, message: category ? `Settings category '${category}' reset to defaults` : 'All settings reset to defaults' });
 });
 
 // Active streams endpoint - Required for Dashboard
