@@ -61,6 +61,8 @@ const EnhancedVideoPlayer = ({
   
   const videoRef = useRef(null);
   const playerContainerRef = useRef(null);
+  const isCleaningUp = useRef(false);
+  const initializationTimeoutRef = useRef(null);
   
   const { enqueueSnackbar } = useSnackbar();
   const theme = useTheme();
@@ -145,9 +147,18 @@ const EnhancedVideoPlayer = ({
 
   // Clean up current player
   const cleanupPlayer = useCallback(() => {
+    if (isCleaningUp.current) return;
+    isCleaningUp.current = true;
+    
+    // Clear any pending initialization
+    if (initializationTimeoutRef.current) {
+      clearTimeout(initializationTimeoutRef.current);
+      initializationTimeoutRef.current = null;
+    }
+    
     if (playerInstance) {
       try {
-        if (playerInstance.dispose && typeof playerInstance.dispose === 'function') {
+        if (typeof playerInstance.dispose === 'function') {
           playerInstance.dispose();
         }
       } catch (error) {
@@ -158,21 +169,34 @@ const EnhancedVideoPlayer = ({
     
     // Reset video element
     if (videoRef.current) {
+      // Remove any Video.js classes
+      videoRef.current.className = 'video-js vjs-default-skin';
+      videoRef.current.removeAttribute('data-vjs-player');
       videoRef.current.src = '';
       videoRef.current.load();
     }
     
     setVideoReady(false);
     setIsPlaying(false);
+    
+    // Reset cleanup flag after a brief delay
+    setTimeout(() => {
+      isCleaningUp.current = false;
+    }, 100);
   }, [playerInstance]);
 
   // Initialize video player
   const initializePlayer = useCallback(async () => {
-    if (!open || !streamUrl) return;
+    if (!open || !streamUrl || isCleaningUp.current) return;
+    
+    // Clear any pending initialization
+    if (initializationTimeoutRef.current) {
+      clearTimeout(initializationTimeoutRef.current);
+    }
     
     // Wait for DOM element to be available
     if (!videoRef.current) {
-      setTimeout(() => initializePlayer(), 100);
+      initializationTimeoutRef.current = setTimeout(() => initializePlayer(), 100);
       return;
     }
 
@@ -182,8 +206,23 @@ const EnhancedVideoPlayer = ({
     // Clean up any existing player first
     cleanupPlayer();
     
-    // Small delay to ensure cleanup is complete
-    await new Promise(resolve => setTimeout(resolve, 100));
+    // Wait for cleanup to complete
+    await new Promise(resolve => {
+      const checkCleanup = () => {
+        if (!isCleaningUp.current) {
+          resolve();
+        } else {
+          setTimeout(checkCleanup, 50);
+        }
+      };
+      checkCleanup();
+    });
+    
+    // Check if we should still proceed (dialog might have closed)
+    if (!open || !streamUrl) {
+      setLoading(false);
+      return;
+    }
 
     try {
       const currentUrl = getStreamUrl();
@@ -232,6 +271,21 @@ const EnhancedVideoPlayer = ({
           videoElement.player.dispose();
         } catch (disposeError) {
           console.warn('Error disposing existing player:', disposeError);
+        }
+        // Remove Video.js attributes
+        videoElement.removeAttribute('data-vjs-player');
+        videoElement.className = 'video-js vjs-default-skin';
+      }
+      
+      // Additional cleanup - check for any Video.js instances attached to this element
+      if (window.videojs && window.videojs.getPlayer) {
+        try {
+          const existingPlayer = window.videojs.getPlayer(videoElement);
+          if (existingPlayer) {
+            existingPlayer.dispose();
+          }
+        } catch (e) {
+          console.warn('Error checking for existing Video.js player:', e);
         }
       }
       
@@ -527,14 +581,16 @@ const EnhancedVideoPlayer = ({
   // Cleanup on proxy mode or player type change
   useEffect(() => {
     if (open) {
-      // Add small delay to prevent rapid re-initialization
+      // Add longer delay to prevent rapid re-initialization when toggling settings
       const timeoutId = setTimeout(() => {
-        initializePlayer();
-      }, 200);
+        if (open && !isCleaningUp.current) {
+          initializePlayer();
+        }
+      }, 500);
       
       return () => clearTimeout(timeoutId);
     }
-  }, [proxyEnabled, useVideoJS, open, initializePlayer]);
+  }, [proxyEnabled, useVideoJS, open]);
 
   const handleClose = () => {
     cleanupPlayer();
