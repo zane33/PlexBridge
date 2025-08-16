@@ -18,9 +18,6 @@ const PORT = 8080;
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
-// Serve static files from client/build
-app.use(express.static(path.join(__dirname, '../client/build')));
-
 const M3UParser = require('./services/m3uParser');
 
 // Real-time data tracking
@@ -272,16 +269,164 @@ app.delete('/api/streams/:id', (req, res) => {
 });
 
 // EPG Manager API endpoints
+const epgSources = []; // In-memory storage for EPG sources
+
 app.get('/api/epg/sources', (req, res) => {
-  res.json([]);
+  res.json(epgSources);
+});
+
+app.post('/api/epg/sources', (req, res) => {
+  const { name, url, refresh_interval, enabled } = req.body;
+  
+  // Basic validation
+  if (!name || !url) {
+    return res.status(400).json({ 
+      error: 'Name and URL are required' 
+    });
+  }
+  
+  const newSource = {
+    id: `epg_${Date.now()}`,
+    name,
+    url,
+    refresh_interval: refresh_interval || '4h',
+    enabled: enabled !== undefined ? enabled : true,
+    created_at: new Date().toISOString(),
+    last_update: null,
+    last_success: null,
+    last_error: null
+  };
+  
+  epgSources.push(newSource);
+  console.log(`EPG source created: ${name} (${url})`);
+  
+  res.status(201).json(newSource);
+});
+
+app.put('/api/epg/sources/:id', (req, res) => {
+  const { id } = req.params;
+  const sourceIndex = epgSources.findIndex(s => s.id === id);
+  
+  if (sourceIndex === -1) {
+    return res.status(404).json({ error: 'EPG source not found' });
+  }
+  
+  const { name, url, refresh_interval, enabled } = req.body;
+  epgSources[sourceIndex] = {
+    ...epgSources[sourceIndex],
+    name: name || epgSources[sourceIndex].name,
+    url: url || epgSources[sourceIndex].url,
+    refresh_interval: refresh_interval || epgSources[sourceIndex].refresh_interval,
+    enabled: enabled !== undefined ? enabled : epgSources[sourceIndex].enabled,
+    updated_at: new Date().toISOString()
+  };
+  
+  res.json(epgSources[sourceIndex]);
+});
+
+app.delete('/api/epg/sources/:id', (req, res) => {
+  const { id } = req.params;
+  const sourceIndex = epgSources.findIndex(s => s.id === id);
+  
+  if (sourceIndex === -1) {
+    return res.status(404).json({ error: 'EPG source not found' });
+  }
+  
+  epgSources.splice(sourceIndex, 1);
+  res.json({ message: 'EPG source deleted successfully' });
+});
+
+app.post('/api/epg/refresh', (req, res) => {
+  const { source_id } = req.body;
+  
+  if (source_id) {
+    const source = epgSources.find(s => s.id === source_id);
+    if (source) {
+      source.last_update = new Date().toISOString();
+      console.log(`EPG refresh triggered for source: ${source.name}`);
+    }
+  } else {
+    epgSources.forEach(source => {
+      source.last_update = new Date().toISOString();
+    });
+    console.log('EPG refresh triggered for all sources');
+  }
+  
+  res.json({ 
+    message: source_id ? `EPG refresh started for source ${source_id}` : 'EPG refresh started for all sources' 
+  });
 });
 
 app.get('/api/epg/channels', (req, res) => {
-  res.json([]);
+  res.json({ available_channels: [] });
 });
 
 app.get('/api/epg/programs', (req, res) => {
   res.json([]);
+});
+
+// Test endpoint to debug routing
+app.get('/api/server/test', (req, res) => {
+  res.json({ message: 'Test endpoint working' });
+});
+
+// Server information endpoint - Required for Dashboard
+app.get('/api/server/info', (req, res) => {
+  try {
+    const os = require('os');
+    
+    // Get network interfaces
+    const networkInterfaces = os.networkInterfaces();
+    const ipAddresses = [];
+    
+    Object.keys(networkInterfaces).forEach(interfaceName => {
+      const addresses = networkInterfaces[interfaceName];
+      addresses.forEach(address => {
+        if (address.family === 'IPv4' && !address.internal) {
+          ipAddresses.push({
+            interface: interfaceName,
+            address: address.address,
+            netmask: address.netmask
+          });
+        }
+      });
+    });
+
+    // Get primary server host
+    const serverHost = req.get('host') || `${req.hostname}:${PORT}`;
+    const protocol = req.secure ? 'https' : 'http';
+    const baseUrl = `${protocol}://${serverHost}`;
+
+    const serverInfo = {
+      hostname: os.hostname(),
+      platform: os.platform(),
+      arch: os.arch(),
+      nodeVersion: process.version,
+      port: PORT,
+      baseUrl,
+      ipAddresses,
+      urls: {
+        webInterface: baseUrl,
+        m3uPlaylist: `${baseUrl}/playlist.m3u`,
+        epgXml: `${baseUrl}/epg/xmltv`,
+        tunerDiscovery: `${baseUrl}/device.xml`,
+        channelLineup: `${baseUrl}/lineup.json`
+      },
+      tuner: {
+        deviceType: 'SiliconDust HDHomeRun',
+        friendlyName: process.env.DEVICE_NAME || 'PlexTV Bridge',
+        manufacturer: 'PlexTV Bridge',
+        modelName: 'PlexTV Bridge',
+        deviceId: process.env.DEVICE_ID || 'PLEXTV001',
+        firmwareVersion: '1.0.0'
+      }
+    };
+
+    res.json(serverInfo);
+  } catch (error) {
+    console.error('Server info error:', error);
+    res.status(500).json({ error: 'Failed to get server information' });
+  }
 });
 
 // Settings API endpoints
@@ -291,6 +436,47 @@ app.get('/api/settings', (req, res) => {
 
 app.post('/api/settings', (req, res) => {
   res.json({ success: true, message: 'Settings saved (mock)' });
+});
+
+// Active streams endpoint - Required for Dashboard
+app.get('/streams/active', (req, res) => {
+  try {
+    const activeStreamsList = Array.from(activeStreams.entries()).map(([sessionId, streamInfo]) => {
+      const duration = Date.now() - streamInfo.startTime.getTime();
+      
+      return {
+        sessionId,
+        streamId: streamInfo.streamId,
+        clientIP: streamInfo.clientIp,
+        startTime: streamInfo.startTime.toISOString(),
+        duration,
+        bytesTransferred: Math.floor(Math.random() * 1000000), // Mock data for demo
+        userAgent: streamInfo.userAgent
+      };
+    });
+
+    const concurrencyMetrics = {
+      total: activeStreams.size,
+      byChannel: {},
+      byClient: {}
+    };
+
+    // Group by channel and client for metrics
+    activeStreamsList.forEach(stream => {
+      concurrencyMetrics.byChannel[stream.streamId] = (concurrencyMetrics.byChannel[stream.streamId] || 0) + 1;
+      concurrencyMetrics.byClient[stream.clientIP] = (concurrencyMetrics.byClient[stream.clientIP] || 0) + 1;
+    });
+
+    res.json({
+      streams: activeStreamsList,
+      streamsByChannel: concurrencyMetrics.byChannel,
+      metrics: concurrencyMetrics,
+      timestamp: new Date().toISOString()
+    });
+  } catch (error) {
+    console.error('Active streams error:', error);
+    res.status(500).json({ error: 'Failed to fetch active streams' });
+  }
 });
 
 // Stream playback endpoints for testing
@@ -366,6 +552,9 @@ io.on('connection', (socket) => {
 setInterval(() => {
   io.to('metrics').emit('metrics:update', getRealMetrics());
 }, 5000);
+
+// Serve static files from client/build
+app.use(express.static(path.join(__dirname, '../client/build')));
 
 // Serve React app for all other routes
 app.get('*', (req, res) => {

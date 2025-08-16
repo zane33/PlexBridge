@@ -192,11 +192,15 @@ const EnhancedVideoPlayer = ({
     // Clear any pending initialization
     if (initializationTimeoutRef.current) {
       clearTimeout(initializationTimeoutRef.current);
+      initializationTimeoutRef.current = null;
     }
     
     // Wait for DOM element to be available
     if (!videoRef.current) {
-      initializationTimeoutRef.current = setTimeout(() => initializePlayer(), 100);
+      // Only retry if dialog is still open
+      if (open) {
+        initializationTimeoutRef.current = setTimeout(() => initializePlayer(), 100);
+      }
       return;
     }
 
@@ -248,7 +252,7 @@ const EnhancedVideoPlayer = ({
     } finally {
       setLoading(false);
     }
-  }, [open, streamUrl, getStreamUrl, detectStreamCapabilities, cleanupPlayer, useVideoJS, enqueueSnackbar, onError]);
+  }, [open, streamUrl, getStreamUrl, detectStreamCapabilities, cleanupPlayer, useVideoJS, onError]);
 
   // Initialize Video.js player for complex streams
   const initializeVideoJSPlayer = useCallback(async (url, capabilities) => {
@@ -259,10 +263,8 @@ const EnhancedVideoPlayer = ({
         throw new Error('Video element not available');
       }
       
-      // Check if element is in the DOM
-      if (!document.contains(videoElement)) {
-        throw new Error('Video element is not in the DOM');
-      }
+      // Small delay to ensure React has rendered the element
+      await new Promise(resolve => setTimeout(resolve, 100));
       
       // Check if element already has a Video.js player
       if (videoElement.player) {
@@ -528,7 +530,14 @@ const EnhancedVideoPlayer = ({
   };
 
   const retryConnection = () => {
-    initializePlayer();
+    // Clear any existing error
+    setError(null);
+    // Ensure cleanup before retry
+    cleanupPlayer();
+    // Delay slightly to ensure cleanup completes
+    setTimeout(() => {
+      initializePlayer();
+    }, 200);
   };
 
   const copyStreamUrl = () => {
@@ -557,13 +566,17 @@ const EnhancedVideoPlayer = ({
 
   // Effects
   useEffect(() => {
-    if (open) {
+    if (open && streamUrl) {
       initializePlayer();
     }
     return () => {
+      if (initializationTimeoutRef.current) {
+        clearTimeout(initializationTimeoutRef.current);
+        initializationTimeoutRef.current = null;
+      }
       cleanupPlayer();
     };
-  }, [open, initializePlayer, cleanupPlayer]);
+  }, [open, streamUrl]); // Remove the dependency on initializePlayer to prevent loops
 
   useEffect(() => {
     return handleVideoEvents();
@@ -578,10 +591,12 @@ const EnhancedVideoPlayer = ({
     return () => document.removeEventListener('fullscreenchange', handleFullscreenChange);
   }, []);
 
-  // Cleanup on proxy mode or player type change
+  // Cleanup and reinitialize on proxy mode or player type change
   useEffect(() => {
-    if (open) {
-      // Add longer delay to prevent rapid re-initialization when toggling settings
+    if (open && streamUrl) {
+      // Clean up existing player
+      cleanupPlayer();
+      // Add delay to prevent rapid re-initialization when toggling settings
       const timeoutId = setTimeout(() => {
         if (open && !isCleaningUp.current) {
           initializePlayer();
@@ -590,7 +605,7 @@ const EnhancedVideoPlayer = ({
       
       return () => clearTimeout(timeoutId);
     }
-  }, [proxyEnabled, useVideoJS, open]);
+  }, [proxyEnabled, useVideoJS]);
 
   const handleClose = () => {
     cleanupPlayer();

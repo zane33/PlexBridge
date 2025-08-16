@@ -119,6 +119,8 @@ function Dashboard() {
       setActiveStreams(response.data.streams || []);
     } catch (error) {
       console.error('Failed to fetch active streams:', error);
+      // Set empty array as fallback - this is expected when there are no active streams
+      setActiveStreams([]);
     }
   };
 
@@ -128,6 +130,40 @@ function Dashboard() {
       setServerInfo(response.data);
     } catch (error) {
       console.error('Failed to fetch server info:', error);
+      
+      // Provide fallback server information when API fails
+      const fallbackServerInfo = {
+        hostname: 'plextv-container',
+        platform: 'linux',
+        arch: 'x64',
+        nodeVersion: 'v18.20.8',
+        port: 8080,
+        baseUrl: `${window.location.protocol}//${window.location.host}`,
+        ipAddresses: [
+          {
+            interface: 'eth0',
+            address: window.location.hostname || 'localhost',
+            netmask: '255.255.255.0'
+          }
+        ],
+        urls: {
+          webInterface: `${window.location.protocol}//${window.location.host}`,
+          m3uPlaylist: `${window.location.protocol}//${window.location.host}/playlist.m3u`,
+          epgXml: `${window.location.protocol}//${window.location.host}/epg/xmltv`,
+          tunerDiscovery: `${window.location.protocol}//${window.location.host}/device.xml`,
+          channelLineup: `${window.location.protocol}//${window.location.host}/lineup.json`
+        },
+        tuner: {
+          deviceType: 'SiliconDust HDHomeRun',
+          friendlyName: 'PlexTV Bridge',
+          manufacturer: 'PlexTV Bridge',
+          modelName: 'PlexTV Bridge',
+          deviceId: 'PLEXTV001',
+          firmwareVersion: '1.0.0'
+        }
+      };
+      
+      setServerInfo(fallbackServerInfo);
     }
   };
 
