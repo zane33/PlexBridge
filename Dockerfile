@@ -91,5 +91,5 @@ USER plextv
 # Use tini as init system  
 ENTRYPOINT ["/sbin/tini", "--"]
 
-# Start the main server (with all fixes applied)
-CMD ["node", "server/index.js"]
+# Start supervisord to manage Redis and the Node.js application
+CMD ["/usr/bin/supervisord", "-c", "/etc/supervisord.conf"]

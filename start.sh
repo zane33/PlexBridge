@@ -33,4 +33,4 @@ sleep 3
 
 # Change to plextv user and start the Node.js application
 cd /app
-exec su -s /bin/sh plextv -c "node server/test-server.js"
+exec su -s /bin/sh plextv -c "node server/index.js"
