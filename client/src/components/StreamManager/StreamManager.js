@@ -95,9 +95,9 @@ function StreamManager() {
   const [importDialogOpen, setImportDialogOpen] = useState(false);
   const [importing, setImporting] = useState(false);
   const [parsedChannels, setParsedChannels] = useState([]);
-  const [filteredChannels, setFilteredChannels] = useState([]);
   const [selectedChannels, setSelectedChannels] = useState([]);
   const [searchQuery, setSearchQuery] = useState('');
+  const [debouncedSearchQuery, setDebouncedSearchQuery] = useState('');
   const [groupFilter, setGroupFilter] = useState('');
   const [availableGroups, setAvailableGroups] = useState([]);
   const [parsingProgress, setParsingProgress] = useState({
@@ -141,6 +141,16 @@ function StreamManager() {
     }));
   }, []);
 
+  // Memoized pagination handlers for better performance
+  const handleImportPageChange = useCallback((event, newPage) => {
+    setImportPage(newPage);
+  }, []);
+
+  const handleImportRowsPerPageChange = useCallback((event) => {
+    setImportRowsPerPage(parseInt(event.target.value, 10));
+    setImportPage(0);
+  }, []);
+
   const formValidation = useMemo(() => {
     const isM3UPlaylist = formData.type === 'm3u_playlist';
     return {
@@ -158,18 +168,32 @@ function StreamManager() {
     fetchChannels();
   }, []);
 
-  // Filter channels based on search and group filter
+  // Debounce search query to improve performance with large datasets
   useEffect(() => {
+    const timer = setTimeout(() => {
+      setDebouncedSearchQuery(searchQuery);
+    }, 300); // 300ms debounce
+
+    return () => clearTimeout(timer);
+  }, [searchQuery]);
+
+  // Optimized filtering with useMemo and debounced search
+  const filteredChannels = useMemo(() => {
     let filtered = parsedChannels;
 
-    // Apply search filter
-    if (searchQuery.trim()) {
-      const query = searchQuery.toLowerCase();
+    // Apply search filter with debounced query
+    if (debouncedSearchQuery.trim()) {
+      const query = debouncedSearchQuery.toLowerCase();
       filtered = filtered.filter(channel => 
         channel.name.toLowerCase().includes(query) ||
         (channel.attributes?.['group-title'] || '').toLowerCase().includes(query) ||
         (channel.attributes?.['tvg-id'] || '').toLowerCase().includes(query)
       );
+      
+      // For performance with very large results, limit search results
+      if (filtered.length > 10000) {
+        filtered = filtered.slice(0, 10000);
+      }
     }
 
     // Apply group filter
@@ -179,11 +203,13 @@ function StreamManager() {
       );
     }
 
-    setFilteredChannels(filtered);
-    
-    // Reset pagination when filtering
+    return filtered;
+  }, [parsedChannels, debouncedSearchQuery, groupFilter]);
+
+  // Reset pagination when filtering changes
+  useEffect(() => {
     setImportPage(0);
-  }, [parsedChannels, searchQuery, groupFilter]);
+  }, [debouncedSearchQuery, groupFilter]);
 
   // WebSocket listener for M3U parsing progress
   useEffect(() => {
@@ -454,7 +480,6 @@ function StreamManager() {
       setParsingProgress(prev => ({ ...prev, sessionId }));
       
       setParsedChannels(channels);
-      setFilteredChannels(channels); // Initialize filtered channels
       
       // Extract unique groups for filtering
       const groups = [...new Set(channels.map(ch => ch.attributes?.['group-title'] || 'Ungrouped').filter(Boolean))];
@@ -467,6 +492,11 @@ function StreamManager() {
       } else {
         setSelectedChannels(channels.map((_, index) => index));
       }
+      
+      // Give UI a moment to update, then hide progress bar
+      setTimeout(() => {
+        setParsingProgress(prev => ({ ...prev, show: false }));
+      }, 500);
       
       if (channels.length > 0) {
         enqueueSnackbar(`Successfully parsed ${channels.length} channels! 🎉 Use search and filters to find specific channels.`, { variant: 'success' });
@@ -1282,12 +1312,25 @@ function StreamManager() {
                 )}
 
                 <Box display="flex" justifyContent="space-between" alignItems="center" sx={{ mb: 2 }}>
-                  <Typography variant="h6">
-                    📋 {searchQuery || groupFilter ? 
-                      `Showing ${filteredChannels.length} of ${parsedChannels.length} channels` : 
-                      `Found ${parsedChannels.length} channels`
-                    } ({selectedChannels.length} selected):
-                  </Typography>
+                  <Box display="flex" alignItems="center" flexWrap="wrap" gap={1}>
+                    <Typography variant="h6">
+                      📋 {searchQuery || groupFilter ? 
+                        `Showing ${filteredChannels.length} of ${parsedChannels.length} channels` : 
+                        `Found ${parsedChannels.length} channels`
+                      } ({selectedChannels.length} selected):
+                    </Typography>
+                    {searchQuery && parsedChannels.filter(channel => 
+                      channel.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
+                      (channel.attributes?.['group-title'] || '').toLowerCase().includes(searchQuery.toLowerCase()) ||
+                      (channel.attributes?.['tvg-id'] || '').toLowerCase().includes(searchQuery.toLowerCase())
+                    ).length > 10000 && filteredChannels.length === 10000 && (
+                      <Chip 
+                        label="Results limited to 10,000 for performance" 
+                        size="small" 
+                        color="warning"
+                      />
+                    )}
+                  </Box>
                   <Box>
                     <Button
                       size="small"
@@ -1439,12 +1482,9 @@ function StreamManager() {
                   component="div"
                   count={filteredChannels.length}
                   page={importPage}
-                  onPageChange={(event, newPage) => setImportPage(newPage)}
+                  onPageChange={handleImportPageChange}
                   rowsPerPage={importRowsPerPage}
-                  onRowsPerPageChange={(event) => {
-                    setImportRowsPerPage(parseInt(event.target.value, 10));
-                    setImportPage(0);
-                  }}
+                  onRowsPerPageChange={handleImportRowsPerPageChange}
                   rowsPerPageOptions={filteredChannels.length > 10000 ? [10, 25, 50] : [10, 25, 50, 100, 250]}
                   labelRowsPerPage="Rows per page:"
                   sx={{ borderTop: '1px solid rgba(224, 224, 224, 1)' }}

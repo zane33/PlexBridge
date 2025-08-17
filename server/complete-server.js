@@ -403,15 +403,26 @@ app.post('/api/streams/parse/m3u', async (req, res) => {
       }
     }
     
-    // Final progress update
+    // Parsing complete - but UI preparation still needed
+    io.emit('m3uProgress', {
+      sessionId,
+      stage: 'finalizing',
+      progress: 95,
+      message: `Parsed ${channels.length} channels, preparing interface...`
+    });
+    
+    console.log(`Parsed ${channels.length} channels from M3U playlist (session ${sessionId})`);
+    
+    // Small delay to ensure progress reaches frontend before response
+    await new Promise(resolve => setTimeout(resolve, 100));
+    
+    // Final progress update - UI is about to be ready
     io.emit('m3uProgress', {
       sessionId,
       stage: 'complete',
       progress: 100,
-      message: `Parsing complete! Found ${channels.length} channels`
+      message: `Ready! Found ${channels.length} channels`
     });
-    
-    console.log(`Parsed ${channels.length} channels from M3U playlist (session ${sessionId})`);
     
     res.json({
       success: true,
