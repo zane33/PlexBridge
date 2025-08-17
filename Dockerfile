@@ -58,9 +58,10 @@ RUN cd client && npm run build && \
 # Create supervisor configuration
 COPY supervisord.conf /etc/supervisord.conf
 
-# Copy startup script and make executable
+# Copy startup scripts and make executable
 COPY start.sh /app/start.sh
-RUN chmod +x /app/start.sh
+COPY run-server.sh /app/run-server.sh
+RUN chmod +x /app/start.sh /app/run-server.sh
 
 # Set ownership of application files
 RUN chown -R plextv:plextv /app
