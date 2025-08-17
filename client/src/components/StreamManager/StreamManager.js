@@ -89,6 +89,8 @@ function StreamManager() {
   const [selectedStreams, setSelectedStreams] = useState([]);
   const [page, setPage] = useState(0);
   const [rowsPerPage, setRowsPerPage] = useState(10);
+  const [importPage, setImportPage] = useState(0);
+  const [importRowsPerPage, setImportRowsPerPage] = useState(25);
   const [importDialogOpen, setImportDialogOpen] = useState(false);
   const [importing, setImporting] = useState(false);
   const [parsedChannels, setParsedChannels] = useState([]);
@@ -431,6 +433,7 @@ function StreamManager() {
     setImportDialogOpen(false);
     setParsedChannels([]);
     setSelectedChannels([]);
+    setImportPage(0);
     setImportFormData({
       url: '',
       type: 'hls',
@@ -536,6 +539,7 @@ function StreamManager() {
                 onClick={handleImportOpen}
                 size="large"
                 color="info"
+                data-testid="import-m3u-button"
               >
                 Import M3U
               </Button>
@@ -544,6 +548,7 @@ function StreamManager() {
                 startIcon={<AddIcon />}
                 onClick={handleCreate}
                 size="large"
+                data-testid="add-stream-button"
               >
                 Add Stream
               </Button>
@@ -553,6 +558,7 @@ function StreamManager() {
               color="primary"
               aria-label="add"
               onClick={handleCreate}
+              data-testid="add-stream-fab"
               sx={{
                 position: 'fixed',
                 bottom: 16,
@@ -673,6 +679,7 @@ function StreamManager() {
                                 onClick={() => handleEdit(stream)} 
                                 size="small"
                                 color="primary"
+                                data-testid="edit-stream-button"
                               >
                                 <EditIcon />
                               </IconButton>
@@ -682,6 +689,7 @@ function StreamManager() {
                                 onClick={() => handleTestStream(stream)}
                                 size="small"
                                 color="info"
+                                data-testid="preview-stream-button"
                               >
                                 <PreviewIcon />
                               </IconButton>
@@ -692,6 +700,7 @@ function StreamManager() {
                                 size="small"
                                 color="error"
                                 disabled={deleting === stream.id}
+                                data-testid="delete-stream-button"
                               >
                                 {deleting === stream.id ? (
                                   <CircularProgress size={20} />
@@ -747,6 +756,7 @@ function StreamManager() {
         maxWidth="md" 
         fullWidth
         fullScreen={isMobile}
+        data-testid="stream-dialog"
       >
         <DialogTitle>
           <Typography variant="h5" component="div">
@@ -780,6 +790,7 @@ function StreamManager() {
                 error={formValidation.nameError}
                 helperText={formValidation.nameHelperText}
                 disabled={saving}
+                data-testid="stream-name-input"
               />
             </Grid>
             
@@ -820,6 +831,7 @@ function StreamManager() {
                 helperText={formValidation.urlHelperText}
                 disabled={saving}
                 placeholder="https://example.com/stream.m3u8"
+                data-testid="stream-url-input"
               />
             </Grid>
             
@@ -882,6 +894,7 @@ function StreamManager() {
                   })}
                   disabled={saving || !formData.url.trim()}
                   sx={{ minWidth: 120 }}
+                  data-testid="test-stream-button"
                 >
                   <PreviewIcon sx={{ mr: 1 }} />
                   Test in Player
@@ -950,6 +963,7 @@ function StreamManager() {
             disabled={saving}
             startIcon={<CancelIcon />}
             color="inherit"
+            data-testid="cancel-stream-button"
           >
             Cancel
           </Button>
@@ -960,6 +974,7 @@ function StreamManager() {
             startIcon={saving ? <CircularProgress size={20} /> : <SaveIcon />}
             color="primary"
             size="large"
+            data-testid="save-stream-button"
           >
             {saving ? 'Saving...' : 'Save Stream'}
           </Button>
@@ -1115,7 +1130,7 @@ function StreamManager() {
                   </Box>
                 </Box>
                 
-                <TableContainer component={Paper} sx={{ maxHeight: 300 }}>
+                <TableContainer component={Paper} sx={{ maxHeight: 400 }}>
                   <Table stickyHeader size="small">
                     <TableHead>
                       <TableRow>
@@ -1140,78 +1155,89 @@ function StreamManager() {
                       </TableRow>
                     </TableHead>
                     <TableBody>
-                      {parsedChannels.slice(0, 50).map((channel, index) => (
-                        <TableRow 
-                          key={index} 
-                          hover
-                          selected={selectedChannels.includes(index)}
-                        >
-                          <TableCell padding="checkbox">
-                            <Checkbox
-                              checked={selectedChannels.includes(index)}
-                              onChange={() => {
-                                if (selectedChannels.includes(index)) {
-                                  setSelectedChannels(selectedChannels.filter(i => i !== index));
-                                } else {
-                                  setSelectedChannels([...selectedChannels, index]);
-                                }
-                              }}
-                            />
-                          </TableCell>
-                          <TableCell>{channel.number}</TableCell>
-                          <TableCell>
-                            <Box display="flex" alignItems="center" gap={1}>
-                              {channel.logo && (
-                                <img 
-                                  src={channel.logo} 
-                                  alt="" 
-                                  style={{ width: 24, height: 24, objectFit: 'contain' }}
-                                  onError={(e) => { e.target.style.display = 'none'; }}
-                                />
-                              )}
-                              <Typography variant="body2">{channel.name}</Typography>
-                            </Box>
-                          </TableCell>
-                          <TableCell>
-                            <Chip 
-                              label={channel.type?.toUpperCase()} 
-                              size="small" 
-                              color="primary" 
-                              variant="outlined" 
-                            />
-                          </TableCell>
-                          <TableCell>
-                            <Typography 
-                              variant="body2" 
-                              sx={{ 
-                                maxWidth: 200, 
-                                overflow: 'hidden', 
-                                textOverflow: 'ellipsis',
-                                whiteSpace: 'nowrap'
-                              }}
+                      {parsedChannels
+                        .slice(importPage * importRowsPerPage, importPage * importRowsPerPage + importRowsPerPage)
+                        .map((channel, relativeIndex) => {
+                          const actualIndex = importPage * importRowsPerPage + relativeIndex;
+                          return (
+                            <TableRow 
+                              key={actualIndex} 
+                              hover
+                              selected={selectedChannels.includes(actualIndex)}
                             >
-                              {channel.url}
-                            </Typography>
-                          </TableCell>
-                          <TableCell>
-                            <Typography variant="body2" color="text.secondary">
-                              {channel.epg_id || '-'}
-                            </Typography>
-                          </TableCell>
-                        </TableRow>
-                      ))}
-                      {parsedChannels.length > 50 && (
-                        <TableRow>
-                          <TableCell colSpan={6} align="center">
-                            <Typography variant="body2" color="text.secondary">
-                              ... and {parsedChannels.length - 50} more channels
-                            </Typography>
-                          </TableCell>
-                        </TableRow>
-                      )}
+                              <TableCell padding="checkbox">
+                                <Checkbox
+                                  checked={selectedChannels.includes(actualIndex)}
+                                  onChange={() => {
+                                    if (selectedChannels.includes(actualIndex)) {
+                                      setSelectedChannels(selectedChannels.filter(i => i !== actualIndex));
+                                    } else {
+                                      setSelectedChannels([...selectedChannels, actualIndex]);
+                                    }
+                                  }}
+                                />
+                              </TableCell>
+                              <TableCell>{channel.number}</TableCell>
+                              <TableCell>
+                                <Box display="flex" alignItems="center" gap={1}>
+                                  {channel.logo && (
+                                    <img 
+                                      src={channel.logo} 
+                                      alt="" 
+                                      style={{ width: 24, height: 24, objectFit: 'contain' }}
+                                      onError={(e) => { e.target.style.display = 'none'; }}
+                                    />
+                                  )}
+                                  <Typography variant="body2">{channel.name}</Typography>
+                                </Box>
+                              </TableCell>
+                              <TableCell>
+                                <Chip 
+                                  label={channel.type?.toUpperCase()} 
+                                  size="small" 
+                                  color="primary" 
+                                  variant="outlined" 
+                                />
+                              </TableCell>
+                              <TableCell>
+                                <Typography 
+                                  variant="body2" 
+                                  sx={{ 
+                                    maxWidth: 200, 
+                                    overflow: 'hidden', 
+                                    textOverflow: 'ellipsis',
+                                    whiteSpace: 'nowrap'
+                                  }}
+                                >
+                                  {channel.url}
+                                </Typography>
+                              </TableCell>
+                              <TableCell>
+                                <Typography variant="body2" color="text.secondary">
+                                  {channel.epg_id || '-'}
+                                </Typography>
+                              </TableCell>
+                            </TableRow>
+                          );
+                        })}
                     </TableBody>
                   </Table>
                 </TableContainer>
+                
+                <TablePagination
+                  component="div"
+                  count={parsedChannels.length}
+                  page={importPage}
+                  onPageChange={(event, newPage) => setImportPage(newPage)}
+                  rowsPerPage={importRowsPerPage}
+                  onRowsPerPageChange={(event) => {
+                    setImportRowsPerPage(parseInt(event.target.value, 10));
+                    setImportPage(0);
+                  }}
+                  rowsPerPageOptions={[10, 25, 50, 100]}
+                  labelRowsPerPage="Rows per page:"
+                  sx={{ borderTop: '1px solid rgba(224, 224, 224, 1)' }}
+                />
               </Grid>
             )}
           </Grid>
@@ -1223,6 +1249,7 @@ function StreamManager() {
             disabled={importing}
             startIcon={<CancelIcon />}
             color="inherit"
+            data-testid="cancel-import-button"
           >
             Cancel
           </Button>
@@ -1235,6 +1262,7 @@ function StreamManager() {
               startIcon={importing ? <CircularProgress size={20} /> : <ImportIcon />}
               color="success"
               size="large"
+              data-testid="import-selected-button"
             >
               {importing ? 'Importing...' : `Import ${selectedChannels.length} Selected Channel${selectedChannels.length !== 1 ? 's' : ''}`}
             </Button>

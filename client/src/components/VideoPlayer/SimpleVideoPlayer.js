@@ -53,10 +53,12 @@ const SimpleVideoPlayer = ({
   const getStreamUrl = useCallback(() => {
     if (!streamUrl) return '';
     
-    if (proxyEnabled && (streamId || channelId)) {
-      // Use the backend proxy to avoid CORS issues  
-      const id = streamId || channelId;
-      return `${window.location.origin}/preview/${id}`;
+    if (proxyEnabled && streamId) {
+      // Use the backend stream preview endpoint to avoid CORS issues  
+      return `${window.location.origin}/streams/preview/${streamId}`;
+    } else if (proxyEnabled && channelId) {
+      // Use the channel stream endpoint for channel-based playback
+      return `${window.location.origin}/stream/${channelId}`;
     }
     
     return streamUrl;

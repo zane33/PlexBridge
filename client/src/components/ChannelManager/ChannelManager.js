@@ -417,6 +417,7 @@ function ChannelManager() {
               startIcon={<AddIcon />}
               onClick={handleCreate}
               size="large"
+              data-testid="add-channel-button"
             >
               Add Channel
             </Button>
@@ -425,6 +426,7 @@ function ChannelManager() {
               color="primary"
               aria-label="add"
               onClick={handleCreate}
+              data-testid="add-channel-fab"
               sx={{
                 position: 'fixed',
                 bottom: 16,
@@ -645,6 +647,7 @@ function ChannelManager() {
                             <IconButton 
                               onClick={() => handleEdit(channel)} 
                               size="small"
+                              data-testid="edit-channel-button"
                               sx={{
                                 background: 'linear-gradient(135deg, rgba(99, 102, 241, 0.1) 0%, rgba(139, 92, 246, 0.1) 100%)',
                                 transition: 'all 0.2s ease',
@@ -664,6 +667,7 @@ function ChannelManager() {
                               onClick={() => handleDelete(channel)}
                               size="small"
                               disabled={deleting === channel.id}
+                              data-testid="delete-channel-button"
                               sx={{
                                 background: 'linear-gradient(135deg, rgba(239, 68, 68, 0.1) 0%, rgba(220, 38, 38, 0.1) 100%)',
                                 transition: 'all 0.2s ease',

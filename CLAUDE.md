@@ -214,20 +214,22 @@ SSDP_PORT=1900
 ## Testing Strategy
 
 ### Testing Framework Setup
-The project uses **Playwright MCP** for comprehensive end-to-end testing with Chrome browser automation.
+The project uses **Playwright** for comprehensive end-to-end testing with Chrome browser automation. Tests verify M3U import pagination fixes and stream preview functionality.
 
-### Playwright MCP Configuration
+### Playwright Configuration
 
 #### Installation and Setup
 ```bash
-# Install Playwright MCP dependencies
+# Install Playwright dependencies
 npm install --save-dev @playwright/test playwright
 
-# Install browser binaries
+# Install browser binaries (may require sudo/admin privileges)
 npx playwright install chrome
+# Alternative for permission issues:
+npx playwright install chromium
 
-# Install MCP server
-npm install --save-dev @modelcontextprotocol/server-playwright
+# For Docker/CI environments:
+npx playwright install-deps
 ```
 
 #### Playwright Configuration (`playwright.config.js`)
@@ -235,7 +237,7 @@ npm install --save-dev @modelcontextprotocol/server-playwright
 const { defineConfig, devices } = require('@playwright/test');
 
 module.exports = defineConfig({
-  testDir: './tests',
+  testDir: './tests/e2e',
   fullyParallel: true,
   forbidOnly: !!process.env.CI,
   retries: process.env.CI ? 2 : 0,
@@ -254,7 +256,7 @@ module.exports = defineConfig({
       name: 'chromium',
       use: { 
         ...devices['Desktop Chrome'],
-        // Chrome-specific settings for MCP
+        // Chrome-specific settings for stability
         channel: 'chrome',
         args: [
           '--no-sandbox',
@@ -280,22 +282,6 @@ module.exports = defineConfig({
     timeout: 120 * 1000,
   },
 });
-```
-
-#### MCP Server Configuration (`mcp-config.json`)
-```json
-{
-  "mcpServers": {
-    "playwright": {
-      "command": "npx",
-      "args": ["@modelcontextprotocol/server-playwright", "run", "--config", "playwright.config.js"],
-      "env": {
-        "PLAYWRIGHT_BROWSERS_PATH": "0",
-        "PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD": "false"
-      }
-    }
-  }
-}
 ```
 
 ### Test Categories
@@ -332,28 +318,65 @@ describe('Database Integration', () => {
 ```
 
 #### 3. End-to-End Tests (Playwright)
+**IMPORTANT: Use data-testid selectors for reliable UI testing**
+
 ```javascript
-// Example: Complete user workflow testing
+// Example: Complete user workflow testing with proper selectors
 test('Channel management workflow', async ({ page }) => {
-  // Navigate to channel manager
-  await page.goto('/channels');
+  // Navigate to channel manager using data-testid
+  await page.goto('/');
+  await page.click('[data-testid="nav-channels"]');
   
-  // Create new channel
-  await page.click('[data-testid="add-channel-btn"]');
-  await page.fill('[data-testid="channel-name"]', 'Test Channel');
-  await page.fill('[data-testid="channel-number"]', '999');
-  await page.click('[data-testid="save-channel-btn"]');
+  // Create new channel using data-testid selectors
+  await page.click('[data-testid="add-channel-button"]');
+  await page.fill('[data-testid="channel-name-input"]', 'Test Channel');
+  await page.fill('[data-testid="channel-number-input"]', '999');
+  await page.click('[data-testid="save-channel-button"]');
   
   // Verify channel appears in list
-  await expect(page.locator('text=Test Channel')).toBeVisible();
+  await expect(page.locator('table tbody tr:has-text("Test Channel")')).toBeVisible();
   
-  // Edit channel
-  await page.click('[data-testid="edit-channel-btn"]');
-  await page.fill('[data-testid="channel-name"]', 'Updated Channel');
-  await page.click('[data-testid="save-channel-btn"]');
+  // Edit channel using scoped selectors
+  await page.locator('table tbody tr:has-text("Test Channel")')
+    .locator('[data-testid="edit-channel-button"]').click();
+  await page.fill('[data-testid="channel-name-input"]', 'Updated Channel');
+  await page.click('[data-testid="save-channel-button"]');
   
   // Verify update
-  await expect(page.locator('text=Updated Channel')).toBeVisible();
+  await expect(page.locator('table tbody tr:has-text("Updated Channel")')).toBeVisible();
+});
+
+// Example: M3U Import with pagination testing
+test('M3U import with pagination', async ({ page }) => {
+  await page.goto('/');
+  await page.click('[data-testid="nav-streams"]');
+  await page.click('[data-testid="import-m3u-button"]');
+  
+  // Fill import form using scoped selectors within dialog
+  await page.locator('[data-testid="import-dialog"]')
+    .locator('[data-testid="import-url-input"]')
+    .fill('https://iptv-org.github.io/iptv/index.m3u');
+  await page.click('[data-testid="parse-channels-button"]');
+  
+  // Wait for channels to load and verify pagination
+  await page.waitForSelector('[data-testid="import-dialog"] table tbody tr');
+  
+  // Test pagination controls (Material-UI specific)
+  const nextPageButton = page.locator('[data-testid="import-dialog"]')
+    .locator('.MuiTablePagination-actions button[aria-label="Go to next page"]');
+  if (await nextPageButton.isEnabled()) {
+    await nextPageButton.click();
+    await page.waitForTimeout(1000); // Allow page to update
+  }
+  
+  // Test rows per page selector
+  await page.locator('[data-testid="import-dialog"]')
+    .locator('.MuiTablePagination-select').click();
+  await page.click('li[data-value="50"]');
+  
+  // Verify up to 50 rows are now displayed
+  const rows = await page.locator('[data-testid="import-dialog"] table tbody tr').count();
+  expect(rows).toBeLessThanOrEqual(50);
 });
 ```
 
@@ -397,6 +420,129 @@ async function seedTestData() {
 }
 ```
 
+### Test Commands and Scripts
+
+The project includes comprehensive npm scripts for different testing scenarios:
+
+```bash
+# End-to-End Testing Commands
+npm run test:e2e          # Run all Playwright tests (headless)
+npm run test:e2e:headed   # Run tests with visible browser
+npm run test:e2e:debug    # Run tests in debug mode (step-through)
+npm run test:e2e:ui       # Run tests with Playwright UI
+npm run test:all          # Run both unit and e2e tests
+
+# Running Specific Tests
+npx playwright test tests/e2e/m3u-import.spec.js           # Specific test file
+npx playwright test -g "should display M3U import dialog"  # Specific test case
+npx playwright test --project=chromium                     # Specific browser project
+
+# Test Reports and Debugging
+npx playwright show-report  # View HTML test report
+npx playwright codegen      # Generate test code interactively
+```
+
+### Critical Testing Guidelines for Future Agents
+
+#### 1. **Always Use data-testid Selectors**
+```javascript
+// ✅ CORRECT - Use data-testid for reliable selection
+await page.click('[data-testid="nav-streams"]');
+await page.fill('[data-testid="import-url-input"]', url);
+
+// ❌ INCORRECT - Avoid text selectors that can match multiple elements
+await page.click('text="Streams"');  // Can match multiple elements
+await page.click('button:has-text("Import")');  // Can be ambiguous
+```
+
+#### 2. **Scope Selectors to Dialog/Container Context**
+```javascript
+// ✅ CORRECT - Scope selectors within specific containers
+await page.locator('[data-testid="import-dialog"]')
+  .locator('[data-testid="import-url-input"]')
+  .fill('test-url');
+
+// ❌ INCORRECT - Global selectors can match wrong elements
+await page.fill('[data-testid="import-url-input"]', 'test-url');
+```
+
+#### 3. **Handle Responsive Design Differences**
+```javascript
+// ✅ CORRECT - Check for mobile vs desktop patterns
+const isMobile = page.viewportSize().width < 768;
+if (isMobile) {
+  await page.click('[data-testid="mobile-menu-button"]');
+  await page.click('[data-testid="nav-streams"]');
+} else {
+  await page.click('[data-testid="nav-streams"]');
+}
+```
+
+#### 4. **Material-UI Specific Selectors**
+```javascript
+// Pagination controls
+await page.click('.MuiTablePagination-actions button[aria-label="Go to next page"]');
+
+// Select dropdowns
+await page.click('.MuiTablePagination-select');
+await page.click('li[data-value="50"]');
+
+// Dialog containers
+await page.locator('.MuiDialog-root [data-testid="import-dialog"]');
+```
+
+#### 5. **Proper Wait Strategies**
+```javascript
+// ✅ CORRECT - Wait for specific elements
+await page.waitForSelector('[data-testid="import-dialog"] table tbody tr');
+await page.waitForLoadState('networkidle');
+
+// ❌ INCORRECT - Avoid arbitrary timeouts
+await page.waitForTimeout(5000);  // Unreliable and slow
+```
+
+### Available Test Data IDs
+
+#### Navigation
+- `[data-testid="nav-dashboard"]` - Dashboard navigation link
+- `[data-testid="nav-channels"]` - Channels navigation link  
+- `[data-testid="nav-streams"]` - Streams navigation link
+- `[data-testid="nav-epg"]` - EPG navigation link
+- `[data-testid="nav-logs"]` - Logs navigation link
+- `[data-testid="nav-settings"]` - Settings navigation link
+- `[data-testid="mobile-menu-button"]` - Mobile hamburger menu
+
+#### Stream Manager
+- `[data-testid="add-stream-button"]` - Add new stream button
+- `[data-testid="import-m3u-button"]` - Import M3U playlist button
+- `[data-testid="stream-dialog"]` - Stream creation/edit dialog
+- `[data-testid="import-dialog"]` - M3U import dialog
+- `[data-testid="stream-name-input"]` - Stream name input field
+- `[data-testid="stream-url-input"]` - Stream URL input field
+- `[data-testid="import-url-input"]` - M3U URL input field
+- `[data-testid="parse-channels-button"]` - Parse M3U channels button
+- `[data-testid="import-selected-button"]` - Import selected channels button
+- `[data-testid="test-stream-button"]` - Test stream in player button
+- `[data-testid="preview-stream-button"]` - Preview stream button (table row)
+- `[data-testid="edit-stream-button"]` - Edit stream button (table row)
+- `[data-testid="delete-stream-button"]` - Delete stream button (table row)
+
+#### Channel Manager  
+- `[data-testid="add-channel-button"]` - Add new channel button
+- `[data-testid="add-channel-fab"]` - Mobile add channel FAB
+- `[data-testid="channel-name-input"]` - Channel name input field
+- `[data-testid="channel-number-input"]` - Channel number input field
+- `[data-testid="edit-channel-button"]` - Edit channel button (table row)
+- `[data-testid="delete-channel-button"]` - Delete channel button (table row)
+
+#### Common Form Actions
+- `[data-testid="save-button"]` - Generic save button
+- `[data-testid="cancel-button"]` - Generic cancel button
+- `[data-testid="save-stream-button"]` - Save stream button
+- `[data-testid="cancel-stream-button"]` - Cancel stream button
+- `[data-testid="save-channel-button"]` - Save channel button
+- `[data-testid="cancel-channel-button"]` - Cancel channel button
+
 ### Continuous Integration
 ```yaml
 # GitHub Actions workflow example
@@ -412,9 +558,9 @@ jobs:
         with:
           node-version: '18'
       - run: npm ci
-      - run: npm run test:unit
-      - run: npm run test:integration
-      - run: npx playwright test
+      - run: npm run test
+      - run: npx playwright install-deps  # Install browser dependencies
+      - run: npm run test:e2e
       - uses: actions/upload-artifact@v3
         if: failure()
         with:

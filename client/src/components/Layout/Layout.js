@@ -223,6 +223,7 @@ function Layout({ children }) {
               onClick={() => handleNavigation(item.path)}
               aria-label={`Navigate to ${item.text}`}
               aria-current={location.pathname === item.path ? 'page' : undefined}
+              data-testid={`nav-${item.text.toLowerCase()}`}
               sx={{
                 borderRadius: 3,
                 mx: 1,
@@ -353,6 +354,7 @@ function Layout({ children }) {
             edge="start"
             onClick={handleDrawerToggle}
             sx={{ mr: 2, display: { md: 'none' } }}
+            data-testid="mobile-menu-button"
           >
             <MenuIcon />
           </IconButton>
@@ -402,6 +404,7 @@ function Layout({ children }) {
             keepMounted: true,
           }}
           aria-label="Navigation menu"
+          data-testid="mobile-drawer"
           sx={{
             display: { xs: 'block', md: 'none' },
             '& .MuiDrawer-paper': { 
@@ -423,6 +426,7 @@ function Layout({ children }) {
               backgroundImage: 'none',
             },
           }}
+          data-testid="desktop-drawer"
           open
         >
           {drawer}
