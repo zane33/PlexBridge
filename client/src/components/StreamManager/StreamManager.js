@@ -60,7 +60,7 @@ import {
   ContentCopy as ContentCopyIcon,
 } from '@mui/icons-material';
 import { useSnackbar } from 'notistack';
-import api from '../../services/api';
+import api, { m3uApi } from '../../services/api';
 import EnhancedVideoPlayer from '../VideoPlayer/EnhancedVideoPlayer';
 import SimpleVideoPlayer from '../VideoPlayer/SimpleVideoPlayer';
 
@@ -94,7 +94,11 @@ function StreamManager() {
   const [importDialogOpen, setImportDialogOpen] = useState(false);
   const [importing, setImporting] = useState(false);
   const [parsedChannels, setParsedChannels] = useState([]);
+  const [filteredChannels, setFilteredChannels] = useState([]);
   const [selectedChannels, setSelectedChannels] = useState([]);
+  const [searchQuery, setSearchQuery] = useState('');
+  const [groupFilter, setGroupFilter] = useState('');
+  const [availableGroups, setAvailableGroups] = useState([]);
   const [importFormData, setImportFormData] = useState({
     url: '',
     type: 'hls',
@@ -145,6 +149,33 @@ function StreamManager() {
     fetchStreams();
     fetchChannels();
   }, []);
+
+  // Filter channels based on search and group filter
+  useEffect(() => {
+    let filtered = parsedChannels;
+
+    // Apply search filter
+    if (searchQuery.trim()) {
+      const query = searchQuery.toLowerCase();
+      filtered = filtered.filter(channel => 
+        channel.name.toLowerCase().includes(query) ||
+        (channel.attributes?.['group-title'] || '').toLowerCase().includes(query) ||
+        (channel.attributes?.['tvg-id'] || '').toLowerCase().includes(query)
+      );
+    }
+
+    // Apply group filter
+    if (groupFilter && groupFilter !== '') {
+      filtered = filtered.filter(channel => 
+        (channel.attributes?.['group-title'] || 'Ungrouped') === groupFilter
+      );
+    }
+
+    setFilteredChannels(filtered);
+    
+    // Reset pagination when filtering
+    setImportPage(0);
+  }, [parsedChannels, searchQuery, groupFilter]);
 
   const fetchStreams = async () => {
     try {
@@ -363,18 +394,23 @@ function StreamManager() {
 
     setImporting(true);
     try {
-      const response = await api.post('/api/streams/import', {
-        ...importFormData,
-        auto_create_channels: false // Just parse, don't create yet
-      });
+      enqueueSnackbar('Parsing M3U playlist... This may take several minutes for large playlists.', { variant: 'info' });
+      
+      const response = await m3uApi.parsePlaylist(importFormData.url.trim());
 
       const channels = response.data.channels || [];
       setParsedChannels(channels);
+      setFilteredChannels(channels); // Initialize filtered channels
+      
+      // Extract unique groups for filtering
+      const groups = [...new Set(channels.map(ch => ch.attributes?.['group-title'] || 'Ungrouped').filter(Boolean))];
+      setAvailableGroups(groups.sort());
+      
       // Select all channels by default
       setSelectedChannels(channels.map((_, index) => index));
       
       if (channels.length > 0) {
-        enqueueSnackbar(`Found ${channels.length} channels! 🎉`, { variant: 'success' });
+        enqueueSnackbar(`Found ${channels.length} channels! 🎉 Use search to find specific channels.`, { variant: 'success' });
       } else {
         enqueueSnackbar('No channels found in the source', { variant: 'warning' });
       }
@@ -403,11 +439,7 @@ function StreamManager() {
       // Filter to only selected channels
       const channelsToImport = parsedChannels.filter((_, index) => selectedChannels.includes(index));
       
-      const response = await api.post('/api/streams/import', {
-        ...importFormData,
-        auto_create_channels: true,
-        channels: channelsToImport // Send only selected channels
-      });
+      const response = await m3uApi.importChannels(importFormData.url, channelsToImport);
 
       const channelsCreated = response.data.channelsCreated || selectedChannels.length;
       const streamsCreated = response.data.streamsCreated || selectedChannels.length;
@@ -988,8 +1020,9 @@ function StreamManager() {
         maxWidth="lg" 
         fullWidth
         fullScreen={isMobile}
+        data-testid="import-dialog"
       >
-        <DialogTitle>
+        <DialogTitle data-testid="import-dialog-title">
           <Typography variant="h5" component="div">
             📺 Import Multiple Channels from Stream Source
           </Typography>
@@ -1015,6 +1048,7 @@ function StreamManager() {
                 disabled={importing}
                 placeholder="https://example.com/playlist.m3u8"
                 helperText="M3U playlist, XMLTV file, or other multi-channel source"
+                data-testid="import-url-input"
               />
             </Grid>
             
@@ -1055,6 +1089,7 @@ function StreamManager() {
                 fullWidth
                 size="large"
                 startIcon={importing ? <CircularProgress size={20} /> : <ListIcon />}
+                data-testid="parse-channels-button"
               >
                 {importing ? 'Parsing...' : 'Parse Channels'}
               </Button>
@@ -1107,25 +1142,107 @@ function StreamManager() {
 
             {parsedChannels.length > 0 && (
               <Grid item xs={12}>
+                {/* Search and Filter Controls */}
+                <Box sx={{ mb: 2 }}>
+                  <Grid container spacing={2}>
+                    <Grid item xs={12} sm={6}>
+                      <TextField
+                        fullWidth
+                        label="🔍 Search channels..."
+                        value={searchQuery}
+                        onChange={(e) => setSearchQuery(e.target.value)}
+                        disabled={importing}
+                        variant="outlined"
+                        size="small"
+                        placeholder="Search by name, group, or TVG ID"
+                        data-testid="channel-search-input"
+                      />
+                    </Grid>
+                    <Grid item xs={12} sm={6}>
+                      <FormControl fullWidth size="small">
+                        <InputLabel>📁 Filter by Group</InputLabel>
+                        <Select
+                          value={groupFilter}
+                          onChange={(e) => setGroupFilter(e.target.value)}
+                          disabled={importing}
+                          label="📁 Filter by Group"
+                          data-testid="group-filter-select"
+                        >
+                          <MenuItem value="">
+                            <em>All Groups ({parsedChannels.length} channels)</em>
+                          </MenuItem>
+                          {availableGroups.map((group) => {
+                            const groupCount = parsedChannels.filter(ch => 
+                              (ch.attributes?.['group-title'] || 'Ungrouped') === group
+                            ).length;
+                            return (
+                              <MenuItem key={group} value={group}>
+                                {group} ({groupCount})
+                              </MenuItem>
+                            );
+                          })}
+                        </Select>
+                      </FormControl>
+                    </Grid>
+                  </Grid>
+                </Box>
+
                 <Box display="flex" justifyContent="space-between" alignItems="center" sx={{ mb: 2 }}>
                   <Typography variant="h6">
-                    📋 Found {parsedChannels.length} Channels ({selectedChannels.length} selected):
+                    📋 {searchQuery || groupFilter ? 
+                      `Showing ${filteredChannels.length} of ${parsedChannels.length} channels` : 
+                      `Found ${parsedChannels.length} channels`
+                    } ({selectedChannels.length} selected):
                   </Typography>
                   <Box>
                     <Button
                       size="small"
-                      onClick={() => setSelectedChannels(parsedChannels.map((_, index) => index))}
-                      disabled={selectedChannels.length === parsedChannels.length}
+                      onClick={() => {
+                        if (searchQuery || groupFilter) {
+                          // Select all filtered channels
+                          const filteredIndices = filteredChannels.map(filteredChannel => 
+                            parsedChannels.findIndex(originalChannel => originalChannel.id === filteredChannel.id)
+                          ).filter(index => index !== -1);
+                          setSelectedChannels([...new Set([...selectedChannels, ...filteredIndices])]);
+                        } else {
+                          // Select all channels
+                          setSelectedChannels(parsedChannels.map((_, index) => index));
+                        }
+                      }}
+                      disabled={searchQuery || groupFilter ? 
+                        filteredChannels.every(filteredChannel => {
+                          const originalIndex = parsedChannels.findIndex(originalChannel => originalChannel.id === filteredChannel.id);
+                          return selectedChannels.includes(originalIndex);
+                        }) :
+                        selectedChannels.length === parsedChannels.length
+                      }
                     >
-                      Select All
+                      {searchQuery || groupFilter ? 'Select Filtered' : 'Select All'}
                     </Button>
                     <Button
                       size="small"
-                      onClick={() => setSelectedChannels([])}
-                      disabled={selectedChannels.length === 0}
+                      onClick={() => {
+                        if (searchQuery || groupFilter) {
+                          // Deselect filtered channels only
+                          const filteredIndices = filteredChannels.map(filteredChannel => 
+                            parsedChannels.findIndex(originalChannel => originalChannel.id === filteredChannel.id)
+                          ).filter(index => index !== -1);
+                          setSelectedChannels(selectedChannels.filter(index => !filteredIndices.includes(index)));
+                        } else {
+                          // Deselect all
+                          setSelectedChannels([]);
+                        }
+                      }}
+                      disabled={searchQuery || groupFilter ? 
+                        !filteredChannels.some(filteredChannel => {
+                          const originalIndex = parsedChannels.findIndex(originalChannel => originalChannel.id === filteredChannel.id);
+                          return selectedChannels.includes(originalIndex);
+                        }) :
+                        selectedChannels.length === 0
+                      }
                       sx={{ ml: 1 }}
                     >
-                      Select None
+                      {searchQuery || groupFilter ? 'Deselect Filtered' : 'Select None'}
                     </Button>
                   </Box>
                 </Box>
@@ -1155,10 +1272,10 @@ function StreamManager() {
                       </TableRow>
                     </TableHead>
                     <TableBody>
-                      {parsedChannels
+                      {filteredChannels
                         .slice(importPage * importRowsPerPage, importPage * importRowsPerPage + importRowsPerPage)
                         .map((channel, relativeIndex) => {
-                          const actualIndex = importPage * importRowsPerPage + relativeIndex;
+                          const actualIndex = parsedChannels.findIndex(c => c.id === channel.id);
                           return (
                             <TableRow 
                               key={actualIndex} 
@@ -1226,7 +1343,7 @@ function StreamManager() {
                 
                 <TablePagination
                   component="div"
-                  count={parsedChannels.length}
+                  count={filteredChannels.length}
                   page={importPage}
                   onPageChange={(event, newPage) => setImportPage(newPage)}
                   rowsPerPage={importRowsPerPage}

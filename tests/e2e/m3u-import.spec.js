@@ -22,15 +22,20 @@ test.describe('M3U Import Feature', () => {
     // Click Import M3U button using data-testid
     await page.click('[data-testid="import-m3u-button"]');
     
-    // Enter a test M3U URL
+    // Wait for import dialog to open
+    await expect(page.locator('[data-testid="import-dialog"]')).toBeVisible();
+    
+    // Enter a test M3U URL - use data-testid for input
     const testM3UUrl = 'https://iptv-org.github.io/iptv/index.m3u';
-    await page.fill('[data-testid="import-url-input"]', testM3UUrl);
+    await page.locator('[data-testid="import-dialog"]')
+      .locator('[data-testid="import-url-input"]')
+      .fill(testM3UUrl);
     
     // Click Parse Channels using data-testid
     await page.click('[data-testid="parse-channels-button"]');
     
     // Wait for channels to load in the import dialog
-    await page.waitForSelector('[data-testid="import-dialog"] table tbody tr', { timeout: 30000 });
+    await page.waitForSelector('[data-testid="import-dialog"] table tbody tr', { timeout: 60000 });
     
     // Check if channels are displayed in the import dialog
     const channelRows = page.locator('[data-testid="import-dialog"] table tbody tr');
@@ -40,7 +45,7 @@ test.describe('M3U Import Feature', () => {
     // Check pagination controls are present if there are many channels
     if (rowCount >= 25) {
       await expect(page.locator('[data-testid="import-dialog"] .MuiTablePagination-actions button[aria-label="Go to next page"]')).toBeVisible();
-      await expect(page.locator('[data-testid="import-dialog"] text="Rows per page"')).toBeVisible();
+      await expect(page.locator('[data-testid="import-dialog"] .MuiTablePagination-root')).toContainText('Rows per page');
     }
   });
 

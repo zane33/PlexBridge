@@ -3,7 +3,16 @@ import axios from 'axios';
 // Create axios instance with default config
 const api = axios.create({
   baseURL: process.env.NODE_ENV === 'production' ? '' : 'http://localhost:8080',
-  timeout: 30000,
+  timeout: 30000, // Default timeout
+  headers: {
+    'Content-Type': 'application/json',
+  },
+});
+
+// Create special instance for long-running operations like M3U parsing
+const longRunningApi = axios.create({
+  baseURL: process.env.NODE_ENV === 'production' ? '' : 'http://localhost:8080',
+  timeout: 300000, // 5 minutes for M3U parsing
   headers: {
     'Content-Type': 'application/json',
   },
@@ -38,6 +47,36 @@ api.interceptors.response.use(
       console.error('Request timeout');
     } else if (!error.response) {
       // Handle network errors
+      console.error('Network error:', error.message);
+    }
+    
+    return Promise.reject(error);
+  }
+);
+
+// Apply same interceptors to longRunningApi
+longRunningApi.interceptors.request.use(
+  (config) => {
+    return config;
+  },
+  (error) => {
+    return Promise.reject(error);
+  }
+);
+
+longRunningApi.interceptors.response.use(
+  (response) => {
+    return response;
+  },
+  (error) => {
+    // Handle common errors with more specific timeout messaging for long operations
+    if (error.response?.status === 401) {
+      console.error('Unauthorized access');
+    } else if (error.response?.status >= 500) {
+      console.error('Server error:', error.response.data?.error || error.message);
+    } else if (error.code === 'ECONNABORTED') {
+      console.error('M3U parsing timeout - playlist may be too large');
+    } else if (!error.response) {
       console.error('Network error:', error.message);
     }
     
@@ -504,4 +543,18 @@ export const streamApi = {
     api.delete(`/api/streams/active/channel/${streamId}`, { data: { reason } })
 };
 
+// M3U parsing API functions (using long timeout)
+export const m3uApi = {
+  // Parse M3U playlist (long-running operation)
+  parsePlaylist: (url) => longRunningApi.post('/api/streams/parse/m3u', { url }),
+  
+  // Import selected channels
+  importChannels: (url, selectedChannels) => 
+    api.post('/api/streams/import/m3u', { url, selectedChannels }),
+  
+  // Validate M3U URL
+  validateUrl: (url) => api.post('/api/streams/validate/m3u', { url })
+};
+
+export { longRunningApi };
 export default api;
