@@ -61,6 +61,7 @@ import {
 } from '@mui/icons-material';
 import { useSnackbar } from 'notistack';
 import api, { m3uApi } from '../../services/api';
+import socketService from '../../services/socket';
 import EnhancedVideoPlayer from '../VideoPlayer/EnhancedVideoPlayer';
 import SimpleVideoPlayer from '../VideoPlayer/SimpleVideoPlayer';
 
@@ -186,6 +187,7 @@ function StreamManager() {
 
   // WebSocket listener for M3U parsing progress
   useEffect(() => {
+    const socket = socketService.getSocket();
     if (socket) {
       const handleM3UProgress = (data) => {
         setParsingProgress(prev => {
@@ -213,7 +215,7 @@ function StreamManager() {
       socket.on('m3uProgress', handleM3UProgress);
       return () => socket.off('m3uProgress', handleM3UProgress);
     }
-  }, [socket]);
+  }, []);
 
   const fetchStreams = async () => {
     try {
