@@ -91,5 +91,5 @@ USER plextv
 # Use tini as init system  
 ENTRYPOINT ["/sbin/tini", "--"]
 
-# Start the test server directly
-CMD ["node", "server/test-server.js"]
+# Start the main server (with all fixes applied)
+CMD ["node", "server/index.js"]
