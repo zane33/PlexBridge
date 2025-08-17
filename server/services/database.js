@@ -196,7 +196,8 @@ class DatabaseService {
         category TEXT,
         episode_number INTEGER,
         season_number INTEGER,
-        created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY (channel_id) REFERENCES channels(id) ON DELETE CASCADE
       )`,
 
       // Stream sessions table for monitoring

@@ -788,12 +788,57 @@ router.get('/debug/epg', async (req, res) => {
       LIMIT 10
     `);
 
+    // Get channel mapping status
+    const channelMapping = await database.all(`
+      SELECT 
+        c.id,
+        c.name,
+        c.number,
+        c.epg_id,
+        COUNT(p.id) as program_count
+      FROM channels c
+      LEFT JOIN epg_programs p ON c.id = p.channel_id
+      GROUP BY c.id
+      ORDER BY c.number
+    `);
+
+    // Get EPG sources
+    const epgSources = await database.all('SELECT * FROM epg_sources');
+
+    // Get EPG channels from sources
+    const epgChannels = await database.all(`
+      SELECT 
+        ec.epg_id,
+        ec.display_name,
+        ec.source_id,
+        es.name as source_name
+      FROM epg_channels ec
+      LEFT JOIN epg_sources es ON ec.source_id = es.id
+      ORDER BY es.name, ec.display_name
+      LIMIT 20
+    `);
+
+    // Get total counts
+    const totalPrograms = await database.get('SELECT COUNT(*) as count FROM epg_programs');
+    const totalEPGChannels = await database.get('SELECT COUNT(*) as count FROM epg_channels');
+
     res.json({
       table_schema: tableInfo,
       sample_programs: samplePrograms,
-      distinct_channels: distinctChannels
+      distinct_channels: distinctChannels,
+      channel_mapping: channelMapping,
+      epg_sources: epgSources,
+      epg_channels: epgChannels,
+      summary: {
+        total_channels: channelMapping.length,
+        channels_with_programs: channelMapping.filter(c => c.program_count > 0).length,
+        total_programs: totalPrograms.count,
+        total_epg_channels: totalEPGChannels.count,
+        channels_with_epg_id: channelMapping.filter(c => c.epg_id).length
+      }
     });
   } catch (error) {
+    logger.error('Debug EPG error:', error);
     res.status(500).json({ error: error.message });
   }
 });

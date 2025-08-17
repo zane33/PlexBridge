@@ -246,10 +246,21 @@ const EnhancedVideoPlayer = ({
 
     } catch (error) {
       console.error('Player initialization error:', error);
-      setError({ 
-        message: error.message || 'Failed to initialize player', 
-        canRecover: true 
-      });
+      
+      // If proxy failed, suggest trying direct stream
+      if (proxyEnabled && error.message && (error.message.includes('Failed') || error.message.includes('proxy'))) {
+        setError({ 
+          message: `${error.message}. Try disabling proxy mode to stream directly.`, 
+          canRecover: true 
+        });
+        enqueueSnackbar('Proxy initialization failed. Consider disabling proxy mode.', { variant: 'warning' });
+      } else {
+        setError({ 
+          message: error.message || 'Failed to initialize player', 
+          canRecover: true 
+        });
+      }
+      
       if (onError) onError(error);
     } finally {
       setLoading(false);
@@ -348,26 +359,44 @@ const EnhancedVideoPlayer = ({
         console.error('Video.js error:', error);
         
         let errorMessage = 'Video.js playback error';
+        let canRecover = true;
+        
         if (error) {
           switch (error.code) {
             case 1: // MEDIA_ERR_ABORTED
               errorMessage = 'Stream loading was aborted';
               break;
             case 2: // MEDIA_ERR_NETWORK
-              errorMessage = 'Network error - try proxy mode or external player';
+              if (proxyEnabled) {
+                errorMessage = 'Network error with proxy. Try disabling proxy mode or check if PlexBridge streaming service is available';
+              } else {
+                errorMessage = 'Network error - check stream URL or try proxy mode';
+              }
               break;
             case 3: // MEDIA_ERR_DECODE
               errorMessage = 'Stream decode error - format may be unsupported';
               break;
             case 4: // MEDIA_ERR_SRC_NOT_SUPPORTED
-              errorMessage = 'Stream format not supported - try external player';
+              if (proxyEnabled) {
+                errorMessage = 'Stream format not supported by proxy. Try disabling proxy mode or using external player';
+              } else {
+                errorMessage = 'Stream format not supported by browser. Try enabling proxy mode or using external player';
+              }
               break;
             default:
               errorMessage = error.message || 'Unknown playback error';
           }
         }
         
-        setError({ message: errorMessage, canRecover: true });
+        setError({ message: errorMessage, canRecover });
+        
+        // If proxy failed and we haven't tried direct stream yet, suggest fallback
+        if (proxyEnabled && (error.code === 2 || error.code === 4)) {
+          enqueueSnackbar('Proxy failed. Try disabling proxy mode to stream directly.', { 
+            variant: 'warning',
+            persist: true
+          });
+        }
       });
 
     } catch (error) {

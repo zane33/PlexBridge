@@ -147,6 +147,14 @@ class EPGService {
       // Parse EPG XML (now includes storing channel information)
       const programs = await this.parseEPG(epgData, sourceId);
       
+      if (programs.length === 0) {
+        logger.warn('No programs parsed from EPG source', { 
+          sourceId, 
+          url: source.url,
+          dataLength: epgData.length 
+        });
+      }
+      
       // Store programs in database
       await this.storePrograms(programs);
       
@@ -286,9 +294,14 @@ class EPGService {
       return null;
     }
 
-    // Find matching channel in our database
+    // Find matching channel in our database by EPG ID
     const channelId = await this.findChannelByEpgId(programme.channel);
     if (!channelId) {
+      // Log this for debugging - many programs might be skipped due to unmapped channels
+      logger.debug('Skipping program for unmapped EPG channel', { 
+        epgChannelId: programme.channel,
+        title: this.extractText(programme.title)
+      });
       return null; // Skip programs for unmapped channels
     }
 
@@ -309,9 +322,30 @@ class EPGService {
 
   async findChannelByEpgId(epgId) {
     try {
+      // First try exact EPG ID match
       const channel = await database.get('SELECT id FROM channels WHERE epg_id = ?', [epgId]);
-      return channel?.id || null;
+      if (channel) {
+        return channel.id;
+      }
+
+      // If no exact match, try case-insensitive match
+      const channelCaseInsensitive = await database.get(
+        'SELECT id FROM channels WHERE LOWER(epg_id) = LOWER(?)', 
+        [epgId]
+      );
+      if (channelCaseInsensitive) {
+        logger.debug('Found channel with case-insensitive EPG ID match', { 
+          epgId, 
+          channelId: channelCaseInsensitive.id 
+        });
+        return channelCaseInsensitive.id;
+      }
+
+      // Log unmapped EPG ID for debugging
+      logger.debug('No channel found for EPG ID', { epgId });
+      return null;
     } catch (error) {
+      logger.error('Error finding channel by EPG ID', { epgId, error: error.message });
       return null;
     }
   }
@@ -429,22 +463,44 @@ class EPGService {
           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
         `;
 
+        let insertedCount = 0;
+        let errorCount = 0;
+        
         for (let i = 0; i < programs.length; i += batchSize) {
           const batch = programs.slice(i, i + batchSize);
           
           for (const program of batch) {
-            await db.run(insertSQL, [
-              program.id,
-              program.channel_id,
-              program.title,
-              program.description,
-              program.start_time,
-              program.end_time,
-              program.category,
-              program.episode_number,
-              program.season_number
-            ]);
+            try {
+              await db.run(insertSQL, [
+                program.id,
+                program.channel_id,
+                program.title,
+                program.description,
+                program.start_time,
+                program.end_time,
+                program.category,
+                program.episode_number,
+                program.season_number
+              ]);
+              insertedCount++;
+            } catch (error) {
+              errorCount++;
+              logger.debug('Failed to insert program', { 
+                programId: program.id,
+                channelId: program.channel_id,
+                title: program.title,
+                error: error.message 
+              });
+            }
           }
+        }
+        
+        if (errorCount > 0) {
+          logger.warn('Some programs failed to insert', { 
+            total: programs.length,
+            inserted: insertedCount,
+            errors: errorCount 
+          });
         }
       });
 

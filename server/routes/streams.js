@@ -100,7 +100,7 @@ router.get('/stream/:channelId', async (req, res) => {
 });
 
 // Stream preview endpoint
-router.get('/preview/:streamId', async (req, res) => {
+router.get('/streams/preview/:streamId', async (req, res) => {
   const streamId = req.params.streamId;
   
   try {
@@ -127,7 +127,18 @@ router.get('/preview/:streamId', async (req, res) => {
 
   } catch (error) {
     logger.error('Stream preview error', { streamId, error: error.message });
-    res.status(500).json({ error: 'Preview failed' });
+    
+    // Provide more specific error messages
+    let errorMessage = 'Preview failed';
+    if (error.message.includes('ENOENT') || error.message.includes('ffmpeg')) {
+      errorMessage = 'Streaming service unavailable (FFmpeg not found). Please try external players.';
+    } else if (error.message.includes('timeout')) {
+      errorMessage = 'Preview timeout - stream may be unavailable';
+    } else if (error.message.includes('network') || error.message.includes('ENOTFOUND')) {
+      errorMessage = 'Network error - cannot reach stream source';
+    }
+    
+    res.status(500).json({ error: errorMessage });
   }
 });
 

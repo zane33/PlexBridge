@@ -30,7 +30,8 @@ RUN addgroup -g 1001 -S plextv && \
 # Create data directories and Redis directory with proper permissions
 RUN mkdir -p /data/database /data/cache /data/logs /data/logos /var/lib/redis && \
     chown -R plextv:plextv /data && \
-    chown -R plextv:plextv /var/lib/redis
+    chown -R plextv:plextv /var/lib/redis && \
+    chmod -R 755 /data
 
 # Copy package files
 COPY package*.json ./
@@ -87,5 +88,5 @@ VOLUME ["/data"]
 # Use tini as init system
 ENTRYPOINT ["/sbin/tini", "--"]
 
-# Start the enhanced test server with Socket.IO and APIs
-CMD ["node", "server/test-server.js"]
+# Start using the startup script that fixes permissions
+CMD ["/app/start.sh"]

@@ -18,6 +18,10 @@ const PORT = 8080;
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
+// Include routes
+const streamsRouter = require('./routes/streams');
+app.use('/streams', streamsRouter);
+
 const M3UParser = require('./services/m3uParser');
 
 // Real-time data tracking
@@ -29,12 +33,13 @@ let streamData = [];
 // Function to get real metrics
 function getRealMetrics() {
   const memUsage = process.memoryUsage();
+  const maxStreams = savedSettings?.plexlive?.streaming?.maxConcurrentStreams || 10;
   
   return {
     streams: {
       active: activeStreams.size,
-      maximum: 10, // Configuration-based
-      utilization: Math.round((activeStreams.size / 10) * 100)
+      maximum: maxStreams, // Use actual configuration
+      utilization: Math.round((activeStreams.size / maxStreams) * 100)
     },
     system: {
       uptime: Math.floor(process.uptime()),
@@ -512,12 +517,20 @@ app.get('/api/settings', (req, res) => {
 app.put('/api/settings', (req, res) => {
   savedSettings = { ...savedSettings, ...req.body };
   console.log('Settings updated:', savedSettings);
+  
+  // Emit updated metrics to all connected clients
+  io.emit('metrics:update', getRealMetrics());
+  
   res.json({ success: true, message: 'Settings saved successfully' });
 });
 
 app.post('/api/settings', (req, res) => {
   savedSettings = { ...savedSettings, ...req.body };
   console.log('Settings updated:', savedSettings);
+  
+  // Emit updated metrics to all connected clients
+  io.emit('metrics:update', getRealMetrics());
+  
   res.json({ success: true, message: 'Settings saved successfully' });
 });
 

@@ -134,10 +134,21 @@ const SimpleVideoPlayer = ({
 
     } catch (error) {
       console.error('Player initialization error:', error);
-      setError({ 
-        message: error.message || 'Failed to initialize player', 
-        canRecover: true 
-      });
+      
+      // If proxy failed, suggest trying direct stream
+      if (proxyEnabled && error.message && (error.message.includes('Failed') || error.message.includes('proxy'))) {
+        setError({ 
+          message: `${error.message}. Try disabling proxy mode to stream directly.`, 
+          canRecover: true 
+        });
+        enqueueSnackbar('Proxy initialization failed. Consider disabling proxy mode.', { variant: 'warning' });
+      } else {
+        setError({ 
+          message: error.message || 'Failed to initialize player', 
+          canRecover: true 
+        });
+      }
+      
       if (onError) onError(error);
     } finally {
       setLoading(false);
@@ -303,13 +314,21 @@ const SimpleVideoPlayer = ({
               if (target && target.error) {
                 switch (target.error.code) {
                   case target.error.MEDIA_ERR_NETWORK:
-                    errorMessage = 'Network error - try proxy mode';
+                    if (proxyEnabled) {
+                      errorMessage = 'Network error with proxy. Try disabling proxy mode or check if PlexBridge streaming service is available';
+                    } else {
+                      errorMessage = 'Network error - check stream URL or try proxy mode';
+                    }
                     break;
                   case target.error.MEDIA_ERR_DECODE:
                     errorMessage = 'Video decode error - unsupported format';
                     break;
                   case target.error.MEDIA_ERR_SRC_NOT_SUPPORTED:
-                    errorMessage = 'Video format not supported';
+                    if (proxyEnabled) {
+                      errorMessage = 'Stream format not supported by proxy. Try disabling proxy mode or using external player';
+                    } else {
+                      errorMessage = 'Stream format not supported by browser. Try enabling proxy mode or using external player';
+                    }
                     break;
                   default:
                     errorMessage = 'Unknown video error';
