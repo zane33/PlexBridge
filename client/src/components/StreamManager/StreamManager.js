@@ -99,6 +99,13 @@ function StreamManager() {
   const [searchQuery, setSearchQuery] = useState('');
   const [groupFilter, setGroupFilter] = useState('');
   const [availableGroups, setAvailableGroups] = useState([]);
+  const [parsingProgress, setParsingProgress] = useState({
+    show: false,
+    progress: 0,
+    stage: '',
+    message: '',
+    sessionId: null
+  });
   const [importFormData, setImportFormData] = useState({
     url: '',
     type: 'hls',
@@ -176,6 +183,37 @@ function StreamManager() {
     // Reset pagination when filtering
     setImportPage(0);
   }, [parsedChannels, searchQuery, groupFilter]);
+
+  // WebSocket listener for M3U parsing progress
+  useEffect(() => {
+    if (socket) {
+      const handleM3UProgress = (data) => {
+        setParsingProgress(prev => {
+          // Only update if this is our current session or we don't have a session yet
+          if (!prev.sessionId || prev.sessionId === data.sessionId) {
+            return {
+              show: data.stage !== 'complete' && !data.error,
+              progress: data.progress,
+              stage: data.stage,
+              message: data.message,
+              sessionId: data.sessionId
+            };
+          }
+          return prev;
+        });
+
+        // Hide progress when complete or error
+        if (data.stage === 'complete' || data.error) {
+          setTimeout(() => {
+            setParsingProgress(prev => ({ ...prev, show: false }));
+          }, 2000);
+        }
+      };
+
+      socket.on('m3uProgress', handleM3UProgress);
+      return () => socket.off('m3uProgress', handleM3UProgress);
+    }
+  }, [socket]);
 
   const fetchStreams = async () => {
     try {
@@ -394,11 +432,25 @@ function StreamManager() {
 
     setImporting(true);
     try {
-      enqueueSnackbar('Parsing M3U playlist... This may take several minutes for large playlists.', { variant: 'info' });
+      // Reset progress and show initial state
+      setParsingProgress({
+        show: true,
+        progress: 0,
+        stage: 'starting',
+        message: 'Initializing M3U parsing...',
+        sessionId: null
+      });
+      
+      enqueueSnackbar('Starting M3U parsing... Progress will be shown below.', { variant: 'info' });
       
       const response = await m3uApi.parsePlaylist(importFormData.url.trim());
 
       const channels = response.data.channels || [];
+      const sessionId = response.data.sessionId;
+      
+      // Update progress state with session ID
+      setParsingProgress(prev => ({ ...prev, sessionId }));
+      
       setParsedChannels(channels);
       setFilteredChannels(channels); // Initialize filtered channels
       
@@ -406,11 +458,16 @@ function StreamManager() {
       const groups = [...new Set(channels.map(ch => ch.attributes?.['group-title'] || 'Ungrouped').filter(Boolean))];
       setAvailableGroups(groups.sort());
       
-      // Select all channels by default
-      setSelectedChannels(channels.map((_, index) => index));
+      // For large datasets, don't select all by default (performance)
+      if (channels.length > 5000) {
+        setSelectedChannels([]); // Don't select all for very large lists
+        enqueueSnackbar('💡 Tip: Use search and filters to select specific channels from this large playlist.', { variant: 'info' });
+      } else {
+        setSelectedChannels(channels.map((_, index) => index));
+      }
       
       if (channels.length > 0) {
-        enqueueSnackbar(`Found ${channels.length} channels! 🎉 Use search to find specific channels.`, { variant: 'success' });
+        enqueueSnackbar(`Successfully parsed ${channels.length} channels! 🎉 Use search and filters to find specific channels.`, { variant: 'success' });
       } else {
         enqueueSnackbar('No channels found in the source', { variant: 'warning' });
       }
@@ -418,6 +475,9 @@ function StreamManager() {
       const errorMessage = error.response?.data?.error || 'Failed to parse stream source';
       enqueueSnackbar(errorMessage, { variant: 'error' });
       console.error('Parse error:', error);
+      
+      // Hide progress on error
+      setParsingProgress(prev => ({ ...prev, show: false }));
     } finally {
       setImporting(false);
     }
@@ -1140,6 +1200,27 @@ function StreamManager() {
               />
             </Grid>
 
+            {/* Progress Bar */}
+            {parsingProgress.show && (
+              <Grid item xs={12}>
+                <Alert severity="info" sx={{ mb: 2 }}>
+                  <Box>
+                    <Typography variant="body2" sx={{ mb: 1 }}>
+                      {parsingProgress.message}
+                    </Typography>
+                    <LinearProgress 
+                      variant="determinate" 
+                      value={parsingProgress.progress} 
+                      sx={{ mb: 1 }}
+                    />
+                    <Typography variant="caption" color="text.secondary">
+                      {parsingProgress.stage}: {Math.round(parsingProgress.progress)}%
+                    </Typography>
+                  </Box>
+                </Alert>
+              </Grid>
+            )}
+
             {parsedChannels.length > 0 && (
               <Grid item xs={12}>
                 {/* Search and Filter Controls */}
@@ -1186,6 +1267,17 @@ function StreamManager() {
                     </Grid>
                   </Grid>
                 </Box>
+
+                {/* Performance warning for large datasets */}
+                {filteredChannels.length > 10000 && (
+                  <Alert severity="warning" sx={{ mb: 2 }}>
+                    <Typography variant="body2">
+                      ⚠️ Large dataset detected ({filteredChannels.length} channels). 
+                      Use search and filters to improve performance. 
+                      Consider selecting by group instead of browsing all channels.
+                    </Typography>
+                  </Alert>
+                )}
 
                 <Box display="flex" justifyContent="space-between" alignItems="center" sx={{ mb: 2 }}>
                   <Typography variant="h6">
@@ -1351,7 +1443,7 @@ function StreamManager() {
                     setImportRowsPerPage(parseInt(event.target.value, 10));
                     setImportPage(0);
                   }}
-                  rowsPerPageOptions={[10, 25, 50, 100]}
+                  rowsPerPageOptions={filteredChannels.length > 10000 ? [10, 25, 50] : [10, 25, 50, 100, 250]}
                   labelRowsPerPage="Rows per page:"
                   sx={{ borderTop: '1px solid rgba(224, 224, 224, 1)' }}
                 />

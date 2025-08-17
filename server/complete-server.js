@@ -225,7 +225,7 @@ app.post('/api/streams/validate', (req, res) => {
   }
 });
 
-// M3U parsing endpoint
+// M3U parsing endpoint with progress updates
 app.post('/api/streams/parse/m3u', async (req, res) => {
   const { url } = req.body;
   
@@ -233,8 +233,19 @@ app.post('/api/streams/parse/m3u', async (req, res) => {
     return res.status(400).json({ error: 'URL is required' });
   }
   
+  // Create unique parsing session ID
+  const sessionId = `m3u_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+  
   try {
-    console.log(`Fetching M3U playlist from: ${url}`);
+    console.log(`Starting M3U parsing session ${sessionId} for: ${url}`);
+    
+    // Send initial progress
+    io.emit('m3uProgress', {
+      sessionId,
+      stage: 'fetching',
+      progress: 0,
+      message: 'Fetching M3U playlist...'
+    });
     
     // Fetch M3U content
     const https = require('https');
@@ -252,17 +263,17 @@ app.post('/api/streams/parse/m3u', async (req, res) => {
           'Accept-Encoding': 'gzip, deflate',
           'Connection': 'keep-alive'
         },
-        timeout: 60000
+        timeout: 120000 // 2 minutes for fetching
       }, resolve);
       
       req.on('error', reject);
       req.on('timeout', () => {
         req.destroy();
-        reject(new Error('Request timeout after 60 seconds'));
+        reject(new Error('Request timeout after 2 minutes'));
       });
-      req.setTimeout(60000, () => {
+      req.setTimeout(120000, () => {
         req.destroy();
-        reject(new Error('Request timeout after 60 seconds'));
+        reject(new Error('Request timeout after 2 minutes'));
       });
     });
     
@@ -270,7 +281,15 @@ app.post('/api/streams/parse/m3u', async (req, res) => {
       throw new Error(`HTTP ${response.statusCode}: ${response.statusMessage}`);
     }
     
-    // Handle compressed responses
+    // Update progress
+    io.emit('m3uProgress', {
+      sessionId,
+      stage: 'downloading',
+      progress: 10,
+      message: 'Downloading playlist data...'
+    });
+    
+    // Handle compressed responses with progress
     const zlib = require('zlib');
     let stream = response;
     
@@ -281,8 +300,25 @@ app.post('/api/streams/parse/m3u', async (req, res) => {
     }
     
     let data = '';
+    let downloadedBytes = 0;
+    const contentLength = parseInt(response.headers['content-length']) || 0;
+    
     stream.setEncoding('utf8');
-    stream.on('data', chunk => data += chunk);
+    stream.on('data', chunk => {
+      data += chunk;
+      downloadedBytes += Buffer.byteLength(chunk, 'utf8');
+      
+      // Update download progress
+      if (contentLength > 0) {
+        const downloadProgress = Math.min(90, 10 + (downloadedBytes / contentLength) * 30);
+        io.emit('m3uProgress', {
+          sessionId,
+          stage: 'downloading',
+          progress: downloadProgress,
+          message: `Downloaded ${Math.round(downloadedBytes / 1024)} KB...`
+        });
+      }
+    });
     
     await new Promise((resolve, reject) => {
       stream.on('end', resolve);
@@ -290,7 +326,15 @@ app.post('/api/streams/parse/m3u', async (req, res) => {
       response.on('error', reject);
     });
     
-    console.log(`Received ${data.length} bytes of M3U data`);
+    console.log(`Received ${data.length} bytes of M3U data for session ${sessionId}`);
+    
+    // Update progress - parsing stage
+    io.emit('m3uProgress', {
+      sessionId,
+      stage: 'parsing',
+      progress: 40,
+      message: 'Parsing playlist structure...'
+    });
     
     // Check if we got valid M3U data
     if (!data.trim()) {
@@ -301,14 +345,30 @@ app.post('/api/streams/parse/m3u', async (req, res) => {
       throw new Error('Response does not appear to be a valid M3U playlist');
     }
     
-    // Parse M3U content
+    // Parse M3U content with chunked processing
     const channels = [];
     const lines = data.split('\n').map(line => line.trim()).filter(line => line);
-    
     let currentChannel = null;
+    
+    const totalLines = lines.length;
+    const chunkSize = Math.max(100, Math.floor(totalLines / 100)); // Process in chunks
     
     for (let i = 0; i < lines.length; i++) {
       const line = lines[i];
+      
+      // Update progress every chunk
+      if (i % chunkSize === 0) {
+        const parseProgress = 40 + (i / totalLines) * 50;
+        io.emit('m3uProgress', {
+          sessionId,
+          stage: 'parsing',
+          progress: parseProgress,
+          message: `Processing channels... ${channels.length} found so far`
+        });
+        
+        // Yield control to event loop to prevent blocking
+        await new Promise(resolve => setImmediate(resolve));
+      }
       
       if (line.startsWith('#EXTINF:')) {
         // Parse channel info: #EXTINF:-1 tvg-id="..." tvg-name="..." tvg-logo="..." group-title="...",Channel Name
@@ -333,7 +393,7 @@ app.post('/api/streams/parse/m3u', async (req, res) => {
       } else if (line.startsWith('http') && currentChannel) {
         // This is the stream URL
         currentChannel.url = line;
-        currentChannel.id = `m3u_${Date.now()}_${channels.length}`;
+        currentChannel.id = `m3u_${sessionId}_${channels.length}`;
         currentChannel.type = line.includes('.m3u8') ? 'hls' : 
                            line.includes('rtsp://') ? 'rtsp' : 'http';
         currentChannel.enabled = true;
@@ -343,20 +403,40 @@ app.post('/api/streams/parse/m3u', async (req, res) => {
       }
     }
     
-    console.log(`Parsed ${channels.length} channels from M3U playlist`);
+    // Final progress update
+    io.emit('m3uProgress', {
+      sessionId,
+      stage: 'complete',
+      progress: 100,
+      message: `Parsing complete! Found ${channels.length} channels`
+    });
+    
+    console.log(`Parsed ${channels.length} channels from M3U playlist (session ${sessionId})`);
     
     res.json({
       success: true,
       channels: channels,
       total: channels.length,
-      source: url
+      source: url,
+      sessionId: sessionId
     });
     
   } catch (error) {
     console.error('M3U parsing error:', error);
+    
+    // Send error progress update
+    io.emit('m3uProgress', {
+      sessionId,
+      stage: 'error',
+      progress: 0,
+      message: error.message,
+      error: true
+    });
+    
     res.status(500).json({
       error: 'Failed to fetch or parse M3U playlist',
-      message: error.message
+      message: error.message,
+      sessionId: sessionId
     });
   }
 });
