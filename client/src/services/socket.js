@@ -161,9 +161,16 @@ class SocketService {
   isConnected() {
     return this.socket?.connected || false;
   }
+
+  getSocket() {
+    return this.socket;
+  }
 }
 
 // Create singleton instance
 const socketService = new SocketService();
+
+// Auto-connect when service is imported
+socketService.connect();
 
 export default socketService;
