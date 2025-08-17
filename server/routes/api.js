@@ -133,6 +133,12 @@ const validate = (schema) => {
 // CHANNELS API
 router.get('/channels', async (req, res) => {
   try {
+    // Check if database is initialized
+    if (!database || !database.isInitialized || !database.db) {
+      logger.info('Database not initialized, returning empty channels array');
+      return res.json([]); // Return empty array if database not initialized
+    }
+
     const channels = await database.all(`
       SELECT c.*, 
              COUNT(s.id) as stream_count,
@@ -256,6 +262,12 @@ router.delete('/channels/:id', async (req, res) => {
 // STREAMS API
 router.get('/streams', async (req, res) => {
   try {
+    // Check if database is initialized
+    if (!database || !database.isInitialized || !database.db) {
+      logger.info('Database not initialized, returning empty streams array');
+      return res.json([]); // Return empty array if database not initialized
+    }
+
     const streams = await database.all(`
       SELECT s.*, c.name as channel_name, c.number as channel_number
       FROM streams s
@@ -588,6 +600,12 @@ router.post('/epg/refresh', async (req, res) => {
 
 router.get('/epg/sources', async (req, res) => {
   try {
+    // Check if database is initialized
+    if (!database || !database.isInitialized || !database.db) {
+      logger.info('Database not initialized, returning empty EPG sources array');
+      return res.json([]); // Return empty array if database not initialized
+    }
+
     const sources = await database.all('SELECT * FROM epg_sources ORDER BY name');
     res.json(sources);
   } catch (error) {
@@ -640,6 +658,12 @@ router.put('/epg/sources/:id', validate(epgSourceSchema), async (req, res) => {
 // Get all available EPG channels across all sources
 router.get('/epg/channels', async (req, res) => {
   try {
+    // Check if database is initialized
+    if (!database || !database.isInitialized || !database.db) {
+      logger.info('Database not initialized, returning empty EPG channels');
+      return res.json({ available_channels: [] }); // Return empty array if database not initialized
+    }
+
     // Get all EPG channels with display names from all sources
     const availableChannels = await database.all(`
       SELECT 
@@ -1236,6 +1260,74 @@ function parseLogLine(line) {
 // SETTINGS API
 router.get('/settings', async (req, res) => {
   try {
+    // Check if database is initialized
+    if (!database || !database.isInitialized || !database.db) {
+      logger.info('Database not initialized, returning default settings');
+      // Return default settings structure when database not available
+      return res.json({
+        plexlive: {
+          ssdp: {
+            enabled: true,
+            discoverableInterval: 30000,
+            announceInterval: 1800000,
+            multicastAddress: '239.255.255.250',
+            deviceDescription: 'IPTV to Plex Bridge Interface'
+          },
+          streaming: {
+            maxConcurrentStreams: 10,
+            streamTimeout: 30000,
+            reconnectAttempts: 3,
+            bufferSize: 65536,
+            adaptiveBitrate: true,
+            preferredProtocol: 'hls'
+          },
+          transcoding: {
+            enabled: true,
+            hardwareAcceleration: false,
+            preset: 'medium',
+            videoCodec: 'h264',
+            audioCodec: 'aac',
+            qualityProfiles: {
+              low: { resolution: '720x480', bitrate: '1000k' },
+              medium: { resolution: '1280x720', bitrate: '2500k' },
+              high: { resolution: '1920x1080', bitrate: '5000k' }
+            },
+            defaultProfile: 'medium'
+          },
+          caching: {
+            enabled: true,
+            duration: 3600,
+            maxSize: 1073741824,
+            cleanup: {
+              enabled: true,
+              interval: 3600000,
+              maxAge: 86400000
+            }
+          },
+          device: {
+            name: 'PlexTV',
+            id: 'PLEXTV001',
+            tunerCount: 4,
+            firmware: '1.0.0',
+            baseUrl: 'http://localhost:8080'
+          },
+          network: {
+            bindAddress: '0.0.0.0',
+            advertisedHost: null,
+            streamingPort: 8080,
+            discoveryPort: 1900,
+            ipv6Enabled: false
+          },
+          compatibility: {
+            hdHomeRunMode: true,
+            plexPassRequired: false,
+            gracePeriod: 10000,
+            channelLogoFallback: true
+          }
+        }
+      });
+    }
+
     const settings = await database.all('SELECT * FROM settings ORDER BY key');
     
     const settingsObj = {};

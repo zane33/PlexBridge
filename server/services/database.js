@@ -26,25 +26,12 @@ class DatabaseService {
       logger.info('Database initialized successfully');
       return this.db;
     } catch (error) {
-      logger.warn('Database initialization failed, falling back to mock mode:', error.message);
+      logger.error('Database initialization failed:', error.message);
       
-      // Fallback to mock mode
-      this.isInitialized = true;
-      this.db = {
-        all: (sql) => {
-          // Return appropriate mock data based on query
-          if (sql && sql.includes('channels')) return Promise.resolve([]);
-          if (sql && sql.includes('streams')) return Promise.resolve([]);
-          if (sql && sql.includes('epg_sources')) return Promise.resolve([]);
-          if (sql && sql.includes('settings')) return Promise.resolve([]);
-          return Promise.resolve([]);
-        },
-        get: () => Promise.resolve(null),
-        run: () => Promise.resolve({ lastID: 1, changes: 1 }),
-        prepare: () => ({ get: () => null, all: () => [], run: () => ({ lastID: 1, changes: 1 }) })
-      };
-      
-      return this.db;
+      // Don't fall back to mock mode - throw the error instead
+      this.isInitialized = false;
+      this.db = null;
+      throw error;
     }
   }
 
@@ -588,12 +575,10 @@ class DatabaseService {
 
   // Health check
   async healthCheck() {
-    // Simple health check for mock mode
-    return { status: 'healthy', message: 'Mock database is running' };
-  }
-
-  async healthCheckOriginal() {
     try {
+      if (!this.db || !this.isInitialized) {
+        return { status: 'unhealthy', error: 'Database not initialized', timestamp: new Date().toISOString() };
+      }
       await this.get('SELECT 1 as health');
       return { status: 'healthy', timestamp: new Date().toISOString() };
     } catch (error) {
