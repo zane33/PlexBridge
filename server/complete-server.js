@@ -416,13 +416,8 @@ app.post('/api/streams/parse/m3u', async (req, res) => {
     // Small delay to ensure progress reaches frontend before response
     await new Promise(resolve => setTimeout(resolve, 100));
     
-    // Final progress update - UI is about to be ready
-    io.emit('m3uProgress', {
-      sessionId,
-      stage: 'complete',
-      progress: 100,
-      message: `Ready! Found ${channels.length} channels`
-    });
+    // Send response - frontend will handle final processing stages
+    // Note: Frontend will continue progress updates for UI preparation
     
     res.json({
       success: true,

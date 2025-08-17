@@ -219,8 +219,9 @@ function StreamManager() {
         setParsingProgress(prev => {
           // Only update if this is our current session or we don't have a session yet
           if (!prev.sessionId || prev.sessionId === data.sessionId) {
+            // Don't auto-hide on backend completion - frontend manages final stages
             return {
-              show: data.stage !== 'complete' && !data.error,
+              show: !data.error, // Only hide on error
               progress: data.progress,
               stage: data.stage,
               message: data.message,
@@ -230,8 +231,8 @@ function StreamManager() {
           return prev;
         });
 
-        // Hide progress when complete or error
-        if (data.stage === 'complete' || data.error) {
+        // Only hide progress on error (frontend handles normal completion)
+        if (data.error) {
           setTimeout(() => {
             setParsingProgress(prev => ({ ...prev, show: false }));
           }, 2000);
@@ -476,14 +477,37 @@ function StreamManager() {
       const channels = response.data.channels || [];
       const sessionId = response.data.sessionId;
       
-      // Update progress state with session ID
-      setParsingProgress(prev => ({ ...prev, sessionId }));
+      // Show frontend processing stage
+      setParsingProgress(prev => ({ 
+        ...prev, 
+        sessionId,
+        stage: 'processing',
+        progress: 100,
+        message: 'Processing channels and preparing interface...'
+      }));
+      
+      // Small delay to ensure progress update is visible
+      await new Promise(resolve => setTimeout(resolve, 100));
       
       setParsedChannels(channels);
+      
+      // Update progress for group extraction
+      setParsingProgress(prev => ({ 
+        ...prev,
+        stage: 'organizing',
+        message: 'Organizing channel groups...'
+      }));
       
       // Extract unique groups for filtering
       const groups = [...new Set(channels.map(ch => ch.attributes?.['group-title'] || 'Ungrouped').filter(Boolean))];
       setAvailableGroups(groups.sort());
+      
+      // Update progress for selection setup
+      setParsingProgress(prev => ({ 
+        ...prev,
+        stage: 'finalizing',
+        message: 'Setting up channel selection...'
+      }));
       
       // For large datasets, don't select all by default (performance)
       if (channels.length > 5000) {
@@ -493,10 +517,17 @@ function StreamManager() {
         setSelectedChannels(channels.map((_, index) => index));
       }
       
-      // Give UI a moment to update, then hide progress bar
+      // Final step - interface is ready
+      setParsingProgress(prev => ({ 
+        ...prev,
+        stage: 'complete',
+        message: `Interface ready! Found ${channels.length} channels`
+      }));
+      
+      // Give UI a moment to render the table, then hide progress bar
       setTimeout(() => {
         setParsingProgress(prev => ({ ...prev, show: false }));
-      }, 500);
+      }, 800);
       
       if (channels.length > 0) {
         enqueueSnackbar(`Successfully parsed ${channels.length} channels! 🎉 Use search and filters to find specific channels.`, { variant: 'success' });
