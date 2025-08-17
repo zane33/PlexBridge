@@ -46,7 +46,9 @@ COPY config/ ./config/
 
 # Copy and build React frontend
 COPY client/package*.json ./client/
-RUN cd client && npm install --only=production
+RUN cd client && npm config set strict-ssl false && \
+    npm install --legacy-peer-deps --force && \
+    npm config set strict-ssl true
 
 COPY client/ ./client/
 RUN cd client && npm run build && \
@@ -85,8 +87,8 @@ EXPOSE 8080 1900/udp
 # Volume for persistent data
 VOLUME ["/data"]
 
-# Switch to non-root user
-USER plextv
+# Run as root for supervisord
+# The individual programs will run as plextv user as configured in supervisord.conf
 
 # Use tini as init system  
 ENTRYPOINT ["/sbin/tini", "--"]

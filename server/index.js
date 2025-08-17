@@ -256,8 +256,8 @@ const initializeApp = async () => {
   }
 };
 
-// Export for testing
-module.exports = { app, server, io };
+// Export for testing and startup
+module.exports = { app, server, io, initializeApp };
 
 // Start the application if this file is run directly
 if (require.main === module) {
