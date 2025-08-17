@@ -386,7 +386,7 @@ function Layout({ children }) {
                 letterSpacing: '0.1em'
               }}
             >
-              Professional IPTV Management
+               IPTV Management
             </Typography>
           </Box>
         </Toolbar>

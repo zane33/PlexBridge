@@ -226,4 +226,4 @@ For production deployment, see the main README.md and documentation in the `docs
 
 ---
 
-🎉 **PlexTV is ready for testing!** The application provides a modern, mobile-responsive interface for managing IPTV streams in Plex with comprehensive visual feedback and professional UX patterns.
+🎉 **PlexTV is ready for testing!** The application provides a modern, mobile-responsive interface for managing IPTV streams in Plex with comprehensive visual feedback and  UX patterns.

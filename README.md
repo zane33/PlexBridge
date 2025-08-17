@@ -429,5 +429,5 @@ MIT License - See [LICENSE](LICENSE) file for details.
 
 ---
 
-**PlexBridge** - Professional IPTV to Plex Media Server integration with enterprise-grade reliability and modern web management.
+**PlexBridge** -  IPTV to Plex Media Server integration with enterprise-grade reliability and modern web management.
 
