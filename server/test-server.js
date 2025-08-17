@@ -20,7 +20,9 @@ app.use(express.urlencoded({ extended: true }));
 
 // Include routes
 const streamsRouter = require('./routes/streams');
+const apiRouter = require('./routes/api');
 app.use('/streams', streamsRouter);
+app.use('/api', apiRouter);
 
 const M3UParser = require('./services/m3uParser');
 

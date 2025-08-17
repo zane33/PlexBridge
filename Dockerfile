@@ -85,8 +85,11 @@ EXPOSE 8080 1900/udp
 # Volume for persistent data
 VOLUME ["/data"]
 
-# Use tini as init system
+# Switch to non-root user
+USER plextv
+
+# Use tini as init system  
 ENTRYPOINT ["/sbin/tini", "--"]
 
-# Start using the startup script that fixes permissions
-CMD ["/app/start.sh"]
+# Start the test server directly
+CMD ["node", "server/test-server.js"]
