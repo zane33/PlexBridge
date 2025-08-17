@@ -225,21 +225,168 @@ app.post('/api/streams/validate', (req, res) => {
   }
 });
 
-// M3U import
+// M3U parsing endpoint
+app.post('/api/streams/parse/m3u', async (req, res) => {
+  const { url } = req.body;
+  
+  if (!url) {
+    return res.status(400).json({ error: 'URL is required' });
+  }
+  
+  try {
+    console.log(`Fetching M3U playlist from: ${url}`);
+    
+    // Fetch M3U content
+    const https = require('https');
+    const http = require('http');
+    const urlModule = require('url');
+    
+    const parsedUrl = urlModule.parse(url);
+    const client = parsedUrl.protocol === 'https:' ? https : http;
+    
+    const response = await new Promise((resolve, reject) => {
+      const req = client.get(url, {
+        headers: {
+          'User-Agent': 'VLC/3.0.11 LibVLC/3.0.11',
+          'Accept': '*/*',
+          'Accept-Encoding': 'gzip, deflate',
+          'Connection': 'keep-alive'
+        },
+        timeout: 60000
+      }, resolve);
+      
+      req.on('error', reject);
+      req.on('timeout', () => {
+        req.destroy();
+        reject(new Error('Request timeout after 60 seconds'));
+      });
+      req.setTimeout(60000, () => {
+        req.destroy();
+        reject(new Error('Request timeout after 60 seconds'));
+      });
+    });
+    
+    if (response.statusCode !== 200) {
+      throw new Error(`HTTP ${response.statusCode}: ${response.statusMessage}`);
+    }
+    
+    // Handle compressed responses
+    const zlib = require('zlib');
+    let stream = response;
+    
+    if (response.headers['content-encoding'] === 'gzip') {
+      stream = response.pipe(zlib.createGunzip());
+    } else if (response.headers['content-encoding'] === 'deflate') {
+      stream = response.pipe(zlib.createInflate());
+    }
+    
+    let data = '';
+    stream.setEncoding('utf8');
+    stream.on('data', chunk => data += chunk);
+    
+    await new Promise((resolve, reject) => {
+      stream.on('end', resolve);
+      stream.on('error', reject);
+      response.on('error', reject);
+    });
+    
+    console.log(`Received ${data.length} bytes of M3U data`);
+    
+    // Check if we got valid M3U data
+    if (!data.trim()) {
+      throw new Error('Received empty response from M3U URL');
+    }
+    
+    if (!data.includes('#EXTM3U') && !data.includes('#EXTINF')) {
+      throw new Error('Response does not appear to be a valid M3U playlist');
+    }
+    
+    // Parse M3U content
+    const channels = [];
+    const lines = data.split('\n').map(line => line.trim()).filter(line => line);
+    
+    let currentChannel = null;
+    
+    for (let i = 0; i < lines.length; i++) {
+      const line = lines[i];
+      
+      if (line.startsWith('#EXTINF:')) {
+        // Parse channel info: #EXTINF:-1 tvg-id="..." tvg-name="..." tvg-logo="..." group-title="...",Channel Name
+        const match = line.match(/#EXTINF:(-?\d+)(?:\s+(.+?))?,(.*)$/);
+        if (match) {
+          const [, duration, attributes, name] = match;
+          
+          currentChannel = {
+            name: name.trim(),
+            duration: parseInt(duration),
+            attributes: {}
+          };
+          
+          // Parse attributes
+          if (attributes) {
+            const attrMatches = attributes.matchAll(/(\w+(?:-\w+)*)="([^"]*)"/g);
+            for (const attrMatch of attrMatches) {
+              currentChannel.attributes[attrMatch[1]] = attrMatch[2];
+            }
+          }
+        }
+      } else if (line.startsWith('http') && currentChannel) {
+        // This is the stream URL
+        currentChannel.url = line;
+        currentChannel.id = `m3u_${Date.now()}_${channels.length}`;
+        currentChannel.type = line.includes('.m3u8') ? 'hls' : 
+                           line.includes('rtsp://') ? 'rtsp' : 'http';
+        currentChannel.enabled = true;
+        
+        channels.push({ ...currentChannel });
+        currentChannel = null;
+      }
+    }
+    
+    console.log(`Parsed ${channels.length} channels from M3U playlist`);
+    
+    res.json({
+      success: true,
+      channels: channels,
+      total: channels.length,
+      source: url
+    });
+    
+  } catch (error) {
+    console.error('M3U parsing error:', error);
+    res.status(500).json({
+      error: 'Failed to fetch or parse M3U playlist',
+      message: error.message
+    });
+  }
+});
+
+// M3U import (import selected channels)
 app.post('/api/streams/import/m3u', (req, res) => {
   const { url, selectedChannels } = req.body;
   
-  // Mock M3U import
-  const importedStreams = (selectedChannels || []).map((channel, index) => ({
+  if (!selectedChannels || !Array.isArray(selectedChannels)) {
+    return res.status(400).json({ error: 'selectedChannels array is required' });
+  }
+  
+  const importedStreams = selectedChannels.map((channel, index) => ({
     id: (Date.now() + index).toString(),
-    name: channel.name || `Channel ${index + 1}`,
-    url: channel.url || url,
-    type: 'hls',
+    name: channel.name,
+    url: channel.url,
+    type: channel.type || 'hls',
     enabled: true,
+    group: channel.attributes?.['group-title'] || 'Imported',
+    tvgId: channel.attributes?.['tvg-id'] || '',
+    tvgName: channel.attributes?.['tvg-name'] || channel.name,
+    tvgLogo: channel.attributes?.['tvg-logo'] || '',
+    sourceUrl: url,
     createdAt: new Date().toISOString()
   }));
   
   streams.push(...importedStreams);
+  
+  // Emit update to connected clients
+  io.emit('streamUpdate', { type: 'import', streams: importedStreams });
   
   res.json({
     imported: importedStreams.length,
