@@ -452,7 +452,15 @@ function EPGManager() {
                       <TableCell sx={{ display: { xs: 'none', sm: 'table-cell' } }}>
                         <Typography variant="body2" color="text.secondary">
                           {source.last_success 
-                            ? new Date(source.last_success).toLocaleDateString()
+                            ? new Date(source.last_success).toLocaleDateString('en-NZ', {
+                                timeZone: 'Pacific/Auckland',
+                                year: 'numeric',
+                                month: 'short',
+                                day: 'numeric',
+                                hour: '2-digit',
+                                minute: '2-digit',
+                                hour12: true
+                              })
                             : 'Never'
                           }
                         </Typography>
