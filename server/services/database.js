@@ -63,8 +63,16 @@ class DatabaseService {
           fs.accessSync(dbFile, fs.constants.R_OK | fs.constants.W_OK);
           logger.info(`Existing database file is accessible: ${dbFile}`);
         } catch (accessError) {
-          logger.error(`Database file exists but is not accessible: ${dbFile}`, accessError);
-          throw new Error(`Database file not accessible: ${dbFile} - ${accessError.message}`);
+          logger.warn(`Database file exists but is not accessible, attempting to fix permissions: ${dbFile}`);
+          try {
+            // Try to fix permissions (this may fail if running without privileges)
+            fs.chmodSync(dbFile, 0o644);
+            fs.accessSync(dbFile, fs.constants.R_OK | fs.constants.W_OK);
+            logger.info(`Fixed database file permissions: ${dbFile}`);
+          } catch (fixError) {
+            logger.error(`Cannot fix database file permissions: ${dbFile}`, fixError);
+            throw new Error(`Database file not accessible and cannot fix permissions: ${dbFile} - ${accessError.message}`);
+          }
         }
       }
 

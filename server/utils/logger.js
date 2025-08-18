@@ -201,28 +201,40 @@ const originalDebug = logger.debug.bind(logger);
 logger.info = function(message, meta = {}) {
   originalInfo(message, meta);
   if (dbLogger) {
-    dbLogger.log('info', message, meta);
+    // Don't await database logging to prevent blocking
+    dbLogger.log('info', message, meta).catch(() => {
+      // Silently ignore database logging errors to prevent loops
+    });
   }
 };
 
 logger.warn = function(message, meta = {}) {
   originalWarn(message, meta);
   if (dbLogger) {
-    dbLogger.log('warn', message, meta);
+    // Don't await database logging to prevent blocking
+    dbLogger.log('warn', message, meta).catch(() => {
+      // Silently ignore database logging errors to prevent loops
+    });
   }
 };
 
 logger.error = function(message, meta = {}) {
   originalError(message, meta);
   if (dbLogger) {
-    dbLogger.log('error', message, meta);
+    // Don't await database logging to prevent blocking
+    dbLogger.log('error', message, meta).catch(() => {
+      // Silently ignore database logging errors to prevent loops
+    });
   }
 };
 
 logger.debug = function(message, meta = {}) {
   originalDebug(message, meta);
   if (dbLogger) {
-    dbLogger.log('debug', message, meta);
+    // Don't await database logging to prevent blocking
+    dbLogger.log('debug', message, meta).catch(() => {
+      // Silently ignore database logging errors to prevent loops
+    });
   }
 };
 
@@ -257,9 +269,20 @@ class DatabaseLogger {
   async log(level, message, meta = {}) {
     try {
       if (this.db && this.db.isInitialized) {
+        // Ensure message and level are valid strings
+        const safeLevel = String(level || 'info').slice(0, 20);
+        const safeMessage = String(message || '').slice(0, 2000);
+        let safeMeta = '{}';
+        
+        try {
+          safeMeta = JSON.stringify(meta || {}).slice(0, 5000);
+        } catch (jsonError) {
+          safeMeta = JSON.stringify({ error: 'Failed to serialize meta data' });
+        }
+        
         await this.db.run(
           'INSERT INTO logs (level, message, meta) VALUES (?, ?, ?)',
-          [level, message, JSON.stringify(meta)]
+          [safeLevel, safeMessage, safeMeta]
         );
       }
     } catch (error) {
