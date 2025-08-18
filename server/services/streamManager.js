@@ -5,6 +5,7 @@ const m3u8Parser = require('m3u8-parser');
 const logger = require('../utils/logger');
 const config = require('../config');
 const cacheService = require('./cacheService');
+const settingsService = require('./settingsService');
 
 class StreamManager {
   constructor() {
@@ -454,9 +455,15 @@ class StreamManager {
         return;
       }
 
-      // Check global concurrent stream limit
-      if (this.activeStreams.size >= config.streams.maxConcurrent) {
-        logger.stream('Maximum concurrent streams reached', { limit: config.streams.maxConcurrent });
+      // Check global concurrent stream limit - use config fallback since this needs to be sync
+      const maxConcurrent = parseInt(process.env.MAX_CONCURRENT_STREAMS) || config.streams?.maxConcurrent || 10;
+      
+      if (this.activeStreams.size >= maxConcurrent) {
+        logger.stream('Maximum concurrent streams reached', { 
+          limit: maxConcurrent, 
+          current: this.activeStreams.size,
+          source: 'settings_service'
+        });
         res.status(503).json({ error: 'Maximum concurrent streams reached' });
         return;
       }
@@ -846,7 +853,8 @@ class StreamManager {
   // Get concurrency metrics
   getConcurrencyMetrics() {
     const totalStreams = this.activeStreams.size;
-    const maxConcurrent = config.streams.maxConcurrent;
+    // Use synchronous config fallback for metrics since this method needs to be sync
+    const maxConcurrent = process.env.MAX_CONCURRENT_STREAMS || 10;
     const channelCounts = new Map();
     
     for (const [channelId, sessions] of this.channelStreams) {

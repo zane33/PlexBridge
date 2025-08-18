@@ -1,0 +1,490 @@
+const logger = require('../utils/logger');
+const database = require('./database');
+const cacheService = require('./cacheService');
+const config = require('../config');
+
+class SettingsService {
+  constructor() {
+    this.cache = new Map();
+    this.cacheTimeout = 60000; // 1 minute cache
+    this.lastCacheUpdate = 0;
+    this.loadPromise = null;
+  }
+
+  /**
+   * Get all settings, merging database values with config defaults
+   */
+  async getSettings() {
+    try {
+      // Check if we have a valid cache
+      if (this.hasValidCache()) {
+        return this.cache.get('settings');
+      }
+
+      // Prevent multiple concurrent loads
+      if (this.loadPromise) {
+        return await this.loadPromise;
+      }
+
+      this.loadPromise = this.loadSettingsFromDatabase();
+      const settings = await this.loadPromise;
+      this.loadPromise = null;
+
+      return settings;
+    } catch (error) {
+      logger.error('Failed to get settings:', error);
+      this.loadPromise = null;
+      // Return config defaults as fallback
+      return config.plexlive || this.getDefaultSettings();
+    }
+  }
+
+  /**
+   * Load settings from database and merge with config defaults
+   */
+  async loadSettingsFromDatabase() {
+    try {
+      // Check if database is available
+      if (!database || !database.isInitialized || !database.db) {
+        logger.info('Database not available, using config defaults');
+        const defaultSettings = { plexlive: config.plexlive || this.getDefaultSettings() };
+        this.updateCache(defaultSettings);
+        return defaultSettings;
+      }
+
+      // Get all settings from database
+      const dbSettings = await database.all('SELECT * FROM settings ORDER BY key');
+      
+      // Convert flat database rows to nested object
+      const settingsObj = {};
+      if (Array.isArray(dbSettings)) {
+        dbSettings.forEach(setting => {
+          let value = setting.value;
+          
+          try {
+            if (setting.type === 'number') {
+              value = parseFloat(value);
+            } else if (setting.type === 'boolean') {
+              value = value === 'true';
+            } else if (setting.type === 'json') {
+              value = JSON.parse(value);
+            }
+          } catch (parseError) {
+            logger.warn(`Failed to parse setting ${setting.key}:`, parseError);
+            value = setting.value; // Keep original value if parsing fails
+          }
+          
+          // Build nested object from dot notation
+          this.setNestedValue(settingsObj, setting.key, value);
+        });
+      }
+
+      // Merge database settings with config defaults
+      const configDefaults = { plexlive: config.plexlive || this.getDefaultSettings() };
+      const mergedSettings = this.deepMerge(configDefaults, settingsObj);
+
+      // Ensure we have the plexlive structure
+      if (!mergedSettings.plexlive) {
+        mergedSettings.plexlive = config.plexlive || this.getDefaultSettings();
+      }
+
+      // Update cache
+      this.updateCache(mergedSettings);
+      
+      logger.info('Settings loaded successfully from database', { 
+        dbSettingsCount: dbSettings.length,
+        maxConcurrentStreams: mergedSettings.plexlive?.streaming?.maxConcurrentStreams
+      });
+
+      return mergedSettings;
+    } catch (error) {
+      logger.error('Failed to load settings from database:', error);
+      
+      // Fallback to config defaults
+      const defaultSettings = { plexlive: config.plexlive || this.getDefaultSettings() };
+      this.updateCache(defaultSettings);
+      return defaultSettings;
+    }
+  }
+
+  /**
+   * Update settings in database
+   */
+  async updateSettings(settings) {
+    try {
+      if (!database || !database.isInitialized || !database.db) {
+        throw new Error('Database not available');
+      }
+
+      // Flatten nested settings to dot notation for database storage
+      const flatSettings = this.flattenSettings(settings);
+
+      await database.transaction(async (db) => {
+        for (const [key, value] of Object.entries(flatSettings)) {
+          let stringValue = value;
+          let type = 'string';
+          
+          if (typeof value === 'number') {
+            type = 'number';
+            stringValue = value.toString();
+          } else if (typeof value === 'boolean') {
+            type = 'boolean';
+            stringValue = value.toString();
+          } else if (typeof value === 'object') {
+            type = 'json';
+            stringValue = JSON.stringify(value);
+          }
+
+          await db.run(`
+            INSERT OR REPLACE INTO settings (key, value, type, updated_at)
+            VALUES (?, ?, ?, CURRENT_TIMESTAMP)
+          `, [key, stringValue, type]);
+        }
+      });
+
+      // Clear cache to force reload
+      this.clearCache();
+
+      // Log the update
+      logger.info('Settings updated successfully', { 
+        keys: Object.keys(flatSettings),
+        maxConcurrentStreams: settings.plexlive?.streaming?.maxConcurrentStreams
+      });
+
+      // Reload settings to return updated values
+      const updatedSettings = await this.loadSettingsFromDatabase();
+      
+      // Clear any external caches
+      try {
+        await cacheService.del('settings:config');
+        await cacheService.del('metrics:cache');
+      } catch (cacheError) {
+        logger.warn('Failed to clear external caches:', cacheError);
+      }
+
+      // Emit socket event for real-time updates
+      this.emitSettingsUpdate(updatedSettings);
+
+      return updatedSettings;
+    } catch (error) {
+      logger.error('Failed to update settings:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * Get settings for a specific category
+   */
+  async getCategory(category) {
+    try {
+      const allSettings = await this.getSettings();
+      return allSettings[category] || {};
+    } catch (error) {
+      logger.error(`Failed to get settings category ${category}:`, error);
+      return {};
+    }
+  }
+
+  /**
+   * Get a specific setting value
+   */
+  async getSetting(path, defaultValue = null) {
+    try {
+      const settings = await this.getSettings();
+      return this.getNestedValue(settings, path, defaultValue);
+    } catch (error) {
+      logger.error(`Failed to get setting ${path}:`, error);
+      return defaultValue;
+    }
+  }
+
+  /**
+   * Reset settings to defaults
+   */
+  async resetSettings(category = null) {
+    try {
+      if (!database || !database.isInitialized || !database.db) {
+        throw new Error('Database not available');
+      }
+
+      if (category) {
+        // Reset specific category
+        await database.run('DELETE FROM settings WHERE key LIKE ?', [`${category}.%`]);
+        logger.info('Settings category reset', { category });
+      } else {
+        // Reset all settings
+        await database.run('DELETE FROM settings');
+        logger.info('All settings reset to defaults');
+      }
+
+      // Re-initialize defaults
+      await database.initializeDefaultSettings();
+
+      // Clear cache
+      this.clearCache();
+
+      // Clear external caches
+      try {
+        await cacheService.del('settings:config');
+        await cacheService.del('metrics:cache');
+      } catch (cacheError) {
+        logger.warn('Failed to clear external caches:', cacheError);
+      }
+
+      // Return updated settings
+      const updatedSettings = await this.loadSettingsFromDatabase();
+      
+      // Emit socket event for real-time updates
+      this.emitSettingsUpdate(updatedSettings);
+      
+      return updatedSettings;
+    } catch (error) {
+      logger.error('Failed to reset settings:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * Get default settings structure
+   */
+  getDefaultSettings() {
+    return {
+      ssdp: {
+        enabled: true,
+        discoverableInterval: 30000,
+        announceInterval: 1800000,
+        multicastAddress: '239.255.255.250',
+        deviceDescription: 'IPTV to Plex Bridge Interface'
+      },
+      streaming: {
+        maxConcurrentStreams: 10,
+        streamTimeout: 30000,
+        reconnectAttempts: 3,
+        bufferSize: 65536,
+        adaptiveBitrate: true,
+        preferredProtocol: 'hls'
+      },
+      transcoding: {
+        enabled: true,
+        hardwareAcceleration: false,
+        preset: 'medium',
+        videoCodec: 'h264',
+        audioCodec: 'aac',
+        qualityProfiles: {
+          low: { resolution: '720x480', bitrate: '1000k' },
+          medium: { resolution: '1280x720', bitrate: '2500k' },
+          high: { resolution: '1920x1080', bitrate: '5000k' }
+        },
+        defaultProfile: 'medium'
+      },
+      caching: {
+        enabled: true,
+        duration: 3600,
+        maxSize: 1073741824,
+        cleanup: {
+          enabled: true,
+          interval: 3600000,
+          maxAge: 86400000
+        }
+      },
+      device: {
+        name: 'PlexTV',
+        id: 'PLEXTV001',
+        tunerCount: 4,
+        firmware: '1.0.0',
+        baseUrl: 'http://localhost:8080'
+      },
+      network: {
+        bindAddress: '0.0.0.0',
+        advertisedHost: null,
+        streamingPort: 8080,
+        discoveryPort: 1900,
+        ipv6Enabled: false
+      },
+      compatibility: {
+        hdHomeRunMode: true,
+        plexPassRequired: false,
+        gracePeriod: 10000,
+        channelLogoFallback: true
+      }
+    };
+  }
+
+  /**
+   * Check if cache is valid
+   */
+  hasValidCache() {
+    return this.cache.has('settings') && 
+           (Date.now() - this.lastCacheUpdate) < this.cacheTimeout;
+  }
+
+  /**
+   * Update internal cache
+   */
+  updateCache(settings) {
+    this.cache.set('settings', settings);
+    this.lastCacheUpdate = Date.now();
+  }
+
+  /**
+   * Clear internal cache
+   */
+  clearCache() {
+    this.cache.clear();
+    this.lastCacheUpdate = 0;
+  }
+
+  /**
+   * Convert flat dot notation to nested object
+   */
+  setNestedValue(obj, path, value) {
+    const keys = path.split('.');
+    let current = obj;
+    
+    for (let i = 0; i < keys.length - 1; i++) {
+      if (!current[keys[i]]) {
+        current[keys[i]] = {};
+      }
+      current = current[keys[i]];
+    }
+    
+    current[keys[keys.length - 1]] = value;
+  }
+
+  /**
+   * Get nested value from object using dot notation
+   */
+  getNestedValue(obj, path, defaultValue = null) {
+    const keys = path.split('.');
+    let current = obj;
+    
+    for (const key of keys) {
+      if (current && typeof current === 'object' && key in current) {
+        current = current[key];
+      } else {
+        return defaultValue;
+      }
+    }
+    
+    return current;
+  }
+
+  /**
+   * Flatten nested object to dot notation
+   */
+  flattenSettings(obj, prefix = '') {
+    const result = {};
+    
+    for (const [key, value] of Object.entries(obj)) {
+      const fullKey = prefix ? `${prefix}.${key}` : key;
+      
+      if (value && typeof value === 'object' && !Array.isArray(value)) {
+        Object.assign(result, this.flattenSettings(value, fullKey));
+      } else {
+        result[fullKey] = value;
+      }
+    }
+    
+    return result;
+  }
+
+  /**
+   * Deep merge two objects
+   */
+  deepMerge(target, source) {
+    const result = { ...target };
+    
+    for (const key in source) {
+      if (source[key] && typeof source[key] === 'object' && !Array.isArray(source[key])) {
+        result[key] = this.deepMerge(target[key] || {}, source[key]);
+      } else {
+        result[key] = source[key];
+      }
+    }
+    
+    return result;
+  }
+
+  /**
+   * Validate settings structure
+   */
+  validateSettings(settings) {
+    const errors = [];
+    
+    if (!settings || typeof settings !== 'object') {
+      errors.push('Settings must be an object');
+      return { isValid: false, errors };
+    }
+
+    if (settings.plexlive) {
+      const { plexlive } = settings;
+      
+      // Validate streaming settings
+      if (plexlive.streaming) {
+        const { streaming } = plexlive;
+        if (streaming.maxConcurrentStreams && (streaming.maxConcurrentStreams < 1 || streaming.maxConcurrentStreams > 100)) {
+          errors.push('Max concurrent streams must be between 1 and 100');
+        }
+        if (streaming.streamTimeout && (streaming.streamTimeout < 5000 || streaming.streamTimeout > 300000)) {
+          errors.push('Stream timeout must be between 5000ms and 300000ms');
+        }
+      }
+      
+      // Validate device settings
+      if (plexlive.device) {
+        const { device } = plexlive;
+        if (device.tunerCount && (device.tunerCount < 1 || device.tunerCount > 32)) {
+          errors.push('Tuner count must be between 1 and 32');
+        }
+      }
+      
+      // Validate network settings
+      if (plexlive.network) {
+        const { network } = plexlive;
+        if (network.streamingPort && (network.streamingPort < 1024 || network.streamingPort > 65535)) {
+          errors.push('Streaming port must be between 1024 and 65535');
+        }
+        if (network.discoveryPort && (network.discoveryPort < 1024 || network.discoveryPort > 65535)) {
+          errors.push('Discovery port must be between 1024 and 65535');
+        }
+      }
+    }
+    
+    return {
+      isValid: errors.length === 0,
+      errors
+    };
+  }
+
+  /**
+   * Emit socket event for settings updates
+   */
+  emitSettingsUpdate(settings) {
+    try {
+      if (global.io) {
+        global.io.to('settings').emit('settings:updated', {
+          settings,
+          timestamp: new Date().toISOString(),
+          maxConcurrentStreams: settings.plexlive?.streaming?.maxConcurrentStreams
+        });
+        
+        // Also emit metrics update since settings affect metrics
+        global.io.to('metrics').emit('settings:changed', {
+          maxConcurrentStreams: settings.plexlive?.streaming?.maxConcurrentStreams,
+          timestamp: new Date().toISOString()
+        });
+        
+        logger.info('Settings update event emitted via Socket.IO', {
+          maxConcurrentStreams: settings.plexlive?.streaming?.maxConcurrentStreams
+        });
+      }
+    } catch (error) {
+      logger.warn('Failed to emit settings update via Socket.IO:', error);
+    }
+  }
+}
+
+// Create singleton instance
+const settingsService = new SettingsService();
+
+module.exports = settingsService;

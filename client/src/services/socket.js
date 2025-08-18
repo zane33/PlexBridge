@@ -101,6 +101,10 @@ class SocketService {
     this.socket.on('log:new', (data) => {
       this.notifyListeners('log:new', data);
     });
+
+    this.socket.on('settings:updated', (data) => {
+      this.notifyListeners('settings:updated', data);
+    });
   }
 
   disconnect() {

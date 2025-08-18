@@ -12,6 +12,7 @@ require('dotenv').config();
 const logger = require('./utils/logger');
 const config = require('./config');
 const database = require('./services/database');
+const settingsService = require('./services/settingsService');
 // const cacheService = require('./services/cacheService');
 // const ssdpService = require('./services/ssdpService');
 
@@ -96,6 +97,9 @@ app.get('*', (req, res) => {
   res.sendFile(path.join(__dirname, '../client/build/index.html'));
 });
 
+// Make socket.io instance available globally for services
+global.io = io;
+
 // Socket.IO connection handling
 io.on('connection', (socket) => {
   logger.info(`Client connected: ${socket.id}`);
@@ -108,6 +112,11 @@ io.on('connection', (socket) => {
   socket.on('join-metrics', () => {
     socket.join('metrics');
     logger.info(`Client ${socket.id} joined metrics room`);
+  });
+
+  socket.on('join-settings', () => {
+    socket.join('settings');
+    logger.info(`Client ${socket.id} joined settings room`);
   });
 
   socket.on('disconnect', () => {
@@ -214,6 +223,19 @@ const initializeApp = async () => {
       throw new Error(`Database health check failed: ${dbHealth.error}`);
     }
     logger.info('Database health check passed');
+
+    // Load and apply settings from database
+    try {
+      await settingsService.loadSettings();
+      const updatedConfig = settingsService.applyToConfig(config);
+      
+      // Update the config object in place
+      Object.assign(config, updatedConfig);
+      
+      logger.info('Settings loaded and applied successfully');
+    } catch (settingsError) {
+      logger.warn('Failed to load settings from database, using defaults:', settingsError.message);
+    }
 
     // Start HTTP server
     const PORT = config.server.port;

@@ -32,6 +32,7 @@ import {
   RestoreFromTrash as ResetIcon
 } from '@mui/icons-material';
 import api, { settingsApi, settingsHelpers } from '../../services/api';
+import socketService from '../../services/socket';
 
 function Settings() {
   const [settings, setSettings] = useState(null);
@@ -52,6 +53,23 @@ function Settings() {
   useEffect(() => {
     loadSettings();
     loadMetadata();
+
+    // Join settings room for real-time updates
+    socketService.emit('join-settings');
+
+    // Listen for settings updates
+    const unsubscribeSettings = socketService.on('settings:updated', (data) => {
+      console.log('Received settings update via Socket.IO:', data);
+      if (data.settings) {
+        setSettings(data.settings);
+        showSnackbar('Settings updated from another source', 'info');
+      }
+    });
+
+    // Cleanup on unmount
+    return () => {
+      unsubscribeSettings();
+    };
   }, []);
 
   const loadSettings = async () => {
@@ -59,11 +77,25 @@ function Settings() {
       setLoading(true);
       const response = await settingsApi.getSettings();
       
+      // Check if we got actual settings data or fallback/error response
+      let settingsData = response.data;
+      
+      // If the response has an error but includes fallback settings, use those
+      if (settingsData.error && settingsData.plexlive) {
+        console.warn('Settings API returned error but provided fallback data:', settingsData.error);
+        settingsData = { plexlive: settingsData.plexlive };
+      }
+      
       // Merge with defaults to ensure all settings are present
       const defaults = settingsApi.getDefaults();
-      const mergedSettings = settingsHelpers.mergeSettings(defaults, response.data);
+      const mergedSettings = settingsHelpers.mergeSettings(defaults, settingsData);
       
       setSettings(mergedSettings);
+      
+      console.log('Settings loaded successfully', { 
+        maxConcurrentStreams: mergedSettings.plexlive?.streaming?.maxConcurrentStreams,
+        hasError: !!settingsData.error
+      });
     } catch (error) {
       console.error('Failed to load settings:', error);
       const errorMessage = error.response?.data?.error || error.message || 'Failed to load settings';
@@ -104,7 +136,16 @@ function Settings() {
         return;
       }
       
-      await settingsApi.updateSettings(settings);
+      const response = await settingsApi.updateSettings(settings);
+      
+      // Update local settings with the response from server
+      if (response.data && response.data.settings) {
+        setSettings(response.data.settings);
+        console.log('Settings updated and reloaded from server', { 
+          maxConcurrentStreams: response.data.settings.plexlive?.streaming?.maxConcurrentStreams
+        });
+      }
+      
       showSnackbar('Settings saved successfully', 'success');
     } catch (error) {
       console.error('Failed to save settings:', error);
@@ -136,11 +177,20 @@ function Settings() {
         return;
       }
       
-      await settingsApi.resetSettings(category);
-      showSnackbar(`Settings ${category ? `category '${category}'` : ''} reset to defaults`, 'success');
+      const response = await settingsApi.resetSettings(category);
       
-      // Reload settings to reflect changes
-      await loadSettings();
+      // Update local settings with the response from server
+      if (response.data && response.data.settings) {
+        setSettings(response.data.settings);
+        console.log('Settings reset and reloaded from server', { 
+          maxConcurrentStreams: response.data.settings.plexlive?.streaming?.maxConcurrentStreams
+        });
+      } else {
+        // Reload settings to reflect changes if no settings in response
+        await loadSettings();
+      }
+      
+      showSnackbar(`Settings ${category ? `category '${category}'` : ''} reset to defaults`, 'success');
     } catch (error) {
       console.error('Failed to reset settings:', error);
       const errorMessage = error.response?.data?.error || error.message || 'Failed to reset settings';

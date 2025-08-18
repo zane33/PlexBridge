@@ -4,6 +4,7 @@ const database = require('../services/database');
 const cacheService = require('../services/cacheService');
 const streamManager = require('../services/streamManager');
 const epgService = require('../services/epgService');
+const settingsService = require('../services/settingsService');
 const logger = require('../utils/logger');
 const { v4: uuidv4 } = require('uuid');
 const Joi = require('joi');
@@ -1024,7 +1025,8 @@ router.get('/streams/active', async (req, res) => {
     const concurrencyMetrics = streamManager.getConcurrencyMetrics();
     
     res.json({
-      activeStreams,
+      streams: activeStreams, // Dashboard expects "streams" property
+      activeStreams, // Keep for backward compatibility
       streamsByChannel,
       metrics: concurrencyMetrics,
       timestamp: new Date().toISOString()
@@ -1105,16 +1107,32 @@ router.get('/metrics', async (req, res) => {
       concurrencyMetrics = {};
     }
 
-    // Get user settings for max concurrent streams
-    let maxConcurrentStreams = 10; // Default fallback
+    // Get real max concurrent streams from settings with detailed debugging
+    let maxConcurrentStreams = 10; // fallback default
     try {
-      const streamingSetting = await database.get('SELECT value FROM settings WHERE key = ?', ['plexlive.streaming.maxConcurrentStreams']);
-      if (streamingSetting) {
-        maxConcurrentStreams = parseInt(streamingSetting.value) || 10;
+      const allSettings = await settingsService.getSettings();
+      console.log('DEBUG: All settings keys:', Object.keys(allSettings));
+      console.log('DEBUG: maxConcurrentStreams from flat:', allSettings['plexlive.streaming.maxConcurrentStreams']);
+      
+      // Access the setting directly from the flat settings structure
+      maxConcurrentStreams = allSettings['plexlive.streaming.maxConcurrentStreams'];
+      
+      // If not found in flat structure, try nested access
+      if (maxConcurrentStreams === undefined) {
+        maxConcurrentStreams = await settingsService.getSetting('plexlive.streaming.maxConcurrentStreams', 10);
+        console.log('DEBUG: maxConcurrentStreams from nested:', maxConcurrentStreams);
       }
+      
+      // Ensure it's a valid number
+      const originalValue = maxConcurrentStreams;
+      maxConcurrentStreams = parseInt(maxConcurrentStreams) || 10;
+      console.log('DEBUG: maxConcurrentStreams conversion:', originalValue, '->', maxConcurrentStreams);
+      
+      logger.info('Using max concurrent streams for metrics:', maxConcurrentStreams);
     } catch (settingsError) {
-      logger.warn('Unable to load max concurrent streams setting, using default:', settingsError);
-      // Try environment variable as fallback
+      console.log('DEBUG: Settings error:', settingsError);
+      logger.warn('Failed to get max concurrent streams from settings, using fallback:', settingsError);
+      // Try environment variable as backup
       maxConcurrentStreams = parseInt(process.env.MAX_CONCURRENT_STREAMS) || 10;
     }
 
@@ -1128,6 +1146,7 @@ router.get('/metrics', async (req, res) => {
     } catch (epgError) {
       logger.warn('EPG service not available for metrics:', epgError);
     }
+
     
     const metrics = {
       system: {
@@ -1469,116 +1488,22 @@ router.get('/settings', async (req, res) => {
     // Always return JSON content-type header
     res.setHeader('Content-Type', 'application/json');
     
-    // Check if database is initialized
-    if (!database || !database.isInitialized || !database.db) {
-      logger.info('Database not initialized, returning default settings');
-      // Return default settings structure when database not available
-      const defaultSettings = {
-        plexlive: {
-          ssdp: {
-            enabled: true,
-            discoverableInterval: 30000,
-            announceInterval: 1800000,
-            multicastAddress: '239.255.255.250',
-            deviceDescription: 'IPTV to Plex Bridge Interface'
-          },
-          streaming: {
-            maxConcurrentStreams: 10,
-            streamTimeout: 30000,
-            reconnectAttempts: 3,
-            bufferSize: 65536,
-            adaptiveBitrate: true,
-            preferredProtocol: 'hls'
-          },
-          transcoding: {
-            enabled: true,
-            hardwareAcceleration: false,
-            preset: 'medium',
-            videoCodec: 'h264',
-            audioCodec: 'aac',
-            qualityProfiles: {
-              low: { resolution: '720x480', bitrate: '1000k' },
-              medium: { resolution: '1280x720', bitrate: '2500k' },
-              high: { resolution: '1920x1080', bitrate: '5000k' }
-            },
-            defaultProfile: 'medium'
-          },
-          caching: {
-            enabled: true,
-            duration: 3600,
-            maxSize: 1073741824,
-            cleanup: {
-              enabled: true,
-              interval: 3600000,
-              maxAge: 86400000
-            }
-          },
-          device: {
-            name: 'PlexTV',
-            id: 'PLEXTV001',
-            tunerCount: 4,
-            firmware: '1.0.0',
-            baseUrl: 'http://localhost:8080'
-          },
-          network: {
-            bindAddress: '0.0.0.0',
-            advertisedHost: null,
-            streamingPort: 8080,
-            discoveryPort: 1900,
-            ipv6Enabled: false
-          },
-          compatibility: {
-            hdHomeRunMode: true,
-            plexPassRequired: false,
-            gracePeriod: 10000,
-            channelLogoFallback: true
-          }
-        }
-      };
-      
-      return res.status(200).json(defaultSettings);
-    }
-
-    const settings = await database.all('SELECT * FROM settings ORDER BY key');
-    const safeSettings = Array.isArray(settings) ? settings : [];
+    const settings = await settingsService.getSettings();
     
-    const settingsObj = {};
-    safeSettings.forEach(setting => {
-      let value = setting.value;
-      
-      try {
-        if (setting.type === 'number') {
-          value = parseFloat(value);
-        } else if (setting.type === 'boolean') {
-          value = value === 'true';
-        } else if (setting.type === 'json') {
-          value = JSON.parse(value);
-        }
-      } catch (parseError) {
-        logger.warn(`Failed to parse setting ${setting.key}:`, parseError);
-        value = setting.value; // Keep original value if parsing fails
-      }
-      
-      settingsObj[setting.key] = value;
+    logger.info('Settings retrieved successfully', { 
+      maxConcurrentStreams: settings.plexlive?.streaming?.maxConcurrentStreams,
+      hasPlexlive: !!settings.plexlive
     });
-
-    res.status(200).json(settingsObj);
+    
+    res.status(200).json(settings);
   } catch (error) {
     logger.error('Settings get error:', error);
     
-    // Return safe fallback settings structure
+    // Return safe fallback settings structure using the service defaults
     const fallbackSettings = {
       error: 'Failed to fetch settings',
       message: error.message,
-      plexlive: {
-        ssdp: { enabled: true },
-        streaming: { maxConcurrentStreams: 10 },
-        transcoding: { enabled: true },
-        caching: { enabled: true },
-        device: { name: 'PlexTV' },
-        network: { bindAddress: '0.0.0.0' },
-        compatibility: { hdHomeRunMode: true }
-      },
+      plexlive: settingsService.getDefaultSettings(),
       timestamp: new Date().toISOString()
     };
     
@@ -1590,34 +1515,32 @@ router.put('/settings', async (req, res) => {
   try {
     const settings = req.body;
     
-    await database.transaction(async (db) => {
-      for (const [key, value] of Object.entries(settings)) {
-        let stringValue = value;
-        let type = 'string';
-        
-        if (typeof value === 'number') {
-          type = 'number';
-          stringValue = value.toString();
-        } else if (typeof value === 'boolean') {
-          type = 'boolean';
-          stringValue = value.toString();
-        } else if (typeof value === 'object') {
-          type = 'json';
-          stringValue = JSON.stringify(value);
-        }
-
-        await db.run(`
-          INSERT OR REPLACE INTO settings (key, value, type)
-          VALUES (?, ?, ?)
-        `, [key, stringValue, type]);
-      }
+    // Validate settings
+    const validation = settingsService.validateSettings(settings);
+    if (!validation.isValid) {
+      return res.status(400).json({
+        error: 'Validation failed',
+        details: validation.errors
+      });
+    }
+    
+    const updatedSettings = await settingsService.updateSettings(settings);
+    
+    logger.info('Settings updated via API', { 
+      keys: Object.keys(settings),
+      maxConcurrentStreams: settings.plexlive?.streaming?.maxConcurrentStreams
     });
-
-    logger.info('Settings updated', { keys: Object.keys(settings) });
-    res.json({ message: 'Settings updated successfully' });
+    
+    res.json({ 
+      message: 'Settings updated successfully',
+      settings: updatedSettings
+    });
   } catch (error) {
     logger.error('Settings update error:', error);
-    res.status(500).json({ error: 'Failed to update settings' });
+    res.status(500).json({ 
+      error: 'Failed to update settings',
+      message: error.message
+    });
   }
 });
 
@@ -1625,41 +1548,9 @@ router.put('/settings', async (req, res) => {
 router.get('/settings/:category', async (req, res) => {
   try {
     const category = req.params.category;
-    const settings = await database.all('SELECT * FROM settings WHERE key LIKE ? ORDER BY key', [`${category}.%`]);
+    const categorySettings = await settingsService.getCategory(category);
     
-    const settingsObj = {};
-    settings.forEach(setting => {
-      const key = setting.key.replace(`${category}.`, '');
-      let value = setting.value;
-      
-      if (setting.type === 'number') {
-        value = parseFloat(value);
-      } else if (setting.type === 'boolean') {
-        value = value === 'true';
-      } else if (setting.type === 'json') {
-        try {
-          value = JSON.parse(value);
-        } catch (parseError) {
-          logger.warn(`Failed to parse JSON setting ${setting.key}:`, parseError);
-          value = setting.value;
-        }
-      }
-      
-      // Build nested object structure
-      const keys = key.split('.');
-      let current = settingsObj;
-      
-      for (let i = 0; i < keys.length - 1; i++) {
-        if (!current[keys[i]]) {
-          current[keys[i]] = {};
-        }
-        current = current[keys[i]];
-      }
-      
-      current[keys[keys.length - 1]] = value;
-    });
-
-    res.json(settingsObj);
+    res.json(categorySettings);
   } catch (error) {
     logger.error('Settings category get error:', error);
     res.status(500).json({ error: 'Failed to fetch settings category' });
@@ -1671,23 +1562,24 @@ router.post('/settings/reset', async (req, res) => {
   try {
     const { category } = req.body;
     
-    if (category) {
-      // Reset specific category
-      await database.run('DELETE FROM settings WHERE key LIKE ?', [`${category}.%`]);
-      logger.info('Settings category reset', { category });
-      res.json({ message: `Settings category '${category}' reset to defaults` });
-    } else {
-      // Reset all settings
-      await database.run('DELETE FROM settings');
-      logger.info('All settings reset to defaults');
-      res.json({ message: 'All settings reset to defaults' });
-    }
+    const resetSettings = await settingsService.resetSettings(category);
     
-    // Clear cached configuration
-    await cacheService.del('settings:config');
+    const message = category 
+      ? `Settings category '${category}' reset to defaults`
+      : 'All settings reset to defaults';
+    
+    logger.info('Settings reset via API', { category, message });
+    
+    res.json({ 
+      message,
+      settings: resetSettings
+    });
   } catch (error) {
     logger.error('Settings reset error:', error);
-    res.status(500).json({ error: 'Failed to reset settings' });
+    res.status(500).json({ 
+      error: 'Failed to reset settings',
+      message: error.message
+    });
   }
 });
 

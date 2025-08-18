@@ -92,11 +92,17 @@ function Dashboard() {
       }
     }, 30000); // Update every 30 seconds
 
+    const unsubscribeSettingsChange = socketService.on('settings:changed', (data) => {
+      console.log('Settings changed, refreshing metrics:', data);
+      fetchMetrics(); // Refresh metrics when settings change
+    });
+
     return () => {
       clearInterval(interval);
       unsubscribeMetrics();
       unsubscribeStreamStart();
       unsubscribeStreamStop();
+      unsubscribeSettingsChange();
     };
   }, []);
 
