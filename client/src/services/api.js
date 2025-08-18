@@ -647,9 +647,12 @@ export const m3uApi = {
       
       console.log(`Playlist analysis: ${contentLength} bytes, ~${estimatedChannels} channels, memory impact: ${memoryImpact}, recommend streaming: ${recommendStreaming}`);
       
+      // CRITICAL FIX: If analysis fails (0 bytes/channels), always use streaming for safety
+      const analysisFailedOrUnknown = contentLength === 0 && estimatedChannels === 0;
+      
       // Use streaming for large playlists or when explicitly recommended
-      // ALWAYS use streaming when estimation fails (unknown memory impact)
-      if (recommendStreaming || memoryImpact === 'unknown' || contentLength > 1 * 1024 * 1024 || estimatedChannels > 1000) {
+      // ALWAYS use streaming when estimation fails (unknown memory impact) or analysis returns zeros
+      if (recommendStreaming || memoryImpact === 'unknown' || analysisFailedOrUnknown || contentLength > 1 * 1024 * 1024 || estimatedChannels > 1000) {
         console.log(`Using ultra-optimized streaming parser (${estimatedChannels || 'unknown'} est. channels)`);
         
         // Use adaptive chunk size based on estimated size
@@ -660,6 +663,13 @@ export const m3uApi = {
         console.log(`Using legacy parser for small playlist (${estimatedChannels || 'unknown'} est. channels)`);
         if (onProgress) onProgress({ stage: 'fetching', progress: 0, message: 'Using legacy parser for small playlist...' });
         const response = await m3uApi.parsePlaylist(url);
+        
+        // CRITICAL FIX: Pass channels to the callback before completing
+        if (onChannels && response.data.channels) {
+          console.log(`Legacy parser found ${response.data.channels.length} channels, passing to UI`);
+          onChannels(response.data.channels);
+        }
+        
         if (onComplete) onComplete({ totalChannels: response.data.channels.length });
         return response;
       }

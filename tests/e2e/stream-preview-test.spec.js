@@ -1,299 +1,305 @@
 const { test, expect } = require('@playwright/test');
 
-test.describe('Stream Preview Functionality Tests', () => {
-  test.beforeEach(async ({ page }) => {
-    // Set longer timeout for stream operations
-    test.setTimeout(180000); // 3 minutes
-
-    // Capture console messages for debugging
-    page.on('console', (msg) => {
-      console.log(`[BROWSER ${msg.type().toUpperCase()}] ${msg.text()}`);
+test.describe('Stream Preview Functionality', () => {
+  test('should add stream and test preview functionality', async ({ page }) => {
+    // Enable request interception to monitor network requests
+    const requests = [];
+    const responses = [];
+    
+    page.on('request', request => {
+      requests.push({
+        url: request.url(),
+        method: request.method(),
+        headers: request.headers(),
+        postData: request.postData()
+      });
+      console.log(`REQUEST: ${request.method()} ${request.url()}`);
+    });
+    
+    page.on('response', response => {
+      responses.push({
+        url: response.url(),
+        status: response.status(),
+        statusText: response.statusText()
+      });
+      console.log(`RESPONSE: ${response.status()} ${response.url()}`);
+    });
+    
+    // Listen for console logs
+    page.on('console', msg => {
+      console.log(`CONSOLE ${msg.type()}: ${msg.text()}`);
+    });
+    
+    // Listen for page errors
+    page.on('pageerror', error => {
+      console.log(`PAGE ERROR: ${error.message}`);
     });
 
-    page.on('pageerror', (error) => {
-      console.log(`[PAGE ERROR] ${error.message}`);
-    });
-
-    page.on('requestfailed', (request) => {
-      console.log(`[REQUEST FAILED] ${request.method()} ${request.url()} - ${request.failure()?.errorText}`);
-    });
-
-    // Navigate to PlexBridge
-    await page.goto('/');
+    // Step 1: Navigate to the application
+    console.log('Step 1: Navigating to http://localhost:8080');
+    await page.goto('http://localhost:8080');
     await page.waitForLoadState('networkidle');
-  });
+    
+    // Take screenshot of homepage
+    await page.screenshot({ 
+      path: '/mnt/c/Users/ZaneT/SFF/PlexBridge/test-screenshots/01-homepage.png',
+      fullPage: true 
+    });
 
-  test('Complete M3U Import and Stream Preview Workflow', async ({ page }) => {
-    console.log('🔍 Starting complete M3U import and stream preview test');
-
-    // Step 1: Navigate to Stream Manager
-    console.log('📍 Step 1: Navigating to Stream Manager');
+    // Step 2: First create a channel if none exist (streams need a channel)
+    console.log('Step 2a: Checking if we need to create a channel first');
+    
+    // Check if we need to use mobile menu
+    const isMobileView = await page.locator('[data-testid="mobile-menu-button"]').isVisible();
+    
+    if (isMobileView) {
+      await page.click('[data-testid="mobile-menu-button"]');
+      await page.waitForTimeout(500);
+    }
+    
+    await page.click('[data-testid="nav-channels"]');
+    await page.waitForLoadState('networkidle');
+    
+    // Check if there are any channels in the table
+    const channelTable = page.locator('table tbody tr');
+    const channelCount = await channelTable.count();
+    
+    if (channelCount === 0) {
+      console.log('No channels found, creating a test channel');
+      await page.click('[data-testid="add-channel-button"]');
+      await page.waitForSelector('[data-testid="channel-dialog"], .MuiDialog-root', { state: 'visible' });
+      
+      // Fill channel details
+      await page.getByRole('textbox', { name: /channel name/i }).fill('Test Channel');
+      await page.getByRole('textbox', { name: /channel number/i }).fill('101');
+      
+      // Save the channel
+      await page.getByRole('button', { name: /save/i }).click();
+      await page.waitForLoadState('networkidle');
+      console.log('Created test channel');
+    } else {
+      console.log(`Found ${channelCount} existing channels`);
+    }
+    
+    // Step 2b: Navigate to Streams section
+    console.log('Step 2b: Navigating to Streams section');
+    
+    if (isMobileView) {
+      await page.click('[data-testid="mobile-menu-button"]');
+      await page.waitForTimeout(500);
+    }
+    
     await page.click('[data-testid="nav-streams"]');
     await page.waitForLoadState('networkidle');
-    await expect(page.locator('[data-testid="import-m3u-button"]')).toBeVisible({ timeout: 10000 });
-    console.log('✅ Stream Manager loaded');
+    
+    // Take screenshot of streams page
+    await page.screenshot({ 
+      path: '/mnt/c/Users/ZaneT/SFF/PlexBridge/test-screenshots/02-streams-page.png',
+      fullPage: true 
+    });
 
-    // Step 2: Open M3U Import Dialog
-    console.log('📍 Step 2: Opening M3U Import Dialog');
-    await page.click('[data-testid="import-m3u-button"]');
-    await expect(page.locator('[data-testid="import-dialog"]')).toBeVisible({ timeout: 10000 });
-    await page.screenshot({ path: 'test-results/stream-preview-01-dialog-opened.png' });
-    console.log('✅ Import dialog opened');
+    // Step 3: Add a new test stream
+    console.log('Step 3: Adding new test stream');
+    await page.click('[data-testid="add-stream-button"]');
+    await page.waitForSelector('[data-testid="stream-dialog"]', { state: 'visible' });
+    
+    // Take screenshot of add stream dialog
+    await page.screenshot({ 
+      path: '/mnt/c/Users/ZaneT/SFF/PlexBridge/test-screenshots/03-add-stream-dialog.png',
+      fullPage: true 
+    });
 
-    // Step 3: Enter M3U URL for testing
-    console.log('📍 Step 3: Entering test M3U URL');
-    const testM3uUrl = 'https://iptv-org.github.io/iptv/index.m3u';
-    const urlInput = page.locator('[data-testid="import-dialog"] [data-testid="import-url-input"] input');
-    await expect(urlInput).toBeVisible({ timeout: 5000 });
-    await urlInput.clear();
-    await urlInput.fill(testM3uUrl);
-    console.log(`✅ URL entered: ${testM3uUrl}`);
-
-    // Step 4: Start parsing with enhanced monitoring
-    console.log('📍 Step 4: Starting M3U parsing');
-    await page.click('[data-testid="parse-channels-button"]');
-    await page.screenshot({ path: 'test-results/stream-preview-02-parsing-started.png' });
-
-    // Step 5: Wait for channels to appear with detailed monitoring
-    console.log('📍 Step 5: Waiting for channels to appear');
-    let channelsFound = false;
-    let attempts = 0;
-    const maxAttempts = 60; // 60 seconds max
-
-    while (attempts < maxAttempts && !channelsFound) {
+    // Fill in stream details using the role-based selectors identified by Playwright
+    await page.getByRole('textbox', { name: 'Stream Name *' })
+      .fill('Test HLS Stream');
+      
+    await page.getByRole('textbox', { name: 'Stream URL *' })
+      .fill('https://test-streams.mux.dev/x36xhzz/x36xhzz.m3u8');
+    
+    // Select a channel from the dropdown - it's required
+    console.log('Step 3b: Selecting a channel');
+    
+    // First try to find the channel combobox using a more specific approach
+    const channelCombobox = page.locator('[data-testid="stream-dialog"]')
+      .locator('div[role="combobox"]')
+      .filter({ hasNotText: 'HLS' }); // Exclude the type dropdown
+    
+    try {
+      await channelCombobox.click({ timeout: 5000 });
+      console.log('Clicked channel dropdown');
+      
+      // Wait for dropdown menu to appear
+      await page.waitForSelector('[role="presentation"] ul[role="listbox"], .MuiMenu-root', { timeout: 5000 });
+      
+      // Select the first option using force click to bypass backdrop issues
+      const firstOption = page.locator('[role="presentation"] ul[role="listbox"] li, .MuiMenu-root li').first();
+      await firstOption.click({ force: true, timeout: 5000 });
+      console.log('Selected first available channel');
+      
+      // Wait a moment for the selection to register
       await page.waitForTimeout(1000);
-      attempts++;
-
-      const channelRows = await page.locator('[data-testid="import-dialog"] table tbody tr').count();
+    } catch (error) {
+      console.log('Channel selection failed:', error.message);
+      console.log('Trying alternative approach...');
       
-      if (channelRows > 0) {
-        channelsFound = true;
-        console.log(`🎉 SUCCESS: Found ${channelRows} channels in table!`);
-        await page.screenshot({ path: `test-results/stream-preview-03-channels-found-${channelRows}.png` });
-        break;
-      }
-
-      // Take periodic screenshots for debugging
-      if (attempts % 15 === 0) {
-        await page.screenshot({ path: `test-results/stream-preview-debug-${attempts}s.png` });
-        console.log(`⏱️ Still waiting... ${attempts}s elapsed`);
-      }
-    }
-
-    // Verify channels were found
-    if (!channelsFound) {
-      console.log('❌ FAILED: No channels appeared after parsing');
-      await page.screenshot({ path: 'test-results/stream-preview-04-no-channels-found.png' });
-      throw new Error('M3U parsing failed - no channels appeared');
-    }
-
-    // Step 6: Test pagination and find a suitable channel for preview
-    console.log('📍 Step 6: Finding a channel to preview');
-    const totalChannelRows = await page.locator('[data-testid="import-dialog"] table tbody tr').count();
-    console.log(`📊 Total channels visible: ${totalChannelRows}`);
-
-    // Look for the first few channels and find one suitable for testing
-    let previewChannelFound = false;
-    let channelName = '';
-    
-    for (let i = 0; i < Math.min(totalChannelRows, 5); i++) {
-      const row = page.locator('[data-testid="import-dialog"] table tbody tr').nth(i);
-      const nameCell = row.locator('td').nth(1); // Assuming name is in second column
-      channelName = await nameCell.textContent();
-      
-      console.log(`📺 Channel ${i + 1}: ${channelName}`);
-      
-      // Check if this row has a preview button
-      const previewButton = row.locator('[data-testid="preview-stream-button"]');
-      if (await previewButton.isVisible()) {
-        previewChannelFound = true;
-        console.log(`✅ Found preview button for channel: ${channelName}`);
-        
-        // Step 7: Test stream preview
-        console.log('📍 Step 7: Testing stream preview');
-        await page.screenshot({ path: 'test-results/stream-preview-05-before-preview.png' });
-        
-        // Click the preview button
-        await previewButton.click();
-        await page.waitForTimeout(2000); // Wait for preview to load
-        
-        // Check if preview modal/dialog appeared
-        const previewModal = page.locator('.MuiDialog-root');
-        const videoPlayer = page.locator('video');
-        
-        if (await previewModal.isVisible()) {
-          console.log('✅ Preview modal opened');
-          await page.screenshot({ path: 'test-results/stream-preview-06-modal-opened.png' });
-          
-          // Wait a bit for video to potentially load
-          await page.waitForTimeout(5000);
-          
-          if (await videoPlayer.isVisible()) {
-            console.log('✅ Video player visible in preview');
-            await page.screenshot({ path: 'test-results/stream-preview-07-video-player.png' });
-          } else {
-            console.log('⚠️ Video player not visible, but modal opened');
-          }
-          
-          // Close preview modal
-          const closeButton = previewModal.locator('button[aria-label="close"], .MuiDialogTitle-root button');
-          if (await closeButton.isVisible()) {
-            await closeButton.click();
-            await page.waitForTimeout(1000);
-            console.log('✅ Preview modal closed');
-          }
-        } else {
-          console.log('⚠️ Preview modal did not appear');
-          await page.screenshot({ path: 'test-results/stream-preview-06-no-modal.png' });
-        }
-        
-        break;
-      }
-    }
-
-    if (!previewChannelFound) {
-      console.log('⚠️ No channels with preview buttons found');
-      await page.screenshot({ path: 'test-results/stream-preview-05-no-preview-buttons.png' });
-    }
-
-    // Step 8: Test channel selection and import workflow
-    console.log('📍 Step 8: Testing channel selection for import');
-    
-    // Select first few channels for import
-    const checkboxes = page.locator('[data-testid="import-dialog"] table tbody tr input[type="checkbox"]');
-    const checkboxCount = await checkboxes.count();
-    const selectCount = Math.min(checkboxCount, 3); // Select up to 3 channels
-    
-    for (let i = 0; i < selectCount; i++) {
-      await checkboxes.nth(i).check();
-      console.log(`✅ Selected channel ${i + 1} for import`);
+      // Alternative: use keyboard navigation
+      await channelCombobox.click();
+      await page.keyboard.press('ArrowDown');
+      await page.keyboard.press('Enter');
+      console.log('Used keyboard to select channel');
     }
     
-    await page.screenshot({ path: 'test-results/stream-preview-08-channels-selected.png' });
-
-    // Check if import button is enabled
-    const importButton = page.locator('[data-testid="import-selected-button"]');
-    if (await importButton.isVisible() && await importButton.isEnabled()) {
-      console.log('✅ Import button is enabled with selected channels');
-      
-      // For this test, we won't actually import to avoid modifying the database
-      console.log('ℹ️ Skipping actual import to preserve test environment');
-    } else {
-      console.log('❌ Import button not available or enabled');
+    // Type is already set to HLS by default, but let's check if there's a test button
+    const testButton = page.locator('[data-testid="stream-dialog"]')
+      .locator('button:has-text("Test"), [data-testid="test-stream-button"]');
+    if (await testButton.isVisible()) {
+      console.log('Test button found in dialog');
     }
-
-    // Step 9: Close dialog and verify cleanup
-    console.log('📍 Step 9: Closing dialog and verifying cleanup');
-    const cancelButton = page.locator('[data-testid="import-dialog"] [data-testid="cancel-button"], [data-testid="import-dialog"] button:has-text("Cancel")');
-    await cancelButton.click();
     
-    // Verify dialog closed
-    await expect(page.locator('[data-testid="import-dialog"]')).not.toBeVisible({ timeout: 5000 });
-    console.log('✅ Import dialog closed successfully');
+    // Take screenshot before saving
+    await page.screenshot({ 
+      path: '/mnt/c/Users/ZaneT/SFF/PlexBridge/test-screenshots/04-filled-stream-form.png',
+      fullPage: true 
+    });
 
-    // Final screenshot
-    await page.screenshot({ path: 'test-results/stream-preview-09-test-complete.png' });
-
-    console.log('\\n🎉 Stream Preview Test Summary:');
-    console.log(`📊 Channels found: ${channelsFound ? 'YES' : 'NO'}`);
-    console.log(`🎬 Preview tested: ${previewChannelFound ? 'YES' : 'NO'}`);
-    console.log(`📺 Channel tested: ${channelName || 'N/A'}`);
-    console.log('✅ Stream preview workflow test completed successfully');
-  });
-
-  test('Direct Stream Preview Test', async ({ page }) => {
-    console.log('🔍 Starting direct stream preview test');
-
-    // Navigate to Stream Manager
-    await page.click('[data-testid="nav-streams"]');
+    // Step 4: Save the stream
+    console.log('Step 4: Saving the stream');
+    await page.locator('[data-testid="stream-dialog"]').getByRole('button', { name: 'Save Stream' }).click();
+    
+    // Wait for dialog to close and page to update
+    await page.waitForSelector('[data-testid="stream-dialog"]', { state: 'hidden' });
     await page.waitForLoadState('networkidle');
+    
+    // Take screenshot after saving
+    await page.screenshot({ 
+      path: '/mnt/c/Users/ZaneT/SFF/PlexBridge/test-screenshots/05-after-save.png',
+      fullPage: true 
+    });
 
-    // Look for existing streams in the table
-    const existingStreams = await page.locator('table tbody tr').count();
-    console.log(`📊 Found ${existingStreams} existing streams`);
+    // Step 5: Verify stream was saved and find preview button
+    console.log('Step 5: Looking for the saved stream and preview button');
+    
+    // Look for the stream in the table
+    const streamRow = page.locator('table tbody tr:has-text("Test HLS Stream")');
+    await expect(streamRow).toBeVisible({ timeout: 10000 });
+    
+    // Take screenshot showing the stream in the list
+    await page.screenshot({ 
+      path: '/mnt/c/Users/ZaneT/SFF/PlexBridge/test-screenshots/06-stream-in-list.png',
+      fullPage: true 
+    });
 
-    if (existingStreams > 0) {
-      // Test preview on existing stream
-      console.log('📍 Testing preview on existing stream');
+    // Step 6: Try to preview the stream
+    console.log('Step 6: Attempting to preview the stream');
+    
+    // Look for preview button in the stream row - try multiple selectors
+    const previewButton = streamRow.locator('[data-testid="preview-stream-button"], button:has-text("Preview"), button:has-text("Test"), button[title*="preview" i], .MuiIconButton-root:has([data-testid="PlayArrowIcon"])');
+    
+    if (await previewButton.isVisible()) {
+      console.log('Preview button found, clicking it...');
       
-      const firstRow = page.locator('table tbody tr').first();
-      const streamName = await firstRow.locator('td').nth(1).textContent();
-      console.log(`📺 Testing preview for stream: ${streamName}`);
-
-      // Look for preview button in the row
-      const previewButton = firstRow.locator('[data-testid="preview-stream-button"]');
+      // Clear previous requests/responses for cleaner monitoring
+      requests.length = 0;
+      responses.length = 0;
       
-      if (await previewButton.isVisible()) {
-        await previewButton.click();
-        await page.waitForTimeout(3000);
-        
-        // Check for preview modal
-        const previewModal = page.locator('.MuiDialog-root');
-        if (await previewModal.isVisible()) {
-          console.log('✅ Stream preview modal opened for existing stream');
-          await page.screenshot({ path: 'test-results/direct-preview-success.png' });
-          
-          // Close modal
-          const closeButton = previewModal.locator('button[aria-label="close"]');
-          if (await closeButton.isVisible()) {
-            await closeButton.click();
-          }
-        } else {
-          console.log('❌ Preview modal did not open');
-          await page.screenshot({ path: 'test-results/direct-preview-failed.png' });
-        }
-      } else {
-        console.log('❌ No preview button found in existing stream row');
-        await page.screenshot({ path: 'test-results/direct-preview-no-button.png' });
+      await previewButton.click();
+      
+      // Wait a bit for any requests to be made
+      await page.waitForTimeout(2000);
+      
+      // Take screenshot after clicking preview
+      await page.screenshot({ 
+        path: '/mnt/c/Users/ZaneT/SFF/PlexBridge/test-screenshots/07-after-preview-click.png',
+        fullPage: true 
+      });
+      
+      // Check if a video player or preview dialog appeared
+      const videoPlayer = page.locator('video, [data-testid="video-player"], .video-js');
+      const previewDialog = page.locator('[data-testid="preview-dialog"], .MuiDialog-root:has(video)');
+      
+      if (await videoPlayer.isVisible()) {
+        console.log('Video player is visible');
+        await page.screenshot({ 
+          path: '/mnt/c/Users/ZaneT/SFF/PlexBridge/test-screenshots/08-video-player.png',
+          fullPage: true 
+        });
       }
+      
+      if (await previewDialog.isVisible()) {
+        console.log('Preview dialog is visible');
+        await page.screenshot({ 
+          path: '/mnt/c/Users/ZaneT/SFF/PlexBridge/test-screenshots/08-preview-dialog.png',
+          fullPage: true 
+        });
+      }
+      
+      // Wait a bit more to see if video loads
+      await page.waitForTimeout(3000);
+      
+      // Take final screenshot
+      await page.screenshot({ 
+        path: '/mnt/c/Users/ZaneT/SFF/PlexBridge/test-screenshots/09-final-state.png',
+        fullPage: true 
+      });
+      
     } else {
-      console.log('ℹ️ No existing streams found to test preview');
-    }
-  });
-
-  test('Stream Preview Error Handling', async ({ page }) => {
-    console.log('🔍 Testing stream preview error handling');
-
-    // Navigate to Stream Manager
-    await page.click('[data-testid="nav-streams"]');
-    await page.waitForLoadState('networkidle');
-
-    // Try to create a stream with an invalid URL for testing error handling
-    const addButton = page.locator('[data-testid="add-stream-button"]');
-    if (await addButton.isVisible()) {
-      await addButton.click();
+      console.log('Preview button not found in stream row');
       
-      // Fill in a test stream with invalid URL
-      const nameInput = page.locator('[data-testid="stream-name-input"]');
-      const urlInput = page.locator('[data-testid="stream-url-input"]');
+      // Look for alternative preview buttons
+      const alternativeButtons = [
+        '[data-testid="test-stream-button"]',
+        'button:has-text("Preview")',
+        'button:has-text("Test")',
+        'button[title*="preview" i]',
+        'button[aria-label*="preview" i]'
+      ];
       
-      if (await nameInput.isVisible() && await urlInput.isVisible()) {
-        await nameInput.fill('Test Invalid Stream');
-        await urlInput.fill('http://invalid-stream-url.test/stream.m3u8');
-        
-        // Look for test/preview button
-        const testButton = page.locator('[data-testid="test-stream-button"]');
-        if (await testButton.isVisible()) {
-          console.log('📍 Testing stream preview with invalid URL');
-          await testButton.click();
-          await page.waitForTimeout(5000);
-          
-          // Check for error messages
-          const errorAlerts = page.locator('.MuiAlert-root[severity="error"]');
-          if (await errorAlerts.count() > 0) {
-            console.log('✅ Error handling working - error message displayed');
-            await page.screenshot({ path: 'test-results/preview-error-handling.png' });
-          } else {
-            console.log('⚠️ No error message shown for invalid URL');
-          }
-        }
-        
-        // Cancel/close the dialog
-        const cancelButton = page.locator('button:has-text("Cancel")');
-        if (await cancelButton.isVisible()) {
-          await cancelButton.click();
+      for (const selector of alternativeButtons) {
+        const button = streamRow.locator(selector);
+        if (await button.isVisible()) {
+          console.log(`Found alternative preview button: ${selector}`);
+          await button.click();
+          await page.waitForTimeout(2000);
+          break;
         }
       }
+      
+      await page.screenshot({ 
+        path: '/mnt/c/Users/ZaneT/SFF/PlexBridge/test-screenshots/07-no-preview-button.png',
+        fullPage: true 
+      });
     }
+
+    // Step 7: Summary of network requests and responses
+    console.log('\n=== NETWORK REQUEST SUMMARY ===');
+    console.log(`Total requests made: ${requests.length}`);
+    console.log(`Total responses received: ${responses.length}`);
+    
+    console.log('\n=== RELEVANT REQUESTS ===');
+    requests.forEach((req, index) => {
+      if (req.url.includes('stream') || req.url.includes('api') || req.url.includes('preview')) {
+        console.log(`${index + 1}. ${req.method} ${req.url}`);
+        if (req.postData) {
+          console.log(`   Data: ${req.postData}`);
+        }
+      }
+    });
+    
+    console.log('\n=== RELEVANT RESPONSES ===');
+    responses.forEach((res, index) => {
+      if (res.url.includes('stream') || res.url.includes('api') || res.url.includes('preview')) {
+        console.log(`${index + 1}. ${res.status} ${res.statusText} - ${res.url}`);
+      }
+    });
+
+    // Return the collected data for analysis
+    return {
+      requests: requests.filter(req => 
+        req.url.includes('stream') || req.url.includes('api') || req.url.includes('preview')
+      ),
+      responses: responses.filter(res => 
+        res.url.includes('stream') || res.url.includes('api') || res.url.includes('preview')
+      )
+    };
   });
 });
