@@ -68,18 +68,31 @@ const EnhancedVideoPlayer = ({
   const theme = useTheme();
   const isMobile = useMediaQuery(theme.breakpoints.down('md'));
 
-  // Get the appropriate stream URL
+  // Get the appropriate stream URL with validation
   const getStreamUrl = useCallback(() => {
     if (!streamUrl) return '';
     
-    if (proxyEnabled && streamId) {
-      // Use the backend stream preview endpoint to avoid CORS issues  
-      return `${window.location.origin}/streams/preview/${streamId}`;
-    } else if (proxyEnabled && channelId) {
-      // Use the channel stream endpoint for channel-based playback
-      return `${window.location.origin}/stream/${channelId}`;
+    // Validate URL format
+    try {
+      new URL(streamUrl);
+    } catch (error) {
+      console.warn('Invalid stream URL format:', streamUrl);
+      return '';
     }
     
+    if (proxyEnabled && streamId) {
+      // Use the backend stream preview endpoint to avoid CORS issues  
+      const proxyUrl = `${window.location.origin}/streams/preview/${streamId}`;
+      console.log(`Using proxy URL for stream ${streamId}: ${proxyUrl}`);
+      return proxyUrl;
+    } else if (proxyEnabled && channelId) {
+      // Use the channel stream endpoint for channel-based playback
+      const channelUrl = `${window.location.origin}/stream/${channelId}`;
+      console.log(`Using channel URL for channel ${channelId}: ${channelUrl}`);
+      return channelUrl;
+    }
+    
+    console.log(`Using direct stream URL: ${streamUrl}`);
     return streamUrl;
   }, [streamUrl, proxyEnabled, channelId, streamId]);
 
@@ -357,44 +370,75 @@ const EnhancedVideoPlayer = ({
       player.on('error', (e) => {
         const error = player.error();
         console.error('Video.js error:', error);
+        console.error('Player tech info:', player.tech && player.tech());
         
         let errorMessage = 'Video.js playback error';
         let canRecover = true;
+        let suggestedAction = null;
         
         if (error) {
           switch (error.code) {
             case 1: // MEDIA_ERR_ABORTED
-              errorMessage = 'Stream loading was aborted';
+              errorMessage = 'Stream loading was aborted by user or browser';
+              suggestedAction = 'Try reloading the stream';
               break;
             case 2: // MEDIA_ERR_NETWORK
               if (proxyEnabled) {
-                errorMessage = 'Network error with proxy. Try disabling proxy mode or check if PlexBridge streaming service is available';
+                errorMessage = 'Network error with PlexBridge proxy. The backend streaming service may be unavailable.';
+                suggestedAction = 'Try disabling proxy mode or check PlexBridge server status';
               } else {
-                errorMessage = 'Network error - check stream URL or try proxy mode';
+                errorMessage = 'Network error accessing stream directly. This may be due to CORS restrictions.';
+                suggestedAction = 'Try enabling proxy mode or use an external player';
               }
               break;
             case 3: // MEDIA_ERR_DECODE
-              errorMessage = 'Stream decode error - format may be unsupported';
+              errorMessage = 'Stream decode error - the video format may be corrupted or unsupported';
+              suggestedAction = 'Try a different stream or external player';
+              canRecover = false;
               break;
             case 4: // MEDIA_ERR_SRC_NOT_SUPPORTED
               if (proxyEnabled) {
-                errorMessage = 'Stream format not supported by proxy. Try disabling proxy mode or using external player';
+                errorMessage = 'Stream format not supported by PlexBridge proxy or browser';
+                suggestedAction = 'Try disabling proxy mode or use VLC/MPC-HC external player';
               } else {
-                errorMessage = 'Stream format not supported by browser. Try enabling proxy mode or using external player';
+                errorMessage = 'Stream format not supported by browser directly';
+                suggestedAction = 'Try enabling proxy mode or use an external player';
               }
               break;
             default:
-              errorMessage = error.message || 'Unknown playback error';
+              errorMessage = error.message || `Unknown playback error (code: ${error.code})`;
+              suggestedAction = 'Try refreshing or using an external player';
           }
         }
         
-        setError({ message: errorMessage, canRecover });
+        setError({ 
+          message: errorMessage, 
+          canRecover,
+          suggestedAction,
+          technicalDetails: `Error ${error?.code}: ${error?.message || 'Unknown'}`
+        });
         
-        // If proxy failed and we haven't tried direct stream yet, suggest fallback
-        if (proxyEnabled && (error.code === 2 || error.code === 4)) {
-          enqueueSnackbar('Proxy failed. Try disabling proxy mode to stream directly.', { 
+        // Auto-suggest proxy toggle for network/format errors
+        if (error && (error.code === 2 || error.code === 4)) {
+          const suggestion = proxyEnabled ? 
+            'Try disabling proxy mode to stream directly from source' :
+            'Try enabling proxy mode to stream through PlexBridge';
+          
+          enqueueSnackbar(suggestion, { 
             variant: 'warning',
-            persist: true
+            persist: true,
+            action: (key) => (
+              <Button 
+                color="inherit" 
+                size="small" 
+                onClick={() => {
+                  setProxyEnabled(!proxyEnabled);
+                  enqueueSnackbar.closeSnackbar(key);
+                }}
+              >
+                {proxyEnabled ? 'Disable Proxy' : 'Enable Proxy'}
+              </Button>
+            )
           });
         }
       });

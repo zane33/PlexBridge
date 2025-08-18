@@ -541,6 +541,7 @@ app.get('/api/streams/parse/m3u/stream', async (req, res) => {
     
     const sendEvent = (eventType, data) => {
       const timestamp = Date.now();
+      console.log(`Sending SSE event: ${eventType}`, JSON.stringify(data, null, 2));
       res.write(`event: ${eventType}\n`);
       res.write(`data: ${JSON.stringify({ ...data, timestamp })}\n\n`);
       
@@ -642,6 +643,7 @@ app.get('/api/streams/parse/m3u/stream', async (req, res) => {
     const client = parsedUrl.protocol === 'https:' ? https : http;
     
     const response = await new Promise((resolve, reject) => {
+      console.log(`Making HTTP request to: ${url}`);
       const req = client.get(url, {
         headers: {
           'User-Agent': 'VLC/3.0.11 LibVLC/3.0.11',
@@ -650,10 +652,18 @@ app.get('/api/streams/parse/m3u/stream', async (req, res) => {
           'Connection': 'keep-alive'
         },
         timeout: 120000
-      }, resolve);
+      }, (res) => {
+        console.log(`HTTP response received: ${res.statusCode} ${res.statusMessage}`);
+        console.log(`Response headers:`, res.headers);
+        resolve(res);
+      });
       
-      req.on('error', reject);
+      req.on('error', (error) => {
+        console.error(`HTTP request error:`, error);
+        reject(error);
+      });
       req.on('timeout', () => {
+        console.log(`HTTP request timeout for ${url}`);
         req.destroy();
         reject(new Error('Request timeout after 2 minutes'));
       });
@@ -694,9 +704,11 @@ app.get('/api/streams/parse/m3u/stream', async (req, res) => {
     // Memory-aware chunk processing
     const parseAndSendChunk = () => {
       const currentChunkSize = getAdaptiveChunkSize();
+      console.log(`parseAndSendChunk called: buffer=${chunkBuffer.length}, chunkSize=${currentChunkSize}`);
       
       if (chunkBuffer.length >= currentChunkSize) {
         const channelsToSend = chunkBuffer.splice(0, currentChunkSize);
+        console.log(`Sending ${channelsToSend.length} channels to client`);
         
         sendEvent('channels', {
           sessionId,
@@ -750,6 +762,16 @@ app.get('/api/streams/parse/m3u/stream', async (req, res) => {
       buffer += chunk;
       downloadedBytes += Buffer.byteLength(chunk, 'utf8');
       
+      // Debug: Log first chunk received
+      if (downloadedBytes === Buffer.byteLength(chunk, 'utf8')) {
+        console.log(`First chunk received (${Buffer.byteLength(chunk, 'utf8')} bytes):`, chunk.toString().substring(0, 500));
+      }
+      
+      // Debug: Log periodically during download
+      if (downloadedBytes % 100000 === 0) { // Every 100KB
+        console.log(`Downloaded ${Math.round(downloadedBytes/1024)}KB so far...`);
+      }
+      
       // Process complete lines
       const lines = buffer.split('\n');
       buffer = lines.pop() || ''; // Keep incomplete line in buffer
@@ -763,6 +785,7 @@ app.get('/api/streams/parse/m3u/stream', async (req, res) => {
           const match = trimmedLine.match(/#EXTINF:(-?\d+)(?:\s+(.+?))?,(.*)$/);
           if (match) {
             const [, duration, attributes, name] = match;
+            console.log(`Parsed EXTINF: duration=${duration}, attributes=${attributes}, name=${name}`);
             
             currentChannel = {
               name: name.trim(),
@@ -780,6 +803,7 @@ app.get('/api/streams/parse/m3u/stream', async (req, res) => {
           }
         } else if (trimmedLine.startsWith('http') && currentChannel) {
           // Complete channel with URL
+          console.log(`Found URL for channel: ${currentChannel.name} -> ${trimmedLine}`);
           currentChannel.url = trimmedLine;
           currentChannel.id = `m3u_${sessionId}_${channelCount}`;
           currentChannel.type = trimmedLine.includes('.m3u8') ? 'hls' : 
@@ -789,6 +813,7 @@ app.get('/api/streams/parse/m3u/stream', async (req, res) => {
           chunkBuffer.push({ ...currentChannel });
           allChannelsForCache.push({ ...currentChannel }); // Add to cache collection
           channelCount++;
+          console.log(`Channel added to buffer: ${channelCount} total, buffer size: ${chunkBuffer.length}`);
           currentChannel = null;
           
           // Send chunk if buffer is full
@@ -1297,6 +1322,41 @@ app.get('/stream/:channelId', (req, res) => {
   
   // In a real implementation, this would proxy the actual stream
   res.redirect(channel.streamUrl || 'about:blank');
+});
+
+// Stream preview endpoint for direct stream testing
+app.get('/streams/preview/:streamId', async (req, res) => {
+  console.log(`Stream preview requested for ID: ${req.params.streamId}`);
+  
+  try {
+    // Find the stream in the database
+    const stream = await new Promise((resolve, reject) => {
+      db.get('SELECT * FROM streams WHERE id = ?', [req.params.streamId], (err, row) => {
+        if (err) reject(err);
+        else resolve(row);
+      });
+    });
+    
+    if (!stream) {
+      console.log(`Stream not found: ${req.params.streamId}`);
+      return res.status(404).json({ error: 'Stream not found' });
+    }
+    
+    if (!stream.url) {
+      console.log(`Stream has no URL: ${req.params.streamId}`);
+      return res.status(400).json({ error: 'Stream has no URL configured' });
+    }
+    
+    console.log(`Proxying stream: ${stream.name} -> ${stream.url}`);
+    
+    // For now, redirect to the actual stream URL
+    // In a production environment, you might want to proxy the stream through PlexBridge
+    res.redirect(stream.url);
+    
+  } catch (error) {
+    console.error('Stream preview error:', error);
+    res.status(500).json({ error: 'Failed to load stream preview' });
+  }
 });
 
 // Serve React app for all other routes

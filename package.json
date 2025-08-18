@@ -14,7 +14,12 @@
     "test:e2e:headed": "playwright test --headed",
     "test:e2e:debug": "playwright test --debug",
     "test:e2e:ui": "playwright test --ui",
+    "test:smoke": "playwright test tests/e2e/smoke-tests.spec.js",
+    "test:smoke:headed": "playwright test tests/e2e/smoke-tests.spec.js --headed",
+    "test:critical": "playwright test tests/e2e/critical-path-tests.spec.js",
+    "test:critical:headed": "playwright test tests/e2e/critical-path-tests.spec.js --headed",
     "test:all": "npm run test && npm run test:e2e",
+    "test:quick": "npm run test:critical && npm run test:smoke",
     "docker:build": "docker build -t plextv .",
     "docker:run": "docker-compose up -d"
   },

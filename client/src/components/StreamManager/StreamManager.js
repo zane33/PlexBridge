@@ -550,23 +550,27 @@ function StreamManager() {
         },
         
         onComplete: (data) => {
+          console.log('M3U Parse onComplete called with data:', data);
           sessionId = data.sessionId;
           
           // Final channel count
           const totalChannels = data.totalChannels || allChannels.length;
+          console.log('Final channel count:', totalChannels, 'allChannels.length:', allChannels.length);
           
-          setParsingProgress(prev => ({ 
-            ...prev,
-            sessionId,
-            stage: 'organizing',
-            progress: 95,
-            message: 'Organizing channel groups and finalizing...'
-          }));
-          
-          // Extract unique groups progressively to prevent main thread blocking
-          const extractGroupsProgressively = async () => {
-            const groupSet = new Set();
-            const CHUNK_SIZE = 1000;
+          try {
+            setParsingProgress(prev => ({ 
+              ...prev,
+              sessionId,
+              stage: 'organizing',
+              progress: 95,
+              message: 'Organizing channel groups and finalizing...'
+            }));
+            
+            // Extract unique groups progressively to prevent main thread blocking
+            const extractGroupsProgressively = async () => {
+              console.log('Starting group extraction for', allChannels.length, 'channels');
+              const groupSet = new Set();
+              const CHUNK_SIZE = 1000;
             
             for (let i = 0; i < allChannels.length; i += CHUNK_SIZE) {
               const chunk = allChannels.slice(i, i + CHUNK_SIZE);
@@ -596,46 +600,71 @@ function StreamManager() {
             return groups;
           };
           
-          extractGroupsProgressively();
-          
-          // Smart selection based on playlist size - deferred to prevent blocking
-          setTimeout(() => {
-            if (totalChannels > 10000) {
-              setSelectedChannels([]); // Don't select any for very large lists
-              enqueueSnackbar(`🚀 Large playlist detected (${totalChannels} channels). Use search and filters to select specific channels for better performance.`, { variant: 'warning' });
-            } else if (totalChannels > 1000) {
-              setSelectedChannels([]); // Don't auto-select for large lists
-              enqueueSnackbar(`📋 Medium playlist loaded (${totalChannels} channels). Select specific channels or groups for import.`, { variant: 'info' });
+            extractGroupsProgressively().catch(error => {
+              console.error('Group extraction failed:', error);
+              // Continue with default group if extraction fails
+              setAvailableGroups(['Ungrouped']);
+            });
+            
+            // CRITICAL: Set final parsed channels IMMEDIATELY
+            console.log('Setting final parsed channels:', allChannels.length);
+            setParsedChannels([...allChannels]);
+            
+            // Smart selection based on playlist size - deferred to prevent blocking
+            setTimeout(() => {
+              console.log('Setting selected channels based on playlist size:', totalChannels);
+              if (totalChannels > 10000) {
+                setSelectedChannels([]); // Don't select any for very large lists
+                enqueueSnackbar(`🚀 Large playlist detected (${totalChannels} channels). Use search and filters to select specific channels for better performance.`, { variant: 'warning' });
+              } else if (totalChannels > 1000) {
+                setSelectedChannels([]); // Don't auto-select for large lists
+                enqueueSnackbar(`📋 Medium playlist loaded (${totalChannels} channels). Select specific channels or groups for import.`, { variant: 'info' });
+              } else {
+                setSelectedChannels(allChannels.map((_, index) => index)); // Auto-select for small lists
+              }
+            }, 100); // Defer to next tick to prevent blocking
+            
+            // Final completion
+            setParsingProgress(prev => ({ 
+              ...prev,
+              stage: 'complete',
+              progress: 100,
+              message: `Successfully loaded ${totalChannels} channels! Ready for selection.`,
+              eta: null
+            }));
+            
+            // Show different messages based on playlist size and performance
+            if (totalChannels > 50000) {
+              enqueueSnackbar(`🚀 Massive playlist loaded! ${totalChannels} channels processed efficiently using streaming technology.`, { variant: 'success' });
+            } else if (totalChannels > 10000) {
+              enqueueSnackbar(`📊 Large playlist loaded! ${totalChannels} channels ready for selection.`, { variant: 'success' });
             } else {
-              setSelectedChannels(allChannels.map((_, index) => index)); // Auto-select for small lists
+              enqueueSnackbar(`✅ Parsing complete! Found ${totalChannels} channels.`, { variant: 'success' });
             }
-          }, 100); // Defer to next tick to prevent blocking
-          
-          // CRITICAL: Set final parsed channels - this was missing!
-          setParsedChannels([...allChannels]);
-          
-          // Final completion
-          setParsingProgress(prev => ({ 
-            ...prev,
-            stage: 'complete',
-            progress: 100,
-            message: `Successfully loaded ${totalChannels} channels! Ready for selection.`,
-            eta: null
-          }));
-          
-          // Show different messages based on playlist size and performance
-          if (totalChannels > 50000) {
-            enqueueSnackbar(`🚀 Massive playlist loaded! ${totalChannels} channels processed efficiently using streaming technology.`, { variant: 'success' });
-          } else if (totalChannels > 10000) {
-            enqueueSnackbar(`📊 Large playlist loaded! ${totalChannels} channels ready for selection.`, { variant: 'success' });
-          } else {
-            enqueueSnackbar(`✅ Parsing complete! Found ${totalChannels} channels.`, { variant: 'success' });
+            
+            // Auto-hide progress after completion
+            setTimeout(() => {
+              setParsingProgress(prev => ({ ...prev, show: false }));
+            }, 3000);
+            
+          } catch (error) {
+            console.error('Error in onComplete callback:', error);
+            // Emergency fallback - still try to set the channels
+            console.log('Emergency fallback: Setting channels despite error');
+            setParsedChannels([...allChannels]);
+            setAvailableGroups(['Ungrouped']);
+            setSelectedChannels([]);
+            
+            setParsingProgress(prev => ({ 
+              ...prev,
+              stage: 'complete',
+              progress: 100,
+              message: `Loaded ${totalChannels} channels with minor issues`,
+              eta: null
+            }));
+            
+            enqueueSnackbar(`⚠️ Channels loaded but with some issues. ${totalChannels} channels available.`, { variant: 'warning' });
           }
-          
-          // Auto-hide progress after completion
-          setTimeout(() => {
-            setParsingProgress(prev => ({ ...prev, show: false }));
-          }, 3000);
         },
         
         onError: (error) => {
