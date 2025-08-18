@@ -5,7 +5,7 @@
     "environment": "development"
   },
   "database": {
-    "path": "/data/database/plextv.db"
+    "path": "./data/database/plextv.db"
   },
   "cache": {
     "host": "localhost",
@@ -128,7 +128,7 @@
     "level": "debug",
     "maxFiles": 14,
     "maxSize": "10m",
-    "path": "/data/logs"
+    "path": "./data/logs"
   },
   "security": {
     "sessionTimeout": 86400,

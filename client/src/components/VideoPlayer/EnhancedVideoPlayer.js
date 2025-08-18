@@ -657,7 +657,7 @@ const EnhancedVideoPlayer = ({
     }
   };
 
-  const retryConnection = () => {
+  const retryConnection = useCallback(() => {
     // Clear any existing error
     setError(null);
     // Ensure cleanup before retry
@@ -666,7 +666,51 @@ const EnhancedVideoPlayer = ({
     setTimeout(() => {
       initializePlayer();
     }, 200);
-  };
+  }, [cleanupPlayer, initializePlayer]);
+
+  // Keyboard navigation support
+  const handleKeyDown = useCallback((event) => {
+    if (!videoReady) return;
+    
+    // Don't interfere with text input
+    if (event.target.tagName === 'INPUT' || event.target.tagName === 'TEXTAREA') return;
+    
+    switch (event.key) {
+      case ' ':
+      case 'k':
+      case 'K':
+        event.preventDefault();
+        togglePlayPause();
+        trackUserActivity();
+        break;
+      case 'm':
+      case 'M':
+        event.preventDefault();
+        toggleMute();
+        trackUserActivity();
+        break;
+      case 'f':
+      case 'F':
+        event.preventDefault();
+        toggleFullscreen();
+        trackUserActivity();
+        break;
+      case 'r':
+      case 'R':
+        event.preventDefault();
+        retryConnection();
+        trackUserActivity();
+        break;
+      case 'Escape':
+        if (isFullscreen) {
+          event.preventDefault();
+          toggleFullscreen();
+        }
+        break;
+      default:
+        break;
+    }
+  }, [videoReady, togglePlayPause, toggleMute, toggleFullscreen, retryConnection, trackUserActivity, isFullscreen]);
 
   const copyStreamUrl = () => {
     navigator.clipboard.writeText(getStreamUrl());
@@ -705,6 +749,14 @@ const EnhancedVideoPlayer = ({
       cleanupPlayer();
     };
   }, [open, streamUrl]); // Remove the dependency on initializePlayer to prevent loops
+
+  // Keyboard event listener
+  useEffect(() => {
+    if (open) {
+      document.addEventListener('keydown', handleKeyDown);
+      return () => document.removeEventListener('keydown', handleKeyDown);
+    }
+  }, [open, handleKeyDown]);
 
   useEffect(() => {
     return handleVideoEvents();
@@ -748,14 +800,18 @@ const EnhancedVideoPlayer = ({
       maxWidth="lg"
       fullWidth
       fullScreen={isMobile || isFullscreen}
+      TransitionComponent={Slide}
+      TransitionProps={{ direction: 'up' }}
       sx={{
         '& .MuiDialog-paper': {
           bgcolor: 'black',
           minHeight: isMobile ? '100vh' : '600px',
         }
       }}
+      aria-labelledby="video-player-title"
+      aria-describedby="video-player-description"
     >
-      <DialogTitle sx={{ color: 'white', borderBottom: '1px solid #333', p: 2 }}>
+      <DialogTitle sx={{ color: 'white', borderBottom: '1px solid #333', p: 2 }} id="video-player-title">
         <Box display="flex" justifyContent="space-between" alignItems="center">
           <Typography variant="h6" component="div">
             Stream Preview: {streamName}
@@ -769,14 +825,28 @@ const EnhancedVideoPlayer = ({
                 variant="outlined"
               />
             )}
-            <IconButton onClick={handleClose} sx={{ color: 'white' }}>
-              <CloseIcon />
-            </IconButton>
+            <Tooltip title="Close Player (Esc)" arrow>
+              <IconButton 
+                onClick={handleClose} 
+                sx={{ color: 'white' }}
+                aria-label="Close video player"
+              >
+                <CloseIcon />
+              </IconButton>
+            </Tooltip>
           </Box>
         </Box>
       </DialogTitle>
 
-      <DialogContent sx={{ p: 0, bgcolor: 'black', position: 'relative' }} ref={playerContainerRef}>
+      <DialogContent 
+        sx={{ p: 0, bgcolor: 'black', position: 'relative' }} 
+        ref={playerContainerRef}
+        id="video-player-description"
+        onMouseMove={trackUserActivity}
+        tabIndex={-1}
+        role="application"
+        aria-label="Video player content area"
+      >
         {/* Enhanced Loading Indicator with Progress */}
         {loading && (
           <Fade in={loading} timeout={300}>
@@ -924,6 +994,8 @@ const EnhancedVideoPlayer = ({
               objectFit: 'contain',
               display: loading ? 'none' : 'block'
             }}
+            aria-label={`Video player for ${streamName}`}
+            role="application"
           />
 
           {/* Enhanced Video Controls Overlay with Auto-hide */}
@@ -955,7 +1027,7 @@ const EnhancedVideoPlayer = ({
                   }}
                 >
                   <Box display="flex" alignItems="center" gap={1}>
-                    <Tooltip title={isPlaying ? 'Pause' : 'Play'} arrow>
+                    <Tooltip title={`${isPlaying ? 'Pause' : 'Play'} (Space/K)`} arrow>
                       <IconButton 
                         onClick={togglePlayPause} 
                         sx={{ 
@@ -963,18 +1035,20 @@ const EnhancedVideoPlayer = ({
                           '&:hover': { bgcolor: 'rgba(255,255,255,0.1)' }
                         }}
                         size="large"
+                        aria-label={`${isPlaying ? 'Pause' : 'Play'} video`}
                       >
                         {isPlaying ? <PauseIcon /> : <PlayIcon />}
                       </IconButton>
                     </Tooltip>
                     
-                    <Tooltip title={isMuted ? 'Unmute' : 'Mute'} arrow>
+                    <Tooltip title={`${isMuted ? 'Unmute' : 'Mute'} (M)`} arrow>
                       <IconButton 
                         onClick={toggleMute} 
                         sx={{ 
                           color: 'white', 
                           '&:hover': { bgcolor: 'rgba(255,255,255,0.1)' }
                         }}
+                        aria-label={`${isMuted ? 'Unmute' : 'Mute'} audio`}
                       >
                         {isMuted ? <VolumeOffIcon /> : <VolumeUpIcon />}
                       </IconButton>
@@ -992,25 +1066,27 @@ const EnhancedVideoPlayer = ({
                   </Box>
 
                   <Box display="flex" alignItems="center" gap={1}>
-                    <Tooltip title="Refresh Stream" arrow>
+                    <Tooltip title="Refresh Stream (R)" arrow>
                       <IconButton 
                         onClick={retryConnection} 
                         sx={{ 
                           color: 'white', 
                           '&:hover': { bgcolor: 'rgba(255,255,255,0.1)' }
                         }}
+                        aria-label="Refresh stream"
                       >
                         <RefreshIcon />
                       </IconButton>
                     </Tooltip>
                     
-                    <Tooltip title={isFullscreen ? 'Exit Fullscreen' : 'Enter Fullscreen'} arrow>
+                    <Tooltip title={`${isFullscreen ? 'Exit Fullscreen' : 'Enter Fullscreen'} (F)`} arrow>
                       <IconButton 
                         onClick={toggleFullscreen} 
                         sx={{ 
                           color: 'white', 
                           '&:hover': { bgcolor: 'rgba(255,255,255,0.1)' }
                         }}
+                        aria-label={`${isFullscreen ? 'Exit fullscreen' : 'Enter fullscreen'} mode`}
                       >
                         {isFullscreen ? <FullscreenExitIcon /> : <FullscreenIcon />}
                       </IconButton>
@@ -1074,42 +1150,62 @@ const EnhancedVideoPlayer = ({
         flexDirection: 'column', 
         alignItems: 'stretch', 
         gap: 2,
-        p: 3
+        p: { xs: 2, sm: 3 },
+        maxHeight: isMobile ? '40vh' : 'auto',
+        overflowY: 'auto'
       }}>
-        {/* Player Options */}
-        <Box display="flex" justifyContent="center" gap={4} flexWrap="wrap">
+        {/* Player Options - Enhanced for Mobile */}
+        <Box 
+          display="flex" 
+          flexDirection={isMobile ? 'column' : 'row'} 
+          justifyContent="center" 
+          gap={isMobile ? 2 : 4} 
+          flexWrap="wrap"
+        >
           <FormControlLabel
             control={
               <Switch
                 checked={proxyEnabled}
                 onChange={(e) => setProxyEnabled(e.target.checked)}
                 color="primary"
+                inputProps={{ 'aria-describedby': 'proxy-help' }}
               />
             }
             label={
-              <Typography color="white">
-                Use PlexBridge Proxy (Recommended for CORS issues)
-              </Typography>
+              <Box>
+                <Typography color="white" variant={isMobile ? 'body2' : 'body1'}>
+                  Use PlexBridge Proxy
+                </Typography>
+                <Typography color="text.secondary" variant="caption" id="proxy-help">
+                  Recommended for CORS issues
+                </Typography>
+              </Box>
             }
           />
           
-          {proxyEnabled && (
+          <Fade in={proxyEnabled} timeout={300}>
             <FormControlLabel
-              sx={{ ml: 2 }}
+              sx={{ ml: isMobile ? 0 : 2 }}
               control={
                 <Switch
                   checked={useTranscoding}
                   onChange={(e) => setUseTranscoding(e.target.checked)}
                   color="secondary"
+                  inputProps={{ 'aria-describedby': 'transcode-help' }}
                 />
               }
               label={
-                <Typography color="white" variant="body2">
-                  Enable Video Transcoding (For TS/MPEG-TS streams)
-                </Typography>
+                <Box>
+                  <Typography color="white" variant={isMobile ? 'body2' : 'body1'}>
+                    Video Transcoding
+                  </Typography>
+                  <Typography color="text.secondary" variant="caption" id="transcode-help">
+                    For TS/MPEG-TS streams
+                  </Typography>
+                </Box>
               }
             />
-          )}
+          </Fade>
           
           <FormControlLabel
             control={
@@ -1117,62 +1213,119 @@ const EnhancedVideoPlayer = ({
                 checked={useVideoJS}
                 onChange={(e) => setUseVideoJS(e.target.checked)}
                 color="secondary"
+                inputProps={{ 'aria-describedby': 'videojs-help' }}
               />
             }
             label={
-              <Typography color="white">
-                Use Video.js Player (Better for streaming formats)
-              </Typography>
+              <Box>
+                <Typography color="white" variant={isMobile ? 'body2' : 'body1'}>
+                  Video.js Player
+                </Typography>
+                <Typography color="text.secondary" variant="caption" id="videojs-help">
+                  Better for streaming formats
+                </Typography>
+              </Box>
             }
           />
         </Box>
 
         <Divider sx={{ bgcolor: '#333' }} />
 
-        {/* CORS Warning */}
+        {/* Enhanced Help and Tips */}
         <Alert 
-          severity="warning" 
-          sx={{ bgcolor: 'rgba(255,193,7,0.1)', color: 'white' }}
+          severity="info" 
+          sx={{ 
+            bgcolor: 'rgba(33, 150, 243, 0.1)', 
+            color: 'white',
+            '& .MuiAlert-icon': { color: 'info.main' }
+          }}
           icon={<WarningIcon />}
         >
-          <Typography variant="body2">
-            <strong>Browser Limitations:</strong> Some streams may not play due to CORS restrictions. 
-            Use proxy mode or external players for best compatibility.
+          <Typography variant="body2" gutterBottom>
+            <strong>Keyboard Controls:</strong> Space/K (play/pause), M (mute), F (fullscreen), R (refresh), Esc (exit fullscreen)
+          </Typography>
+          <Typography variant="caption" color="text.secondary">
+            Browser Limitations: Some streams may not play due to CORS restrictions. Use proxy mode or external players for best compatibility.
           </Typography>
         </Alert>
 
-        {/* External Player Options */}
-        <Box display="flex" gap={2} justifyContent="center" flexWrap="wrap">
-          <Button
-            variant="outlined"
-            onClick={() => openInExternalPlayer('vlc')}
-            sx={{ color: 'white', borderColor: 'white' }}
-            startIcon={<OpenInNewIcon />}
+        {/* External Player Options - Enhanced for Mobile */}
+        <Box 
+          display="flex" 
+          gap={isMobile ? 1 : 2} 
+          justifyContent="center" 
+          flexWrap="wrap"
+          flexDirection={isMobile ? 'column' : 'row'}
+        >
+          <Box 
+            display="flex" 
+            gap={1} 
+            justifyContent="center" 
+            flexWrap="wrap"
+            flex={1}
           >
-            Open in VLC
-          </Button>
-          
-          <Button
-            variant="outlined"
-            onClick={() => openInExternalPlayer('mpc')}
-            sx={{ color: 'white', borderColor: 'white' }}
-            startIcon={<OpenInNewIcon />}
-          >
-            Open in MPC-HC
-          </Button>
-          
-          <Button
-            variant="outlined"
-            onClick={copyStreamUrl}
-            sx={{ color: 'white', borderColor: 'white' }}
-            startIcon={<CopyIcon />}
-          >
-            Copy for External Player
-          </Button>
+            <Tooltip title="Open stream in VLC Media Player" arrow>
+              <Button
+                variant="outlined"
+                onClick={() => openInExternalPlayer('vlc')}
+                sx={{ 
+                  color: 'white', 
+                  borderColor: 'white', 
+                  minWidth: isMobile ? '100px' : 'auto',
+                  '&:hover': { bgcolor: 'rgba(255,255,255,0.1)' }
+                }}
+                startIcon={<OpenInNewIcon />}
+                size={isMobile ? 'small' : 'medium'}
+              >
+                VLC
+              </Button>
+            </Tooltip>
+            
+            <Tooltip title="Open stream in MPC-HC Media Player" arrow>
+              <Button
+                variant="outlined"
+                onClick={() => openInExternalPlayer('mpc')}
+                sx={{ 
+                  color: 'white', 
+                  borderColor: 'white', 
+                  minWidth: isMobile ? '100px' : 'auto',
+                  '&:hover': { bgcolor: 'rgba(255,255,255,0.1)' }
+                }}
+                startIcon={<OpenInNewIcon />}
+                size={isMobile ? 'small' : 'medium'}
+              >
+                MPC-HC
+              </Button>
+            </Tooltip>
+            
+            <Tooltip title="Copy stream URL to clipboard for external players" arrow>
+              <Button
+                variant="outlined"
+                onClick={copyStreamUrl}
+                sx={{ 
+                  color: 'white', 
+                  borderColor: 'white', 
+                  minWidth: isMobile ? '100px' : 'auto',
+                  '&:hover': { bgcolor: 'rgba(255,255,255,0.1)' }
+                }}
+                startIcon={<CopyIcon />}
+                size={isMobile ? 'small' : 'medium'}
+              >
+                Copy URL
+              </Button>
+            </Tooltip>
+          </Box>
           
           <Button 
             onClick={handleClose} 
-            sx={{ color: 'white' }}
+            variant="contained"
+            sx={{ 
+              bgcolor: 'rgba(255,255,255,0.1)', 
+              color: 'white',
+              minWidth: isMobile ? '100px' : 'auto',
+              '&:hover': { bgcolor: 'rgba(255,255,255,0.2)' }
+            }}
+            size={isMobile ? 'small' : 'medium'}
           >
             Close
           </Button>

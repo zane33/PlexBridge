@@ -46,12 +46,15 @@ const limiter = rateLimit({
 });
 app.use('/api', limiter);
 
-// CORS configuration
+// CORS configuration - Enhanced for streaming
 app.use(cors({
   origin: process.env.NODE_ENV === 'production' 
     ? [process.env.ALLOWED_ORIGINS?.split(',') || []]
-    : ['http://localhost:3000'],
-  credentials: true
+    : ['http://localhost:3000', 'http://localhost:8080'],
+  credentials: true,
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization', 'Range', 'Accept', 'User-Agent'],
+  exposedHeaders: ['Content-Range', 'Accept-Ranges', 'Content-Length']
 }));
 
 // General middleware

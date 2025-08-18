@@ -546,10 +546,14 @@ class StreamManager {
         errors: 0
       });
 
-      // Set response headers
+      // Set enhanced response headers for streaming
       res.setHeader('Content-Type', 'video/mp2t');
       res.setHeader('Access-Control-Allow-Origin', '*');
-      res.setHeader('Cache-Control', 'no-cache');
+      res.setHeader('Access-Control-Allow-Methods', 'GET, HEAD, OPTIONS');
+      res.setHeader('Access-Control-Allow-Headers', 'Range, Accept, User-Agent, Authorization');
+      res.setHeader('Access-Control-Expose-Headers', 'Content-Range, Accept-Ranges, Content-Length');
+      res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
+      res.setHeader('Accept-Ranges', 'bytes');
 
       // Pipe stream to response
       streamProcess.stdout.pipe(res);

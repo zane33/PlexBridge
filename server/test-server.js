@@ -20,16 +20,40 @@ app.use(express.urlencoded({ extended: true }));
 
 // Include routes
 const streamsRouter = require('./routes/streams');
-const apiRouter = require('./routes/api');
+// Note: We'll define our own API endpoints for testing instead of using apiRouter
 app.use('/streams', streamsRouter);
-app.use('/api', apiRouter);
 
 const M3UParser = require('./services/m3uParser');
 
 // Real-time data tracking
 const activeStreams = new Map(); // Track active streaming sessions
 const streamSessions = [];
-let channelData = [];
+let channelData = [
+  {
+    id: 'ch_001',
+    name: 'Test Channel 1',
+    number: 101,
+    enabled: true,
+    logo: null,
+    epg_id: null
+  },
+  {
+    id: 'ch_002', 
+    name: 'Test Channel 2',
+    number: 102,
+    enabled: true,
+    logo: null,
+    epg_id: null
+  },
+  {
+    id: 'ch_003',
+    name: 'Test Channel 3', 
+    number: 103,
+    enabled: true,
+    logo: null,
+    epg_id: null
+  }
+];
 let streamData = [];
 
 // Function to get real metrics
@@ -108,7 +132,25 @@ app.delete('/api/channels/:id', (req, res) => {
 
 // Stream Manager API endpoints
 app.post('/api/streams', (req, res) => {
-  res.json({ success: true, message: 'Stream created (mock)' });
+  console.log('Creating new stream:', req.body);
+  
+  // Create a new stream object
+  const newStream = {
+    id: `stream_${Date.now()}`,
+    channel_id: req.body.channel_id,
+    name: req.body.name,
+    url: req.body.url,
+    type: req.body.type || 'hls',
+    enabled: req.body.enabled !== false,
+    created_at: new Date().toISOString(),
+    updated_at: new Date().toISOString()
+  };
+  
+  // Add to streams array
+  streamData.push(newStream);
+  
+  console.log(`Stream created: ${newStream.name} (ID: ${newStream.id})`);
+  res.json({ success: true, message: 'Stream created', stream: newStream });
 });
 
 app.post('/api/streams/import', async (req, res) => {

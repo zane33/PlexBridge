@@ -756,27 +756,63 @@ function StreamManager() {
     });
   };
 
-  const handleTestStream = (stream) => {
-    setCurrentStream({
+  const handleTestStream = useCallback((stream) => {
+    // Enhanced feedback for stream testing
+    const streamData = {
       url: stream.url || stream,
       name: stream.name || 'Test Stream',
       type: stream.type || 'hls',
       channelId: stream.channel_id || stream.id,
       streamId: stream.id,
       id: stream.id
-    });
+    };
+    
+    setCurrentStream(streamData);
     setEnhancedPlayerOpen(true);
-  };
+    
+    // Provide user feedback
+    enqueueSnackbar(
+      `Opening ${streamData.name} in enhanced player...`, 
+      { 
+        variant: 'info',
+        autoHideDuration: 2000,
+        anchorOrigin: { vertical: 'bottom', horizontal: 'right' }
+      }
+    );
+  }, [enqueueSnackbar]);
 
   const handleCloseEnhancedPlayer = () => {
     setEnhancedPlayerOpen(false);
     setCurrentStream(null);
   };
 
-  const handlePlayerError = (error) => {
+  const handlePlayerError = useCallback((error) => {
     console.error('Enhanced player error:', error);
-    enqueueSnackbar(`Player error: ${error.message}`, { variant: 'error' });
-  };
+    
+    // Enhanced error messaging with recovery suggestions
+    let errorMessage = `Player error: ${error.message}`;
+    let suggestions = [];
+    
+    if (error.message.includes('CORS')) {
+      suggestions.push('Try enabling proxy mode in player settings');
+    }
+    if (error.message.includes('Network')) {
+      suggestions.push('Check your internet connection');
+    }
+    if (error.message.includes('format')) {
+      suggestions.push('Try using an external player like VLC');
+    }
+    
+    if (suggestions.length > 0) {
+      errorMessage += `. Suggestions: ${suggestions.join(', ')}`;
+    }
+    
+    enqueueSnackbar(errorMessage, { 
+      variant: 'error',
+      persist: true,
+      anchorOrigin: { vertical: 'top', horizontal: 'center' }
+    });
+  }, [enqueueSnackbar]);
 
 
   const renderSkeletonTable = () => (
@@ -996,12 +1032,20 @@ function StreamManager() {
                                 <EditIcon />
                               </IconButton>
                             </Tooltip>
-                            <Tooltip title="Test Stream in Enhanced Player">
+                            <Tooltip title="Preview Stream in Player" arrow>
                               <IconButton
                                 onClick={() => handleTestStream(stream)}
                                 size="small"
                                 color="info"
                                 data-testid="preview-stream-button"
+                                sx={{
+                                  transition: 'all 0.2s ease-in-out',
+                                  '&:hover': {
+                                    transform: 'scale(1.1)',
+                                    bgcolor: 'info.main',
+                                    color: 'white'
+                                  }
+                                }}
                               >
                                 <PreviewIcon />
                               </IconButton>
@@ -1195,22 +1239,32 @@ function StreamManager() {
                     ))}
                   </Select>
                 </FormControl>
-                <Button
-                  variant="outlined"
-                  onClick={() => formData.url.trim() && handleTestStream({
-                    url: formData.url,
-                    name: formData.name || 'Test Stream',
-                    type: formData.type,
-                    channel_id: formData.channel_id,
-                    id: 'test_stream' // For preview purposes
-                  })}
-                  disabled={saving || !formData.url.trim()}
-                  sx={{ minWidth: 120 }}
-                  data-testid="test-stream-button"
-                >
-                  <PreviewIcon sx={{ mr: 1 }} />
-                  Test in Player
-                </Button>
+                <Tooltip title="Preview stream before saving" arrow>
+                  <Button
+                    variant="outlined"
+                    onClick={() => formData.url.trim() && handleTestStream({
+                      url: formData.url,
+                      name: formData.name || 'Test Stream',
+                      type: formData.type,
+                      channel_id: formData.channel_id,
+                      id: 'test_stream' // For preview purposes
+                    })}
+                    disabled={saving || !formData.url.trim()}
+                    sx={{ 
+                      minWidth: 120,
+                      transition: 'all 0.2s ease-in-out',
+                      '&:hover': {
+                        transform: 'translateY(-2px)',
+                        boxShadow: 2
+                      }
+                    }}
+                    data-testid="test-stream-button"
+                    color="info"
+                  >
+                    <PreviewIcon sx={{ mr: 1 }} />
+                    {isMobile ? 'Test' : 'Test in Player'}
+                  </Button>
+                </Tooltip>
               </Box>
             </Grid>
             
@@ -1703,13 +1757,25 @@ function StreamManager() {
                     }
                   }}
                   onPreview={(channel) => {
-                    setCurrentStream({
+                    const streamData = {
                       url: channel.url,
                       name: channel.name,
-                      type: channel.type,
-                      id: channel.id
-                    });
+                      type: channel.type || 'hls',
+                      id: channel.id,
+                      channelId: channel.id
+                    };
+                    
+                    setCurrentStream(streamData);
                     setEnhancedPlayerOpen(true);
+                    
+                    // Provide feedback for M3U preview
+                    enqueueSnackbar(
+                      `Previewing ${channel.name}...`, 
+                      { 
+                        variant: 'info',
+                        autoHideDuration: 2000
+                      }
+                    );
                   }}
                   maxHeight={isMobile ? 300 : 400}
                   searchQuery={searchQuery}
@@ -1747,14 +1813,14 @@ function StreamManager() {
         </DialogActions>
       </Dialog>
 
-      {/* Video Player - Enhanced or Simple */}
+      {/* Enhanced Video Player with Improved Error Handling */}
       {useEnhancedPlayer ? (
         <EnhancedVideoPlayer
           open={enhancedPlayerOpen}
           onClose={handleCloseEnhancedPlayer}
           streamUrl={currentStream?.url}
-          streamName={currentStream?.name}
-          streamType={currentStream?.type}
+          streamName={currentStream?.name || 'Unknown Stream'}
+          streamType={currentStream?.type || 'hls'}
           channelId={currentStream?.channelId}
           streamId={currentStream?.streamId}
           useProxy={true}
@@ -1765,8 +1831,8 @@ function StreamManager() {
           open={enhancedPlayerOpen}
           onClose={handleCloseEnhancedPlayer}
           streamUrl={currentStream?.url}
-          streamName={currentStream?.name}
-          streamType={currentStream?.type}
+          streamName={currentStream?.name || 'Unknown Stream'}
+          streamType={currentStream?.type || 'hls'}
           channelId={currentStream?.channelId}
           streamId={currentStream?.streamId}
           useProxy={true}
