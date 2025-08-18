@@ -16,10 +16,9 @@ class SettingsService {
    */
   async getSettings() {
     try {
-      // Check if we have a valid cache
-      if (this.hasValidCache()) {
-        return this.cache.get('settings');
-      }
+      // Force reload from database - disable cache for debugging
+      logger.info('Settings getSettings called - forcing database reload');
+      this.clearCache();
 
       // Prevent multiple concurrent loads
       if (this.loadPromise) {
@@ -54,6 +53,10 @@ class SettingsService {
 
       // Get all settings from database
       const dbSettings = await database.all('SELECT * FROM settings ORDER BY key');
+      logger.info('Raw database settings loaded', { 
+        count: dbSettings?.length || 0,
+        maxConcurrentSetting: dbSettings?.find(s => s.key === 'plexlive.streaming.maxConcurrentStreams')
+      });
       
       // Convert flat database rows to nested object
       const settingsObj = {};
@@ -79,24 +82,58 @@ class SettingsService {
         });
       }
 
-      // Merge database settings with config defaults
-      const configDefaults = { plexlive: config.plexlive || this.getDefaultSettings() };
-      const mergedSettings = this.deepMerge(configDefaults, settingsObj);
-
-      // Ensure we have the plexlive structure
-      if (!mergedSettings.plexlive) {
-        mergedSettings.plexlive = config.plexlive || this.getDefaultSettings();
+      // Start with config defaults as base
+      const configDefaults = config.plexlive || this.getDefaultSettings();
+      
+      // Apply database settings directly to override defaults
+      // First apply nested structure, then ensure flat structure takes precedence
+      const nestedSettings = this.deepMerge(configDefaults, settingsObj.plexlive || {});
+      
+      // Create flat settings from database that override everything
+      const flatSettings = {};
+      if (Array.isArray(dbSettings)) {
+        dbSettings.forEach(setting => {
+          let value = setting.value;
+          
+          try {
+            if (setting.type === 'number') {
+              value = parseFloat(value);
+            } else if (setting.type === 'boolean') {
+              value = value === 'true';
+            } else if (setting.type === 'json') {
+              value = JSON.parse(value);
+            }
+          } catch (parseError) {
+            logger.warn(`Failed to parse setting ${setting.key}:`, parseError);
+            value = setting.value;
+          }
+          
+          flatSettings[setting.key] = value;
+          
+          // Also update the nested structure to ensure consistency
+          if (setting.key.startsWith('plexlive.')) {
+            const nestedKey = setting.key.replace('plexlive.', '');
+            this.setNestedValue(nestedSettings, nestedKey, value);
+          }
+        });
       }
+      
+      // Return combined nested and flat structure, with flat taking precedence
+      const finalSettings = Object.assign({}, nestedSettings, flatSettings);
 
-      // Update cache
-      this.updateCache(mergedSettings);
+      // Update cache with flat settings
+      this.updateCache(finalSettings);
       
       logger.info('Settings loaded successfully from database', { 
         dbSettingsCount: dbSettings.length,
-        maxConcurrentStreams: mergedSettings.plexlive?.streaming?.maxConcurrentStreams
+        maxConcurrentStreams: finalSettings['plexlive.streaming.maxConcurrentStreams'],
+        nestedMaxConcurrent: finalSettings.streaming?.maxConcurrentStreams,
+        flatSettingsKeys: Object.keys(flatSettings).slice(0, 5),
+        configDefault: configDefaults.streaming?.maxConcurrentStreams,
+        dbValue: dbSettings.find(s => s.key === 'plexlive.streaming.maxConcurrentStreams')?.value
       });
 
-      return mergedSettings;
+      return finalSettings;
     } catch (error) {
       logger.error('Failed to load settings from database:', error);
       
@@ -480,6 +517,45 @@ class SettingsService {
       }
     } catch (error) {
       logger.warn('Failed to emit settings update via Socket.IO:', error);
+    }
+  }
+
+  /**
+   * Load settings (alias for getSettings for compatibility)
+   */
+  async loadSettings() {
+    return await this.getSettings();
+  }
+
+  /**
+   * Apply settings to config object
+   */
+  applyToConfig(configObj) {
+    try {
+      const settings = this.cache.get('settings');
+      if (!settings) {
+        logger.warn('No settings in cache to apply to config');
+        return configObj;
+      }
+
+      // Create a deep copy of the config to avoid mutations
+      const updatedConfig = JSON.parse(JSON.stringify(configObj));
+
+      // Apply flat settings to nested config structure
+      for (const [key, value] of Object.entries(settings)) {
+        if (key.startsWith('plexlive.')) {
+          this.setNestedValue(updatedConfig, key.replace('plexlive.', ''), value);
+        }
+      }
+
+      logger.info('Applied settings to config:', {
+        maxConcurrentStreams: updatedConfig.streaming?.maxConcurrentStreams
+      });
+
+      return updatedConfig;
+    } catch (error) {
+      logger.error('Failed to apply settings to config:', error);
+      return configObj;
     }
   }
 }

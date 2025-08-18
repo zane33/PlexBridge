@@ -4,25 +4,26 @@ FROM node:18-alpine
 # Set working directory
 WORKDIR /app
 
-# Install system dependencies including FFmpeg, Redis, and streaming tools
-RUN apk add --no-cache \
-    ffmpeg \
-    gstreamer \
-    gst-plugins-base \
-    gst-plugins-good \
-    gst-plugins-bad \
-    gst-plugins-ugly \
-    gst-libav \
-    rtmpdump \
-    stunnel \
-    socat \
+# Update package index and install essential system dependencies
+RUN apk update && apk upgrade && \
+    apk add --no-cache \
+    # Core utilities
     curl \
     bash \
     tini \
+    sqlite \
+    # Media processing (essential)
+    ffmpeg \
+    # Network tools
+    rtmpdump \
+    stunnel \
+    socat \
+    # Process management
     redis \
     supervisor \
-    sqlite \
-    && rm -rf /var/cache/apk/*
+    # Clean up
+    && rm -rf /var/cache/apk/* \
+    && rm -rf /tmp/*
 
 # Create non-root user
 RUN addgroup -g 1001 -S plextv && \

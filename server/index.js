@@ -226,11 +226,17 @@ const initializeApp = async () => {
 
     // Load and apply settings from database
     try {
-      await settingsService.loadSettings();
-      const updatedConfig = settingsService.applyToConfig(config);
+      const settings = await settingsService.getSettings();
+      logger.info('Settings loaded on startup:', { 
+        maxConcurrentStreams: settings['plexlive.streaming.maxConcurrentStreams']
+      });
       
-      // Update the config object in place
-      Object.assign(config, updatedConfig);
+      // Apply settings to runtime config if applyToConfig method exists
+      if (typeof settingsService.applyToConfig === 'function') {
+        const updatedConfig = settingsService.applyToConfig(config);
+        Object.assign(config, updatedConfig);
+        logger.info('Settings applied to config');
+      }
       
       logger.info('Settings loaded and applied successfully');
     } catch (settingsError) {
