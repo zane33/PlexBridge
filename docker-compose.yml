@@ -33,8 +33,12 @@ services:
       - "8080:8080"
       - "1900:1900/udp"
     volumes:
-      - ./data:/data
+      # Use named volume for data persistence with fallback to bind mount
+      - plextv_data:/data
+      # Config as read-only bind mount for easy editing
       - ./config:/app/config:ro
+      # Additional bind mount for easy access to data (optional)
+      - ./data:/host-data
     environment:
       # Application environment
       - NODE_ENV=production
@@ -71,3 +75,12 @@ services:
       timeout: 10s
       retries: 3
       start_period: 40s
+
+# Named volumes for persistent data storage
+volumes:
+  plextv_data:
+    driver: local
+    driver_opts:
+      type: none
+      o: bind
+      device: ./data

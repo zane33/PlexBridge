@@ -17,6 +17,13 @@ import {
   Divider,
   useTheme,
   useMediaQuery,
+  Skeleton,
+  LinearProgress,
+  Fade,
+  Slide,
+  Zoom,
+  Backdrop,
+  Snackbar,
 } from '@mui/material';
 import {
   Close as CloseIcon,
@@ -49,6 +56,8 @@ const EnhancedVideoPlayer = ({
   onError
 }) => {
   const [loading, setLoading] = useState(false);
+  const [loadingStage, setLoadingStage] = useState('');
+  const [loadingProgress, setLoadingProgress] = useState(0);
   const [error, setError] = useState(null);
   const [playerInstance, setPlayerInstance] = useState(null);
   const [videoReady, setVideoReady] = useState(false);
@@ -58,6 +67,11 @@ const EnhancedVideoPlayer = ({
   const [proxyEnabled, setProxyEnabled] = useState(useProxy);
   const [streamInfo, setStreamInfo] = useState(null);
   const [useVideoJS, setUseVideoJS] = useState(false);
+  const [useTranscoding, setUseTranscoding] = useState(false);
+  const [showControls, setShowControls] = useState(true);
+  const [lastUserActivity, setLastUserActivity] = useState(Date.now());
+  const [retryCount, setRetryCount] = useState(0);
+  const [connectionQuality, setConnectionQuality] = useState('unknown');
   
   const videoRef = useRef(null);
   const playerContainerRef = useRef(null);
@@ -82,8 +96,16 @@ const EnhancedVideoPlayer = ({
     
     if (proxyEnabled && streamId) {
       // Use the backend stream preview endpoint to avoid CORS issues  
-      const proxyUrl = `${window.location.origin}/streams/preview/${streamId}`;
-      console.log(`Using proxy URL for stream ${streamId}: ${proxyUrl}`);
+      let proxyUrl = `${window.location.origin}/streams/preview/${streamId}`;
+      
+      // Add transcoding parameter if enabled
+      if (useTranscoding) {
+        proxyUrl += '?transcode=true';
+        console.log(`Using transcoded proxy URL for stream ${streamId}: ${proxyUrl}`);
+      } else {
+        console.log(`Using proxy URL for stream ${streamId}: ${proxyUrl}`);
+      }
+      
       return proxyUrl;
     } else if (proxyEnabled && channelId) {
       // Use the channel stream endpoint for channel-based playback
@@ -94,7 +116,7 @@ const EnhancedVideoPlayer = ({
     
     console.log(`Using direct stream URL: ${streamUrl}`);
     return streamUrl;
-  }, [streamUrl, proxyEnabled, channelId, streamId]);
+  }, [streamUrl, proxyEnabled, channelId, streamId, useTranscoding]);
 
   // Detect stream format and capabilities
   const detectStreamCapabilities = useCallback((url) => {
@@ -200,7 +222,26 @@ const EnhancedVideoPlayer = ({
     }, 100);
   }, [playerInstance]);
 
-  // Initialize video player
+  // Enhanced user activity tracking for auto-hiding controls
+  const trackUserActivity = useCallback(() => {
+    setLastUserActivity(Date.now());
+    setShowControls(true);
+  }, []);
+
+  // Auto-hide controls after inactivity
+  useEffect(() => {
+    if (!videoReady) return;
+    
+    const hideTimer = setInterval(() => {
+      if (Date.now() - lastUserActivity > 3000 && isPlaying) {
+        setShowControls(false);
+      }
+    }, 1000);
+    
+    return () => clearInterval(hideTimer);
+  }, [lastUserActivity, isPlaying, videoReady]);
+
+  // Initialize video player with enhanced progress tracking
   const initializePlayer = useCallback(async () => {
     if (!open || !streamUrl || isCleaningUp.current) return;
     
@@ -220,7 +261,10 @@ const EnhancedVideoPlayer = ({
     }
 
     setLoading(true);
+    setLoadingStage('Initializing player...');
+    setLoadingProgress(10);
     setError(null);
+    setRetryCount(prev => prev + 1);
     
     // Clean up any existing player first
     cleanupPlayer();
@@ -244,10 +288,16 @@ const EnhancedVideoPlayer = ({
     }
 
     try {
+      setLoadingStage('Analyzing stream format...');
+      setLoadingProgress(25);
+      
       const currentUrl = getStreamUrl();
       const capabilities = detectStreamCapabilities(currentUrl);
       setStreamInfo(capabilities);
       setUseVideoJS(capabilities.useVideoJS);
+
+      setLoadingStage(capabilities.useVideoJS ? 'Loading Video.js player...' : 'Loading native player...');
+      setLoadingProgress(50);
 
       // Use Video.js for complex streams (HLS, DASH, RTSP, etc.)
       if (capabilities.useVideoJS || useVideoJS) {
@@ -256,6 +306,9 @@ const EnhancedVideoPlayer = ({
         // Use native HTML5 video for simple formats
         initializeNativePlayer(currentUrl, capabilities);
       }
+
+      setLoadingProgress(100);
+      setLoadingStage('Stream ready!');
 
     } catch (error) {
       console.error('Player initialization error:', error);
@@ -680,7 +733,7 @@ const EnhancedVideoPlayer = ({
       
       return () => clearTimeout(timeoutId);
     }
-  }, [proxyEnabled, useVideoJS]);
+  }, [proxyEnabled, useVideoJS, useTranscoding]);
 
   const handleClose = () => {
     cleanupPlayer();
@@ -724,52 +777,136 @@ const EnhancedVideoPlayer = ({
       </DialogTitle>
 
       <DialogContent sx={{ p: 0, bgcolor: 'black', position: 'relative' }} ref={playerContainerRef}>
-        {/* Loading Indicator */}
+        {/* Enhanced Loading Indicator with Progress */}
         {loading && (
-          <Box 
-            display="flex" 
-            flexDirection="column" 
-            alignItems="center" 
-            justifyContent="center" 
-            height="400px"
-            color="white"
-          >
-            <CircularProgress color="primary" size={60} sx={{ mb: 2 }} />
-            <Typography variant="h6">Loading stream...</Typography>
-            <Typography variant="body2" color="text.secondary">
-              {proxyEnabled ? 'Using PlexBridge proxy' : 'Direct connection'}
-            </Typography>
-          </Box>
-        )}
-
-        {/* Error Display */}
-        {error && (
-          <Box p={3}>
-            <Alert 
-              severity="error" 
-              sx={{ mb: 2, bgcolor: 'rgba(244, 67, 54, 0.1)', color: 'white' }}
-              icon={<ErrorIcon />}
-              action={
-                error.canRecover && (
-                  <Button color="inherit" size="small" onClick={retryConnection}>
-                    Retry
-                  </Button>
-                )
-              }
+          <Fade in={loading} timeout={300}>
+            <Box 
+              display="flex" 
+              flexDirection="column" 
+              alignItems="center" 
+              justifyContent="center" 
+              height="400px"
+              color="white"
+              sx={{ p: 4 }}
             >
-              <Typography variant="subtitle1" fontWeight="bold">
-                Playback Error
+              <Box position="relative" display="inline-flex" mb={3}>
+                <CircularProgress 
+                  variant="determinate" 
+                  value={loadingProgress} 
+                  size={80} 
+                  thickness={4}
+                  sx={{ color: 'primary.main' }}
+                />
+                <Box
+                  position="absolute"
+                  top={0}
+                  left={0}
+                  bottom={0}
+                  right={0}
+                  display="flex"
+                  alignItems="center"
+                  justifyContent="center"
+                >
+                  <Typography variant="h6" component="div" color="white">
+                    {`${Math.round(loadingProgress)}%`}
+                  </Typography>
+                </Box>
+              </Box>
+              
+              <Typography variant="h6" gutterBottom>
+                {loadingStage || 'Loading stream...'}
               </Typography>
-              <Typography variant="body2">
-                {error.message}
+              
+              <Typography variant="body2" color="text.secondary" textAlign="center">
+                {proxyEnabled ? 'Using PlexBridge proxy for optimal compatibility' : 'Connecting directly to stream source'}
               </Typography>
-              {!proxyEnabled && (
-                <Typography variant="body2" sx={{ mt: 1 }}>
-                  Try enabling proxy mode below to avoid CORS issues.
+              
+              {retryCount > 1 && (
+                <Typography variant="caption" color="warning.main" sx={{ mt: 1 }}>
+                  Retry attempt {retryCount - 1}
                 </Typography>
               )}
-            </Alert>
-          </Box>
+              
+              <LinearProgress 
+                variant="determinate" 
+                value={loadingProgress} 
+                sx={{ 
+                  width: '100%', 
+                  mt: 2, 
+                  height: 6, 
+                  borderRadius: 3,
+                  bgcolor: 'rgba(255,255,255,0.1)'
+                }} 
+              />
+            </Box>
+          </Fade>
+        )}
+
+        {/* Enhanced Error Display with Recovery Suggestions */}
+        {error && (
+          <Fade in={!!error} timeout={300}>
+            <Box p={3}>
+              <Alert 
+                severity="error" 
+                sx={{ 
+                  mb: 2, 
+                  bgcolor: 'rgba(244, 67, 54, 0.1)', 
+                  color: 'white',
+                  '& .MuiAlert-icon': { color: 'error.main' }
+                }}
+                icon={<ErrorIcon />}
+                action={
+                  error.canRecover && (
+                    <Box display="flex" gap={1}>
+                      <Button 
+                        color="inherit" 
+                        size="small" 
+                        onClick={retryConnection}
+                        startIcon={<RefreshIcon />}
+                      >
+                        Retry
+                      </Button>
+                      {!proxyEnabled && (
+                        <Button 
+                          color="inherit" 
+                          size="small" 
+                          onClick={() => setProxyEnabled(true)}
+                          variant="outlined"
+                        >
+                          Try Proxy
+                        </Button>
+                      )}
+                    </Box>
+                  )
+                }
+              >
+                <Typography variant="subtitle1" fontWeight="bold">
+                  {retryCount > 3 ? 'Persistent Connection Issue' : 'Stream Playback Error'}
+                </Typography>
+                <Typography variant="body2">
+                  {error.message}
+                </Typography>
+                
+                {error.suggestedAction && (
+                  <Typography variant="body2" sx={{ mt: 1, fontWeight: 'medium' }}>
+                    💡 Suggestion: {error.suggestedAction}
+                  </Typography>
+                )}
+                
+                {error.technicalDetails && (
+                  <Typography variant="caption" sx={{ mt: 1, display: 'block', opacity: 0.8 }}>
+                    Technical details: {error.technicalDetails}
+                  </Typography>
+                )}
+                
+                {retryCount > 3 && (
+                  <Typography variant="body2" sx={{ mt: 1, color: 'warning.main' }}>
+                    ⚠️ Multiple retry attempts failed. Consider using an external player or checking the stream source.
+                  </Typography>
+                )}
+              </Alert>
+            </Box>
+          </Fade>
         )}
 
         {/* Video Player */}
@@ -789,41 +926,99 @@ const EnhancedVideoPlayer = ({
             }}
           />
 
-          {/* Video Controls Overlay */}
+          {/* Enhanced Video Controls Overlay with Auto-hide */}
           {videoReady && !loading && (
-            <Box
-              sx={{
-                position: 'absolute',
-                bottom: 16,
-                left: 16,
-                right: 16,
-                display: 'flex',
-                justifyContent: 'space-between',
-                alignItems: 'center',
-                bgcolor: 'rgba(0,0,0,0.7)',
-                borderRadius: 1,
-                p: 1,
-                backdropFilter: 'blur(5px)'
-              }}
-            >
-              <Box display="flex" alignItems="center" gap={1}>
-                <IconButton onClick={togglePlayPause} sx={{ color: 'white' }}>
-                  {isPlaying ? <PauseIcon /> : <PlayIcon />}
-                </IconButton>
-                <IconButton onClick={toggleMute} sx={{ color: 'white' }}>
-                  {isMuted ? <VolumeOffIcon /> : <VolumeUpIcon />}
-                </IconButton>
-              </Box>
+            <Fade in={showControls} timeout={300}>
+              <Box
+                onMouseMove={trackUserActivity}
+                onMouseEnter={trackUserActivity}
+                sx={{
+                  position: 'absolute',
+                  bottom: 0,
+                  left: 0,
+                  right: 0,
+                  background: 'linear-gradient(transparent, rgba(0,0,0,0.8))',
+                  p: 2,
+                  pt: 4
+                }}
+              >
+                <Box
+                  sx={{
+                    display: 'flex',
+                    justifyContent: 'space-between',
+                    alignItems: 'center',
+                    bgcolor: 'rgba(0,0,0,0.6)',
+                    borderRadius: 2,
+                    p: 1,
+                    backdropFilter: 'blur(10px)',
+                    border: '1px solid rgba(255,255,255,0.1)'
+                  }}
+                >
+                  <Box display="flex" alignItems="center" gap={1}>
+                    <Tooltip title={isPlaying ? 'Pause' : 'Play'} arrow>
+                      <IconButton 
+                        onClick={togglePlayPause} 
+                        sx={{ 
+                          color: 'white', 
+                          '&:hover': { bgcolor: 'rgba(255,255,255,0.1)' }
+                        }}
+                        size="large"
+                      >
+                        {isPlaying ? <PauseIcon /> : <PlayIcon />}
+                      </IconButton>
+                    </Tooltip>
+                    
+                    <Tooltip title={isMuted ? 'Unmute' : 'Mute'} arrow>
+                      <IconButton 
+                        onClick={toggleMute} 
+                        sx={{ 
+                          color: 'white', 
+                          '&:hover': { bgcolor: 'rgba(255,255,255,0.1)' }
+                        }}
+                      >
+                        {isMuted ? <VolumeOffIcon /> : <VolumeUpIcon />}
+                      </IconButton>
+                    </Tooltip>
+                    
+                    {connectionQuality !== 'unknown' && (
+                      <Chip 
+                        label={`Quality: ${connectionQuality}`} 
+                        size="small" 
+                        color={connectionQuality === 'good' ? 'success' : connectionQuality === 'poor' ? 'error' : 'warning'}
+                        variant="outlined"
+                        sx={{ color: 'white' }}
+                      />
+                    )}
+                  </Box>
 
-              <Box display="flex" alignItems="center" gap={1}>
-                <IconButton onClick={retryConnection} sx={{ color: 'white' }}>
-                  <RefreshIcon />
-                </IconButton>
-                <IconButton onClick={toggleFullscreen} sx={{ color: 'white' }}>
-                  {isFullscreen ? <FullscreenExitIcon /> : <FullscreenIcon />}
-                </IconButton>
+                  <Box display="flex" alignItems="center" gap={1}>
+                    <Tooltip title="Refresh Stream" arrow>
+                      <IconButton 
+                        onClick={retryConnection} 
+                        sx={{ 
+                          color: 'white', 
+                          '&:hover': { bgcolor: 'rgba(255,255,255,0.1)' }
+                        }}
+                      >
+                        <RefreshIcon />
+                      </IconButton>
+                    </Tooltip>
+                    
+                    <Tooltip title={isFullscreen ? 'Exit Fullscreen' : 'Enter Fullscreen'} arrow>
+                      <IconButton 
+                        onClick={toggleFullscreen} 
+                        sx={{ 
+                          color: 'white', 
+                          '&:hover': { bgcolor: 'rgba(255,255,255,0.1)' }
+                        }}
+                      >
+                        {isFullscreen ? <FullscreenExitIcon /> : <FullscreenIcon />}
+                      </IconButton>
+                    </Tooltip>
+                  </Box>
+                </Box>
               </Box>
-            </Box>
+            </Fade>
           )}
 
           {/* Stream Info Overlay */}
@@ -897,6 +1092,24 @@ const EnhancedVideoPlayer = ({
               </Typography>
             }
           />
+          
+          {proxyEnabled && (
+            <FormControlLabel
+              sx={{ ml: 2 }}
+              control={
+                <Switch
+                  checked={useTranscoding}
+                  onChange={(e) => setUseTranscoding(e.target.checked)}
+                  color="secondary"
+                />
+              }
+              label={
+                <Typography color="white" variant="body2">
+                  Enable Video Transcoding (For TS/MPEG-TS streams)
+                </Typography>
+              }
+            />
+          )}
           
           <FormControlLabel
             control={

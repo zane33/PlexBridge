@@ -6,6 +6,13 @@ const http = require('http');
 const socketIo = require('socket.io');
 const cors = require('cors');
 const path = require('path');
+const { spawn } = require('child_process');
+
+// Import services
+const databaseService = require('./services/database');
+const streamPreviewService = require('./services/streamPreviewService');
+const logger = require('./utils/logger');
+const config = require('./config');
 
 const app = express();
 const server = http.createServer(app);
@@ -18,10 +25,25 @@ const io = socketIo(server, {
   }
 });
 
-const PORT = process.env.PORT || 8080;
-const HOST = process.env.HOST_IP || '0.0.0.0';
+const PORT = config.server.port;
+const HOST = config.server.host;
 
 console.log('Starting PlexBridge complete server...');
+console.log(`Server configuration: ${HOST}:${PORT}`);
+console.log(`Environment: ${config.server.environment}`);
+
+// Initialize database
+let databaseInitialized = false;
+(async () => {
+  try {
+    await databaseService.initialize();
+    databaseInitialized = true;
+    logger.info('Database initialized successfully');
+  } catch (error) {
+    logger.error('Database initialization failed, using fallback mode', { error: error.message });
+    console.warn('⚠️  Database initialization failed, using in-memory fallback');
+  }
+})();
 
 // Middleware
 app.use(cors());
@@ -48,28 +70,134 @@ let settings = {
 
 // API Routes
 
-// Health check endpoint
-app.get('/health', (req, res) => {
-  res.json({
-    status: 'healthy',
-    timestamp: new Date().toISOString(),
-    uptime: process.uptime(),
-    version: '1.0.0',
-    services: {
-      database: {
-        status: 'healthy',
-        connected: true,
-        responseTime: Math.floor(Math.random() * 10) + 1
-      },
-      cache: {
-        status: 'healthy',
-        connected: true
-      },
-      socketio: {
-        status: 'running',
-        connections: io.engine.clientsCount || 0
+// Enhanced health check endpoint for production monitoring
+app.get('/health', async (req, res) => {
+  const startTime = Date.now();
+  
+  try {
+    // Test database connection
+    let databaseHealth = { status: 'unhealthy', connected: false, responseTime: null, error: null };
+    if (databaseInitialized && databaseService.db) {
+      try {
+        const dbStartTime = Date.now();
+        await databaseService.get('SELECT 1 as health');
+        databaseHealth = {
+          status: 'healthy',
+          connected: true,
+          responseTime: Date.now() - dbStartTime,
+          error: null
+        };
+      } catch (dbError) {
+        databaseHealth.error = dbError.message;
       }
+    } else {
+      databaseHealth.error = 'Database not initialized';
     }
+
+    // Test transcoding service
+    const transcodingHealth = {
+      status: 'healthy',
+      activeSessions: streamPreviewService ? streamPreviewService.getTranscodingStatus().activeSessions : 0,
+      maxConcurrent: streamPreviewService ? streamPreviewService.getTranscodingStatus().maxConcurrent : 0
+    };
+
+    // Memory usage
+    const memoryUsage = process.memoryUsage();
+    const memoryHealth = {
+      status: memoryUsage.heapUsed < (512 * 1024 * 1024) ? 'healthy' : 'warning', // 512MB threshold
+      usage: {
+        rss: Math.round(memoryUsage.rss / 1024 / 1024),
+        heapUsed: Math.round(memoryUsage.heapUsed / 1024 / 1024),
+        heapTotal: Math.round(memoryUsage.heapTotal / 1024 / 1024),
+        external: Math.round(memoryUsage.external / 1024 / 1024)
+      }
+    };
+
+    const overallStatus = databaseHealth.status === 'healthy' && 
+                         transcodingHealth.status === 'healthy' && 
+                         memoryHealth.status !== 'critical' ? 'healthy' : 'degraded';
+
+    const healthData = {
+      status: overallStatus,
+      timestamp: new Date().toISOString(),
+      uptime: Math.round(process.uptime()),
+      version: '2.0.0',
+      responseTime: Date.now() - startTime,
+      environment: config.server.environment,
+      services: {
+        database: databaseHealth,
+        transcoding: transcodingHealth,
+        memory: memoryHealth,
+        socketio: {
+          status: 'healthy',
+          connectedClients: io.engine.clientsCount || 0
+        }
+      },
+      system: {
+        nodeVersion: process.version,
+        platform: process.platform,
+        arch: process.arch,
+        pid: process.pid
+      }
+    };
+
+    // Set appropriate HTTP status
+    const statusCode = overallStatus === 'healthy' ? 200 : 
+                      overallStatus === 'degraded' ? 200 : 503;
+
+    res.status(statusCode).json(healthData);
+
+  } catch (error) {
+    logger.error('Health check error', { error: error.message });
+    res.status(503).json({
+      status: 'critical',
+      timestamp: new Date().toISOString(),
+      error: error.message,
+      responseTime: Date.now() - startTime
+    });
+  }
+});
+
+// Readiness probe endpoint for Kubernetes/Docker
+app.get('/ready', async (req, res) => {
+  try {
+    // Check if essential services are ready
+    const isReady = databaseInitialized && streamPreviewService;
+    
+    if (isReady) {
+      res.status(200).json({
+        status: 'ready',
+        timestamp: new Date().toISOString(),
+        services: {
+          database: databaseInitialized,
+          streamPreview: !!streamPreviewService
+        }
+      });
+    } else {
+      res.status(503).json({
+        status: 'not_ready',
+        timestamp: new Date().toISOString(),
+        services: {
+          database: databaseInitialized,
+          streamPreview: !!streamPreviewService
+        }
+      });
+    }
+  } catch (error) {
+    res.status(503).json({
+      status: 'error',
+      timestamp: new Date().toISOString(),
+      error: error.message
+    });
+  }
+});
+
+// Liveness probe endpoint for Kubernetes/Docker  
+app.get('/live', (req, res) => {
+  res.status(200).json({
+    status: 'alive',
+    timestamp: new Date().toISOString(),
+    uptime: Math.round(process.uptime())
   });
 });
 
@@ -150,23 +278,73 @@ app.delete('/api/channels/:id', (req, res) => {
   res.json({ message: 'Channel deleted successfully' });
 });
 
-// Streams API
-app.get('/api/streams', (req, res) => {
-  res.json(streams);
+// Enhanced Streams API with database integration
+app.get('/api/streams', async (req, res) => {
+  try {
+    if (databaseInitialized) {
+      const streams = await databaseService.all('SELECT * FROM streams ORDER BY created_at DESC');
+      res.json(streams);
+    } else {
+      res.json(streams);
+    }
+  } catch (error) {
+    logger.error('Error fetching streams', { error: error.message });
+    res.status(500).json({ error: 'Failed to fetch streams' });
+  }
 });
 
-app.post('/api/streams', (req, res) => {
-  const stream = {
-    id: Date.now().toString(),
-    ...req.body,
-    createdAt: new Date().toISOString()
-  };
-  streams.push(stream);
-  
-  // Emit update to connected clients
-  io.emit('streamUpdate', { type: 'create', stream });
-  
-  res.status(201).json(stream);
+app.post('/api/streams', async (req, res) => {
+  try {
+    const streamData = {
+      id: Date.now().toString(),
+      name: req.body.name,
+      url: req.body.url,
+      type: req.body.type || 'hls',
+      enabled: req.body.enabled !== false,
+      ...req.body
+    };
+
+    if (databaseInitialized) {
+      // Save to database
+      await databaseService.run(`
+        INSERT INTO streams (id, name, url, type, enabled, headers, protocol_options, auth_username, auth_password)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `, [
+        streamData.id,
+        streamData.name,
+        streamData.url,
+        streamData.type,
+        streamData.enabled ? 1 : 0,
+        JSON.stringify(streamData.headers || {}),
+        JSON.stringify(streamData.protocol_options || {}),
+        streamData.auth_username || null,
+        streamData.auth_password || null
+      ]);
+
+      // Fetch the created stream
+      const createdStream = await databaseService.get('SELECT * FROM streams WHERE id = ?', [streamData.id]);
+      
+      // Emit update to connected clients
+      io.emit('streamUpdate', { type: 'create', stream: createdStream });
+      
+      res.status(201).json(createdStream);
+    } else {
+      // Fallback to in-memory storage
+      const stream = {
+        ...streamData,
+        createdAt: new Date().toISOString()
+      };
+      streams.push(stream);
+      
+      // Emit update to connected clients
+      io.emit('streamUpdate', { type: 'create', stream });
+      
+      res.status(201).json(stream);
+    }
+  } catch (error) {
+    logger.error('Error creating stream', { error: error.message, body: req.body });
+    res.status(500).json({ error: 'Failed to create stream' });
+  }
 });
 
 app.get('/api/streams/:id', (req, res) => {
@@ -205,22 +383,39 @@ app.delete('/api/streams/:id', (req, res) => {
   res.json({ message: 'Stream deleted successfully' });
 });
 
-// Stream validation
-app.post('/api/streams/validate', (req, res) => {
-  const { url } = req.body;
+// Enhanced stream validation
+app.post('/api/streams/validate', async (req, res) => {
+  const { url, timeout = 10000 } = req.body;
   
-  // Basic URL validation
-  try {
-    new URL(url);
-    res.json({
-      valid: true,
-      type: 'hls', // Mock type detection
-      message: 'Stream URL is valid'
+  if (!url) {
+    return res.status(400).json({
+      valid: false,
+      message: 'URL is required'
     });
+  }
+
+  try {
+    // Basic URL validation
+    const parsedUrl = new URL(url);
+    
+    // Use stream manager for comprehensive validation
+    const streamData = { url, type: 'unknown' };
+    const validationResult = await streamManager.validateStream(streamData);
+    
+    res.json({
+      valid: validationResult.valid,
+      type: validationResult.type || 'unknown',
+      message: validationResult.valid ? 'Stream is accessible and valid' : validationResult.error,
+      info: validationResult.info || null,
+      protocol: parsedUrl.protocol.replace(':', ''),
+      host: parsedUrl.hostname
+    });
+    
   } catch (error) {
+    logger.error('Stream validation error', { url, error: error.message });
     res.json({
       valid: false,
-      message: 'Invalid URL format'
+      message: error.message || 'Invalid URL format or unreachable stream'
     });
   }
 });
@@ -965,6 +1160,17 @@ app.delete('/api/m3u/cache/:urlHash', (req, res) => {
   });
 });
 
+// Stream transcoding status endpoint
+app.get('/api/streams/transcoding/status', (req, res) => {
+  try {
+    const status = streamPreviewService.getTranscodingStatus();
+    res.json(status);
+  } catch (error) {
+    logger.error('Error getting transcoding status', { error: error.message });
+    res.status(500).json({ error: 'Failed to get transcoding status' });
+  }
+});
+
 // Performance monitoring endpoint for massive playlist parsing
 app.get('/api/streams/parse/performance', (req, res) => {
   const memoryUsage = process.memoryUsage();
@@ -1324,40 +1530,164 @@ app.get('/stream/:channelId', (req, res) => {
   res.redirect(channel.streamUrl || 'about:blank');
 });
 
-// Stream preview endpoint for direct stream testing
-app.get('/streams/preview/:streamId', async (req, res) => {
-  console.log(`Stream preview requested for ID: ${req.params.streamId}`);
-  
+// FFmpeg transcoding function for web-compatible video
+async function transcodeStreamToWebCompatible(inputUrl, res) {
   try {
-    // Find the stream in the database
-    const stream = await new Promise((resolve, reject) => {
-      db.get('SELECT * FROM streams WHERE id = ?', [req.params.streamId], (err, row) => {
-        if (err) reject(err);
-        else resolve(row);
-      });
+    console.log(`Starting FFmpeg transcoding for: ${inputUrl}`);
+    
+    // FFmpeg arguments for web-compatible output
+    const ffmpegArgs = [
+      '-i', inputUrl,
+      '-c:v', 'libx264',           // H.264 video codec (widely supported)
+      '-c:a', 'aac',               // AAC audio codec (widely supported)
+      '-preset', 'ultrafast',       // Fast encoding
+      '-profile:v', 'baseline',     // Compatible H.264 profile
+      '-level', '3.0',             // Compatible H.264 level
+      '-movflags', 'frag_keyframe+empty_moov+faststart', // Web streaming optimizations
+      '-f', 'mp4',                 // MP4 container format
+      '-fflags', '+genpts',        // Generate presentation timestamps
+      '-avoid_negative_ts', 'make_zero', // Handle timestamp issues
+      '-max_muxing_queue_size', '1024', // Prevent buffer overflow
+      '-loglevel', 'error',        // Reduce log verbosity
+      'pipe:1'                     // Output to stdout
+    ];
+    
+    console.log(`FFmpeg command: ffmpeg ${ffmpegArgs.join(' ')}`);
+    
+    const ffmpeg = spawn('ffmpeg', ffmpegArgs, {
+      stdio: ['ignore', 'pipe', 'pipe']
     });
     
+    // Set response headers for MP4 streaming
+    res.setHeader('Content-Type', 'video/mp4');
+    res.setHeader('Access-Control-Allow-Origin', '*');
+    res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+    res.setHeader('Cache-Control', 'no-cache');
+    
+    // Pipe FFmpeg output directly to HTTP response
+    ffmpeg.stdout.pipe(res);
+    
+    // Handle FFmpeg errors
+    ffmpeg.stderr.on('data', (data) => {
+      console.error(`FFmpeg stderr: ${data}`);
+    });
+    
+    ffmpeg.on('error', (error) => {
+      console.error(`FFmpeg spawn error: ${error}`);
+      if (!res.headersSent) {
+        res.status(500).json({ error: 'Failed to start transcoding' });
+      }
+    });
+    
+    ffmpeg.on('close', (code) => {
+      console.log(`FFmpeg process closed with code: ${code}`);
+      if (code !== 0) {
+        console.error(`FFmpeg process failed with code: ${code}`);
+        if (!res.headersSent) {
+          res.status(500).json({ error: 'Transcoding failed' });
+        }
+      }
+    });
+    
+    // Handle client disconnect
+    res.on('close', () => {
+      console.log('Client disconnected, killing FFmpeg process');
+      ffmpeg.kill('SIGTERM');
+    });
+    
+  } catch (error) {
+    console.error('Transcoding setup error:', error);
+    if (!res.headersSent) {
+      res.status(500).json({ error: 'Failed to setup transcoding' });
+    }
+  }
+}
+
+// Enhanced stream preview endpoint with database integration
+app.get('/streams/preview/:streamId', async (req, res) => {
+  logger.stream('Stream preview endpoint called', { 
+    streamId: req.params.streamId,
+    query: req.query,
+    userAgent: req.get('User-Agent'),
+    clientIP: req.ip
+  });
+
+  // Check if database is available, fallback to in-memory if needed
+  if (databaseInitialized) {
+    // Use enhanced database-integrated preview service
+    return await streamPreviewService.handleStreamPreview(req, res);
+  } else {
+    // Fallback to legacy in-memory implementation
+    return await handleLegacyStreamPreview(req, res);
+  }
+});
+
+// Legacy stream preview fallback for in-memory mode
+async function handleLegacyStreamPreview(req, res) {
+  const { streamId } = req.params;
+  console.log(`Legacy stream preview requested for ID: ${streamId}`);
+  
+  try {
+    // Find the stream in the in-memory storage
+    const stream = streams.find(s => s.id === streamId);
+    
     if (!stream) {
-      console.log(`Stream not found: ${req.params.streamId}`);
+      console.log(`Stream not found: ${streamId}`);
       return res.status(404).json({ error: 'Stream not found' });
     }
     
     if (!stream.url) {
-      console.log(`Stream has no URL: ${req.params.streamId}`);
+      console.log(`Stream has no URL: ${streamId}`);
       return res.status(400).json({ error: 'Stream has no URL configured' });
     }
     
     console.log(`Proxying stream: ${stream.name} -> ${stream.url}`);
     
-    // For now, redirect to the actual stream URL
-    // In a production environment, you might want to proxy the stream through PlexBridge
-    res.redirect(stream.url);
+    // Check stream format and handle appropriately
+    const streamUrl = stream.url.toLowerCase();
+    const isM3U8 = streamUrl.includes('.m3u8') || stream.type === 'hls';
+    const isTS = streamUrl.includes('.ts') || stream.type === 'ts';
+    const isMPEGTS = streamUrl.includes('mpegts') || stream.type === 'mpegts';
+    
+    // Set appropriate headers for different stream types
+    if (isM3U8) {
+      console.log(`Handling HLS/M3U8 stream: ${stream.url}`);
+      res.setHeader('Content-Type', 'application/vnd.apple.mpegurl');
+      res.setHeader('Access-Control-Allow-Origin', '*');
+      res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+    } else if (isTS || isMPEGTS) {
+      console.log(`Handling MPEG-TS stream: ${stream.url}`);
+      res.setHeader('Content-Type', 'video/mp2t');
+      res.setHeader('Access-Control-Allow-Origin', '*');
+      res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+    } else {
+      console.log(`Handling generic stream: ${stream.url}`);
+      res.setHeader('Content-Type', 'video/mp4');
+      res.setHeader('Access-Control-Allow-Origin', '*');
+      res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+    }
+    
+    // Use FFmpeg to transcode problematic streams to web-compatible format
+    const useTranscoding = req.query.transcode === 'true' || 
+                          isTS || 
+                          isMPEGTS || 
+                          streamUrl.includes('rtsp') || 
+                          streamUrl.includes('rtmp');
+    
+    if (useTranscoding) {
+      console.log(`Transcoding stream for web compatibility: ${stream.url}`);
+      await transcodeStreamToWebCompatible(stream.url, res);
+    } else {
+      // Direct proxy for M3U8 and other web-compatible formats
+      console.log(`Direct proxying stream: ${stream.url}`);
+      res.redirect(stream.url);
+    }
     
   } catch (error) {
-    console.error('Stream preview error:', error);
+    console.error('Legacy stream preview error:', error);
     res.status(500).json({ error: 'Failed to load stream preview' });
   }
-});
+}
 
 // Serve React app for all other routes
 app.get('*', (req, res) => {
@@ -1392,19 +1722,51 @@ server.listen(PORT, HOST, () => {
   console.log(`🔌 Socket.IO: Enabled`);
 });
 
-// Graceful shutdown
-process.on('SIGTERM', () => {
-  console.log('Received SIGTERM, shutting down gracefully...');
-  server.close(() => {
-    console.log('Server closed');
-    process.exit(0);
-  });
+// Enhanced graceful shutdown handling
+async function gracefulShutdown(signal) {
+  console.log(`Received ${signal}, shutting down gracefully...`);
+  
+  try {
+    // Shutdown stream preview service
+    if (streamPreviewService) {
+      console.log('Shutting down stream preview service...');
+      await streamPreviewService.shutdown();
+    }
+
+    // Close database connection
+    if (databaseService && databaseService.db) {
+      console.log('Closing database connection...');
+      await databaseService.close();
+    }
+
+    // Close server
+    server.close(() => {
+      console.log('Server closed successfully');
+      process.exit(0);
+    });
+
+    // Force exit after 10 seconds
+    setTimeout(() => {
+      console.error('Forced shutdown after timeout');
+      process.exit(1);
+    }, 10000);
+
+  } catch (error) {
+    console.error('Error during shutdown:', error);
+    process.exit(1);
+  }
+}
+
+process.on('SIGTERM', () => gracefulShutdown('SIGTERM'));
+process.on('SIGINT', () => gracefulShutdown('SIGINT'));
+
+// Handle uncaught exceptions and unhandled rejections
+process.on('uncaughtException', (error) => {
+  console.error('Uncaught Exception:', error);
+  gracefulShutdown('uncaughtException');
 });
 
-process.on('SIGINT', () => {
-  console.log('Received SIGINT, shutting down gracefully...');
-  server.close(() => {
-    console.log('Server closed');
-    process.exit(0);
-  });
+process.on('unhandledRejection', (reason, promise) => {
+  console.error('Unhandled Rejection at:', promise, 'reason:', reason);
+  gracefulShutdown('unhandledRejection');
 });
