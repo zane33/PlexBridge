@@ -611,6 +611,9 @@ function StreamManager() {
             }
           }, 100); // Defer to next tick to prevent blocking
           
+          // CRITICAL: Set final parsed channels - this was missing!
+          setParsedChannels([...allChannels]);
+          
           // Final completion
           setParsingProgress(prev => ({ 
             ...prev,
