@@ -66,3 +66,4 @@ config/development.json
 test-results/
 test-reports/
 /.claude
+/data./cache
