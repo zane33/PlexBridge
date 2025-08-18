@@ -1105,6 +1105,19 @@ router.get('/metrics', async (req, res) => {
       concurrencyMetrics = {};
     }
 
+    // Get user settings for max concurrent streams
+    let maxConcurrentStreams = 10; // Default fallback
+    try {
+      const streamingSetting = await database.get('SELECT value FROM settings WHERE key = ?', ['plexlive.streaming.maxConcurrentStreams']);
+      if (streamingSetting) {
+        maxConcurrentStreams = parseInt(streamingSetting.value) || 10;
+      }
+    } catch (settingsError) {
+      logger.warn('Unable to load max concurrent streams setting, using default:', settingsError);
+      // Try environment variable as fallback
+      maxConcurrentStreams = parseInt(process.env.MAX_CONCURRENT_STREAMS) || 10;
+    }
+
     // Get health checks with fallbacks
     const dbHealth = database.isInitialized ? await database.healthCheck() : { status: 'initializing' };
     const cacheHealth = await cacheService.healthCheck();
@@ -1126,9 +1139,9 @@ router.get('/metrics', async (req, res) => {
       },
       streams: {
         active: Array.isArray(activeStreams) ? activeStreams.length : 0,
-        maximum: parseInt(process.env.MAX_CONCURRENT_STREAMS) || 10,
+        maximum: maxConcurrentStreams,
         utilization: Array.isArray(activeStreams) 
-          ? (activeStreams.length / (parseInt(process.env.MAX_CONCURRENT_STREAMS) || 10)) * 100 
+          ? (activeStreams.length / maxConcurrentStreams) * 100 
           : 0,
         byChannel: streamsByChannel,
         concurrency: concurrencyMetrics
@@ -1150,6 +1163,17 @@ router.get('/metrics', async (req, res) => {
   } catch (error) {
     logger.error('Metrics error:', error);
     
+    // Get max concurrent streams for fallback
+    let fallbackMaxStreams = 10;
+    try {
+      const streamingSetting = await database.get('SELECT value FROM settings WHERE key = ?', ['plexlive.streaming.maxConcurrentStreams']);
+      if (streamingSetting) {
+        fallbackMaxStreams = parseInt(streamingSetting.value) || 10;
+      }
+    } catch (settingsError) {
+      fallbackMaxStreams = parseInt(process.env.MAX_CONCURRENT_STREAMS) || 10;
+    }
+    
     // Return fallback metrics structure on error
     const fallbackMetrics = {
       system: {
@@ -1161,7 +1185,7 @@ router.get('/metrics', async (req, res) => {
       },
       streams: {
         active: 0,
-        maximum: 10,
+        maximum: fallbackMaxStreams,
         utilization: 0,
         byChannel: {},
         concurrency: {}
