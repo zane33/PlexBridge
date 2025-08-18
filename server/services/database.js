@@ -109,17 +109,34 @@ class DatabaseService {
   async configureDatabase() {
     return new Promise((resolve, reject) => {
       const options = config.database.options;
+      let completedOperations = 0;
+      const totalOperations = 7;
+      
+      const handleCompletion = (err) => {
+        if (err) {
+          logger.error('Database configuration error:', err);
+          reject(err);
+          return;
+        }
+        
+        completedOperations++;
+        if (completedOperations >= totalOperations) {
+          logger.info('Database configured with WAL mode and optimized settings');
+          resolve();
+        }
+      };
       
       this.db.serialize(() => {
         // Set pragmas for performance and reliability
-        this.db.run(`PRAGMA journal_mode = ${options.journalMode}`);
-        this.db.run(`PRAGMA synchronous = ${options.synchronous}`);
-        this.db.run(`PRAGMA cache_size = ${options.cacheSize}`);
-        this.db.run(`PRAGMA busy_timeout = ${options.busyTimeout}`);
-        this.db.run('PRAGMA foreign_keys = ON');
-        this.db.run('PRAGMA temp_store = MEMORY');
-        
-        resolve();
+        // Enable WAL mode first as it's most important for concurrency
+        this.db.run(`PRAGMA journal_mode = ${options.journalMode}`, handleCompletion);
+        this.db.run(`PRAGMA synchronous = ${options.synchronous}`, handleCompletion);
+        this.db.run(`PRAGMA cache_size = ${options.cacheSize}`, handleCompletion);
+        this.db.run(`PRAGMA busy_timeout = ${options.busyTimeout}`, handleCompletion);
+        this.db.run('PRAGMA foreign_keys = ON', handleCompletion);
+        this.db.run('PRAGMA temp_store = MEMORY', handleCompletion);
+        // Add checkpoint configuration for WAL mode
+        this.db.run('PRAGMA wal_autocheckpoint = 1000', handleCompletion);
       });
     });
   }
@@ -365,18 +382,33 @@ class DatabaseService {
   }
 
   async close() {
-    if (this.db) {
+    if (this.db && this.isInitialized) {
       return new Promise((resolve) => {
-        this.db.close((err) => {
-          if (err) {
-            logger.error('Database close error:', err);
+        // First, perform a WAL checkpoint to ensure all data is written
+        this.db.run('PRAGMA wal_checkpoint(TRUNCATE)', (checkpointErr) => {
+          if (checkpointErr) {
+            logger.warn('WAL checkpoint warning during close:', checkpointErr.message);
           } else {
-            logger.info('Database connection closed');
+            logger.info('WAL checkpoint completed before database close');
           }
-          this.isInitialized = false;
-          resolve();
+          
+          // Now close the database
+          this.db.close((err) => {
+            if (err) {
+              logger.error('Database close error:', err);
+            } else {
+              logger.info('Database connection closed successfully');
+            }
+            this.isInitialized = false;
+            this.db = null;
+            resolve();
+          });
         });
       });
+    } else {
+      this.isInitialized = false;
+      this.db = null;
+      return Promise.resolve();
     }
   }
 
@@ -597,5 +629,38 @@ class DatabaseService {
 
 // Create singleton instance
 const databaseService = new DatabaseService();
+
+// Handle graceful shutdown
+process.on('SIGTERM', async () => {
+  logger.info('Received SIGTERM, closing database...');
+  await databaseService.close();
+});
+
+process.on('SIGINT', async () => {
+  logger.info('Received SIGINT, closing database...');
+  await databaseService.close();
+});
+
+// Handle uncaught exceptions - close database before exit
+process.on('uncaughtException', async (error) => {
+  logger.error('Uncaught exception:', error);
+  try {
+    await databaseService.close();
+  } catch (closeError) {
+    logger.error('Error closing database during uncaught exception:', closeError);
+  }
+  process.exit(1);
+});
+
+// Handle unhandled promise rejections
+process.on('unhandledRejection', async (reason, promise) => {
+  logger.error('Unhandled rejection at:', promise, 'reason:', reason);
+  try {
+    await databaseService.close();
+  } catch (closeError) {
+    logger.error('Error closing database during unhandled rejection:', closeError);
+  }
+  process.exit(1);
+});
 
 module.exports = databaseService;

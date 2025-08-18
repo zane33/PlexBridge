@@ -51,6 +51,8 @@ const VirtualizedChannelTable = ({
       filtered = filtered.filter(channel => 
         channel.name?.toLowerCase().includes(query) ||
         channel.attributes?.['group-title']?.toLowerCase().includes(query) ||
+        channel.attributes?.['tvg-id']?.toLowerCase().includes(query) ||
+        channel.attributes?.['tvg-name']?.toLowerCase().includes(query) ||
         channel.url?.toLowerCase().includes(query)
       );
     }

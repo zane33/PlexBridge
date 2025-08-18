@@ -118,11 +118,12 @@ const EnhancedVideoPlayer = ({
     return streamUrl;
   }, [streamUrl, proxyEnabled, channelId, streamId, useTranscoding]);
 
-  // Detect stream format and capabilities
-  const detectStreamCapabilities = useCallback((url) => {
+  // Detect stream format and capabilities with enhanced proxy URL detection
+  const detectStreamCapabilities = useCallback(async (url) => {
     const urlLower = url.toLowerCase();
     
-    if (urlLower.includes('.m3u8')) {
+    // Check for direct stream format indicators
+    if (urlLower.includes('.m3u8') || urlLower.includes('/playlist.m3u8') || urlLower.includes('type=hls')) {
       return {
         type: 'hls',
         useVideoJS: true,
@@ -132,7 +133,7 @@ const EnhancedVideoPlayer = ({
       };
     }
     
-    if (urlLower.includes('.mpd')) {
+    if (urlLower.includes('.mpd') || urlLower.includes('type=dash')) {
       return {
         type: 'dash',
         useVideoJS: true,
@@ -142,7 +143,7 @@ const EnhancedVideoPlayer = ({
       };
     }
     
-    if (urlLower.includes('.mp4')) {
+    if (urlLower.includes('.mp4') || urlLower.includes('type=mp4')) {
       return {
         type: 'mp4',
         useVideoJS: false,
@@ -152,7 +153,7 @@ const EnhancedVideoPlayer = ({
       };
     }
     
-    if (urlLower.includes('.webm')) {
+    if (urlLower.includes('.webm') || urlLower.includes('type=webm')) {
       return {
         type: 'webm',
         useVideoJS: false,
@@ -172,13 +173,89 @@ const EnhancedVideoPlayer = ({
       };
     }
     
-    // Default to trying Video.js for unknown formats
+    // For proxy URLs, try to detect the actual content type
+    if (urlLower.includes('/streams/preview/') || urlLower.includes('/stream/')) {
+      try {
+        // Make a HEAD request to get content-type
+        const response = await fetch(url, { 
+          method: 'HEAD',
+          signal: AbortSignal.timeout(5000) // 5 second timeout
+        });
+        
+        const contentType = response.headers.get('content-type') || '';
+        console.log(`Proxy stream content-type: ${contentType}`);
+        
+        if (contentType.includes('application/vnd.apple.mpegurl') || contentType.includes('application/x-mpegURL')) {
+          return {
+            type: 'hls',
+            useVideoJS: true,
+            needsSpecialHandling: true,
+            supportedByBrowser: videoRef.current?.canPlayType('application/vnd.apple.mpegurl') || false,
+            description: 'HLS Live Stream (Proxied)'
+          };
+        }
+        
+        if (contentType.includes('application/dash+xml')) {
+          return {
+            type: 'dash',
+            useVideoJS: true,
+            needsSpecialHandling: true,
+            supportedByBrowser: false,
+            description: 'DASH Stream (Proxied)'
+          };
+        }
+        
+        if (contentType.includes('video/mp4')) {
+          return {
+            type: 'mp4',
+            useVideoJS: false,
+            needsSpecialHandling: false,
+            supportedByBrowser: true,
+            description: 'MP4 Video (Proxied)'
+          };
+        }
+        
+        if (contentType.includes('video/webm')) {
+          return {
+            type: 'webm',
+            useVideoJS: false,
+            needsSpecialHandling: false,
+            supportedByBrowser: videoRef.current?.canPlayType('video/webm') || false,
+            description: 'WebM Video (Proxied)'
+          };
+        }
+        
+        // If content-type suggests a video stream, assume HLS as most common for IPTV
+        if (contentType.includes('video/') || contentType.includes('application/octet-stream')) {
+          return {
+            type: 'hls',
+            useVideoJS: true,
+            needsSpecialHandling: true,
+            supportedByBrowser: false,
+            description: 'Live Stream (Proxied, detected as HLS)'
+          };
+        }
+        
+      } catch (error) {
+        console.warn('Failed to detect proxy stream type:', error);
+        // Fall back to assuming HLS for proxy URLs
+        return {
+          type: 'hls',
+          useVideoJS: true,
+          needsSpecialHandling: true,
+          supportedByBrowser: false,
+          description: 'Live Stream (Proxied, assumed HLS)'
+        };
+      }
+    }
+    
+    // Default to HLS for unknown formats (most common for IPTV)
     return {
-      type: 'unknown',
+      type: 'hls',
       useVideoJS: true,
       needsSpecialHandling: true,
       supportedByBrowser: false,
-      description: 'Unknown format - trying Video.js'
+      description: 'Live Stream (Format auto-detected as HLS)'
     };
   }, []);
 
@@ -292,7 +369,11 @@ const EnhancedVideoPlayer = ({
       setLoadingProgress(25);
       
       const currentUrl = getStreamUrl();
-      const capabilities = detectStreamCapabilities(currentUrl);
+      if (!currentUrl) {
+        throw new Error('Invalid stream URL');
+      }
+      
+      const capabilities = await detectStreamCapabilities(currentUrl);
       setStreamInfo(capabilities);
       setUseVideoJS(capabilities.useVideoJS);
 
@@ -345,7 +426,7 @@ const EnhancedVideoPlayer = ({
       // Small delay to ensure React has rendered the element
       await new Promise(resolve => setTimeout(resolve, 100));
       
-      // Check if element already has a Video.js player
+      // Comprehensive Video.js cleanup
       if (videoElement.player) {
         console.warn('Video.js player already exists on element, disposing first');
         try {
@@ -353,10 +434,16 @@ const EnhancedVideoPlayer = ({
         } catch (disposeError) {
           console.warn('Error disposing existing player:', disposeError);
         }
-        // Remove Video.js attributes
-        videoElement.removeAttribute('data-vjs-player');
-        videoElement.className = 'video-js vjs-default-skin';
       }
+      
+      // Remove all Video.js related attributes and classes
+      videoElement.removeAttribute('data-vjs-player');
+      videoElement.removeAttribute('data-setup');
+      videoElement.className = 'video-js vjs-default-skin';
+      
+      // Clear any existing source to prevent conflicts
+      videoElement.src = '';
+      videoElement.load();
       
       // Additional cleanup - check for any Video.js instances attached to this element
       if (window.videojs && window.videojs.getPlayer) {
@@ -370,7 +457,10 @@ const EnhancedVideoPlayer = ({
         }
       }
       
-      // Create Video.js player
+      // Wait a bit more after cleanup
+      await new Promise(resolve => setTimeout(resolve, 200));
+      
+      // Create Video.js player with enhanced configuration for better compatibility
       const player = videojs(videoElement, {
         controls: true,
         fluid: true,
@@ -380,14 +470,29 @@ const EnhancedVideoPlayer = ({
           vhs: {
             enableLowInitialPlaylist: true,
             smoothQualityChange: true,
-            overrideNative: true
-          }
+            overrideNative: true,
+            limitRenditionByPlayerDimensions: false,
+            useDevicePixelRatio: false,
+            allowSeeksWithinUnsafeLiveWindow: true
+          },
+          nativeVideoTracks: false,
+          nativeAudioTracks: false,
+          nativeTextTracks: false
         },
         liveui: capabilities.type === 'hls' || capabilities.type === 'dash',
         sources: [{
           src: url,
           type: getVideoJSMimeType(capabilities.type, url)
-        }]
+        }],
+        // Improve error recovery
+        liveTracker: {
+          trackingThreshold: 30,
+          liveTolerance: 15
+        },
+        // Add tech options for better stream handling
+        techOrder: ['html5', 'flash'],
+        // Preload metadata to help with stream initialization
+        preload: 'metadata'
       });
 
       setPlayerInstance(player);
@@ -516,27 +621,41 @@ const EnhancedVideoPlayer = ({
     }
   }, [enqueueSnackbar]);
 
-  // Get appropriate MIME type for Video.js
+  // Get appropriate MIME type for Video.js with improved codec support
   const getVideoJSMimeType = (streamType, url) => {
     switch (streamType) {
       case 'hls':
+        // Use multiple compatible MIME types for HLS
         return 'application/x-mpegURL';
       case 'dash':
         return 'application/dash+xml';
       case 'mp4':
-        return 'video/mp4';
+        return 'video/mp4; codecs="avc1.42E01E, mp4a.40.2"'; // H.264 Baseline + AAC
       case 'webm':
-        return 'video/webm';
+        return 'video/webm; codecs="vp8, vorbis"'; // VP8 + Vorbis
       case 'streaming':
-        // For RTSP/RTMP streams proxied through backend
-        return 'video/mp2t';
-      default:
-        // Auto-detect based on URL
+      case 'rtsp':
+      case 'rtmp':
+      case 'ts':
+      case 'mpegts':
+        // For streams transcoded by backend - use HLS as most compatible
+        return 'application/x-mpegURL';
+      case 'http':
+        // For direct HTTP streams, try to detect format from URL or assume HLS for IPTV
         if (url.includes('.m3u8')) return 'application/x-mpegURL';
         if (url.includes('.mpd')) return 'application/dash+xml';
-        if (url.includes('.mp4')) return 'video/mp4';
-        if (url.includes('.webm')) return 'video/webm';
-        return 'video/mp4'; // Default fallback
+        if (url.includes('.webm')) return 'video/webm; codecs="vp8, vorbis"';
+        if (url.includes('.mp4')) return 'video/mp4; codecs="avc1.42E01E, mp4a.40.2"';
+        // For IPTV streams, default to HLS
+        return 'application/x-mpegURL';
+      default:
+        // Auto-detect based on URL with codec information
+        if (url.includes('.m3u8')) return 'application/x-mpegURL';
+        if (url.includes('.mpd')) return 'application/dash+xml';
+        if (url.includes('.webm')) return 'video/webm; codecs="vp8, vorbis"';
+        if (url.includes('.mp4')) return 'video/mp4; codecs="avc1.42E01E, mp4a.40.2"';
+        // For proxy URLs and unknown formats, assume HLS (most common for IPTV)
+        return 'application/x-mpegURL';
     }
   };
 
@@ -988,6 +1107,9 @@ const EnhancedVideoPlayer = ({
             autoPlay={false}
             muted={isMuted}
             data-setup="{}"
+            crossOrigin="anonymous"
+            playsInline
+            webkit-playsinline="true"
             style={{
               width: '100%',
               height: '100%',
@@ -996,6 +1118,62 @@ const EnhancedVideoPlayer = ({
             }}
             aria-label={`Video player for ${streamName}`}
             role="application"
+            onError={(e) => {
+              console.error('Video element error:', e);
+              const target = e.target;
+              let errorMessage = 'Video playback error';
+              let canRecover = true;
+              
+              if (target && target.error) {
+                switch (target.error.code) {
+                  case target.error.MEDIA_ERR_ABORTED:
+                    errorMessage = 'Video loading was aborted';
+                    break;
+                  case target.error.MEDIA_ERR_NETWORK:
+                    errorMessage = proxyEnabled ? 
+                      'Network error with PlexBridge proxy. Check if streaming service is running.' :
+                      'Network error accessing stream. Try enabling proxy mode to avoid CORS issues.';
+                    break;
+                  case target.error.MEDIA_ERR_DECODE:
+                    errorMessage = 'Video decode error - the stream format may be unsupported or corrupted. Audio may work but video cannot be decoded.';
+                    canRecover = false;
+                    break;
+                  case target.error.MEDIA_ERR_SRC_NOT_SUPPORTED:
+                    errorMessage = proxyEnabled ?
+                      'Stream format not supported by PlexBridge proxy or browser. The audio codec may be supported but video codec is not.' :
+                      'Stream format not supported by browser directly. Try enabling proxy mode or use an external player.';
+                    break;
+                  default:
+                    errorMessage = target.error.message || `Unknown video error (code: ${target.error.code})`;
+                }
+              }
+              
+              setError({ 
+                message: errorMessage, 
+                canRecover,
+                suggestedAction: canRecover ? 
+                  (proxyEnabled ? 'Try disabling proxy mode or use external player' : 'Try enabling proxy mode or use external player') :
+                  'Use an external player like VLC or MPC-HC for better codec support',
+                technicalDetails: `Video Error ${target?.error?.code}: ${target?.error?.message || 'Unknown'}`
+              });
+            }}
+            onLoadStart={() => console.log('Video load started')}
+            onCanPlay={() => {
+              console.log('Video can play');
+              setVideoReady(true);
+            }}
+            onLoadedMetadata={() => {
+              console.log('Video metadata loaded');
+              const video = videoRef.current;
+              if (video) {
+                console.log('Video details:', {
+                  duration: video.duration,
+                  videoWidth: video.videoWidth,
+                  videoHeight: video.videoHeight,
+                  readyState: video.readyState
+                });
+              }
+            }}
           />
 
           {/* Enhanced Video Controls Overlay with Auto-hide */}

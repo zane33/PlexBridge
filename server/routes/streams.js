@@ -2,6 +2,7 @@ const express = require('express');
 const router = express.Router();
 const database = require('../services/database');
 const streamManager = require('../services/streamManager');
+const streamPreviewService = require('../services/streamPreviewService');
 const logger = require('../utils/logger');
 
 // Stream proxy endpoint for Plex
@@ -31,33 +32,16 @@ router.get('/stream/:channelId', async (req, res) => {
   }
 });
 
-// Stream preview endpoint
+// Stream preview endpoint - Use the enhanced StreamPreviewService
 router.get('/streams/preview/:streamId', async (req, res) => {
   try {
-    const { streamId } = req.params;
-    logger.info(`Stream preview request for: ${streamId}`);
-    
-    // Get stream info
-    const stream = await database.get('SELECT * FROM streams WHERE id = ?', [streamId]);
-    if (!stream) {
-      return res.status(404).json({ error: 'Stream not found' });
-    }
-    
-    // Set appropriate headers for video streaming
-    res.set({
-      'Access-Control-Allow-Origin': '*',
-      'Access-Control-Allow-Headers': 'Range, Content-Type',
-      'Access-Control-Expose-Headers': 'Content-Range, Content-Length',
-      'Content-Type': 'application/vnd.apple.mpegurl',
-      'Cache-Control': 'no-cache'
-    });
-    
-    // Proxy the stream
-    await streamManager.proxyStream(stream.url, req, res);
-    
+    // Use the StreamPreviewService for proper stream handling with database integration
+    await streamPreviewService.handleStreamPreview(req, res);
   } catch (error) {
-    logger.error('Stream preview error:', error);
-    res.status(500).json({ error: 'Stream preview failed', details: error.message });
+    logger.error('Stream preview service error:', error);
+    if (!res.headersSent) {
+      res.status(500).json({ error: 'Stream preview failed', details: error.message });
+    }
   }
 });
 

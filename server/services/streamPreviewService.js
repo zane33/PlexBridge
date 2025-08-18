@@ -165,8 +165,14 @@ class StreamPreviewService {
       // Set appropriate headers based on stream type
       this.setStreamHeaders(res, stream.type);
 
-      // For HLS/DASH and other web-compatible formats, redirect to original URL
-      if (['hls', 'dash', 'http'].includes(stream.type)) {
+      // For HLS/DASH streams, proxy through our backend to avoid CORS issues
+      // Don't redirect directly as this can cause CORS problems
+      if (['hls', 'dash'].includes(stream.type)) {
+        return streamManager.proxyStream(stream.url, req, res);
+      }
+      
+      // For direct HTTP video files, we can redirect if CORS allows
+      if (stream.type === 'http' && (stream.url.includes('.mp4') || stream.url.includes('.webm'))) {
         return res.redirect(stream.url);
       }
 

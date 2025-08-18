@@ -896,6 +896,164 @@ class StreamManager {
     }
   }
 
+  // Simple proxy stream method for direct stream proxying (used by routes)
+  async proxyStream(streamUrl, req, res) {
+    try {
+      logger.stream('Proxying stream directly', { url: streamUrl });
+
+      // Detect stream format to determine appropriate handling
+      const detection = await this.detectStreamFormat(streamUrl);
+      logger.stream('Detected stream format', { url: streamUrl, format: detection });
+
+      // For HLS/DASH streams, we can redirect directly or proxy based on CORS
+      if (detection.type === 'hls' || detection.type === 'dash') {
+        return await this.proxyWebCompatibleStream(streamUrl, detection.type, req, res);
+      }
+
+      // For other stream types, use FFmpeg transcoding to web-compatible format
+      return await this.proxyTranscodedStream(streamUrl, detection.type, req, res);
+
+    } catch (error) {
+      logger.error('Stream proxy error', { url: streamUrl, error: error.message });
+      if (!res.headersSent) {
+        res.status(500).json({ error: 'Stream proxy failed', details: error.message });
+      }
+    }
+  }
+
+  // Proxy web-compatible streams (HLS/DASH) with proper headers
+  async proxyWebCompatibleStream(streamUrl, streamType, req, res) {
+    const axios = require('axios');
+    
+    try {
+      // Set appropriate content type for stream type
+      const contentType = streamType === 'hls' ? 'application/vnd.apple.mpegurl' : 'application/dash+xml';
+      
+      // Set streaming headers
+      res.set({
+        'Content-Type': contentType,
+        'Access-Control-Allow-Origin': '*',
+        'Access-Control-Allow-Headers': 'Range, Content-Type, Authorization',
+        'Access-Control-Expose-Headers': 'Content-Range, Content-Length, Accept-Ranges',
+        'Cache-Control': 'no-cache, no-store, must-revalidate',
+        'Accept-Ranges': 'bytes'
+      });
+
+      // For HLS/DASH, we can try direct streaming first
+      const response = await axios.get(streamUrl, {
+        timeout: 30000,
+        responseType: 'stream',
+        headers: {
+          'User-Agent': config.protocols.http.userAgent || 'PlexBridge/1.0'
+        }
+      });
+
+      // Pipe the response directly
+      response.data.pipe(res);
+      
+      response.data.on('error', (error) => {
+        logger.error('Stream pipe error', { url: streamUrl, error: error.message });
+        if (!res.headersSent) {
+          res.status(500).end();
+        }
+      });
+
+    } catch (error) {
+      // If direct streaming fails, fall back to transcoding
+      logger.warn('Direct streaming failed, falling back to transcoding', { 
+        url: streamUrl, 
+        error: error.message 
+      });
+      return await this.proxyTranscodedStream(streamUrl, streamType, req, res);
+    }
+  }
+
+  // Proxy streams that need transcoding to web-compatible format
+  async proxyTranscodedStream(streamUrl, streamType, req, res) {
+    try {
+      // Set appropriate headers for transcoded stream
+      res.set({
+        'Content-Type': 'video/mp4', // MP4 is most compatible
+        'Access-Control-Allow-Origin': '*',
+        'Access-Control-Allow-Headers': 'Range, Content-Type, Authorization',
+        'Access-Control-Expose-Headers': 'Content-Range, Content-Length, Accept-Ranges',
+        'Cache-Control': 'no-cache, no-store, must-revalidate',
+        'Accept-Ranges': 'bytes'
+      });
+
+      // Create FFmpeg process for transcoding to web-compatible format
+      const args = [
+        '-i', streamUrl,
+        '-c:v', 'libx264',                    // H.264 video codec for compatibility
+        '-c:a', 'aac',                        // AAC audio codec
+        '-preset', 'veryfast',                // Fast encoding for real-time
+        '-profile:v', 'baseline',             // Most compatible H.264 profile
+        '-level', '3.1',                      // H.264 level for broad compatibility
+        '-movflags', 'frag_keyframe+empty_moov+faststart', // Streaming optimizations
+        '-f', 'mp4',                          // MP4 container
+        '-fflags', '+genpts',                 // Generate timestamps
+        '-avoid_negative_ts', 'make_zero',    // Handle timestamp issues
+        '-max_muxing_queue_size', '1024',     // Prevent buffer issues
+        '-loglevel', 'error',                 // Reduce log noise
+        '-nostats',                           // No statistics output
+        'pipe:1'                              // Output to stdout
+      ];
+
+      // Add protocol-specific arguments
+      if (streamType === 'rtsp') {
+        args.splice(1, 0, '-rtsp_transport', 'tcp', '-rtsp_flags', 'prefer_tcp');
+      } else if (streamType === 'rtmp') {
+        args.splice(1, 0, '-rtmp_live', 'live');
+      }
+
+      const ffmpegProcess = spawn(config.streams.ffmpegPath, args);
+      
+      if (!ffmpegProcess.pid) {
+        throw new Error('Failed to start FFmpeg transcoding process');
+      }
+
+      logger.stream('Started transcoding process', { 
+        url: streamUrl, 
+        pid: ffmpegProcess.pid,
+        streamType 
+      });
+
+      // Pipe FFmpeg output to response
+      ffmpegProcess.stdout.pipe(res);
+
+      // Handle errors
+      ffmpegProcess.stderr.on('data', (data) => {
+        const errorOutput = data.toString();
+        if (errorOutput.includes('Error') || errorOutput.includes('error')) {
+          logger.error('FFmpeg transcoding error', { url: streamUrl, error: errorOutput });
+        }
+      });
+
+      ffmpegProcess.on('error', (error) => {
+        logger.error('FFmpeg process error', { url: streamUrl, error: error.message });
+        if (!res.headersSent) {
+          res.status(500).end();
+        }
+      });
+
+      ffmpegProcess.on('close', (code) => {
+        logger.stream('FFmpeg process closed', { url: streamUrl, exitCode: code });
+      });
+
+      // Cleanup on client disconnect
+      req.on('close', () => {
+        logger.stream('Client disconnected, terminating transcoding', { url: streamUrl });
+        ffmpegProcess.kill('SIGTERM');
+      });
+
+    } catch (error) {
+      logger.error('Transcoded streaming error', { url: streamUrl, error: error.message });
+      if (!res.headersSent) {
+        res.status(500).json({ error: 'Transcoding failed', details: error.message });
+      }
+    }
+  }
+
   async cleanup() {
     logger.info('Cleaning up all active streams');
     const sessionIds = Array.from(this.activeStreams.keys());

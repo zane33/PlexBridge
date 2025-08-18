@@ -35,25 +35,8 @@ RUN mkdir -p /data/database /data/cache /data/logs /data/logos /var/lib/redis &&
     chown -R plextv:plextv /var/lib/redis && \
     chmod -R 755 /data
 
-# Create script to fix data directory permissions at runtime
-RUN echo '#!/bin/bash' > /app/fix-permissions.sh && \
-    echo 'echo "Fixing data directory permissions..."' >> /app/fix-permissions.sh && \
-    echo 'if [ -d "/data" ]; then' >> /app/fix-permissions.sh && \
-    echo '  # Create subdirectories if they do not exist' >> /app/fix-permissions.sh && \
-    echo '  mkdir -p /data/database /data/cache /data/logs /data/logos' >> /app/fix-permissions.sh && \
-    echo '  # Fix ownership and permissions' >> /app/fix-permissions.sh && \
-    echo '  chown -R plextv:plextv /data || echo "Warning: Could not change ownership of /data"' >> /app/fix-permissions.sh && \
-    echo '  chmod -R 755 /data || echo "Warning: Could not change permissions of /data"' >> /app/fix-permissions.sh && \
-    echo '  # Ensure database directory is writable' >> /app/fix-permissions.sh && \
-    echo '  chmod 755 /data/database || echo "Warning: Could not set database directory permissions"' >> /app/fix-permissions.sh && \
-    echo '  echo "Data directory permissions fixed successfully"' >> /app/fix-permissions.sh && \
-    echo 'else' >> /app/fix-permissions.sh && \
-    echo '  echo "Warning: /data directory not found, creating it..."' >> /app/fix-permissions.sh && \
-    echo '  mkdir -p /data/database /data/cache /data/logs /data/logos' >> /app/fix-permissions.sh && \
-    echo '  chown -R plextv:plextv /data' >> /app/fix-permissions.sh && \
-    echo '  chmod -R 755 /data' >> /app/fix-permissions.sh && \
-    echo 'fi' >> /app/fix-permissions.sh && \
-    chmod +x /app/fix-permissions.sh
+# Copy permission fixing script
+COPY fix-permissions.sh /app/fix-permissions.sh
 
 # Copy package files
 COPY package*.json ./
@@ -84,7 +67,7 @@ COPY supervisord.conf /etc/supervisord.conf
 COPY start.sh /app/start.sh
 COPY run-server.sh /app/run-server.sh
 COPY verify-database.sh /app/verify-database.sh
-RUN chmod +x /app/start.sh /app/run-server.sh /app/verify-database.sh
+RUN chmod +x /app/start.sh /app/run-server.sh /app/verify-database.sh /app/fix-permissions.sh
 
 # Set ownership of application files
 RUN chown -R plextv:plextv /app

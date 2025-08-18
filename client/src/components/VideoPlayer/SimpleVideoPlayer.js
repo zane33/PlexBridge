@@ -89,7 +89,24 @@ const SimpleVideoPlayer = ({
           const hls = new Hls({
             enableWorker: true,
             lowLatencyMode: true,
-            backBufferLength: 90
+            backBufferLength: 90,
+            maxBufferLength: 30,
+            maxMaxBufferLength: 600,
+            maxBufferSize: 60 * 1000 * 1000, // 60MB
+            maxBufferHole: 0.5,
+            liveSyncDurationCount: 3,
+            liveMaxLatencyDurationCount: Infinity,
+            liveDurationInfinity: false,
+            highBufferWatchdogPeriod: 2,
+            nudgeOffset: 0.1,
+            nudgeMaxRetry: 3,
+            maxFragLookUpTolerance: 0.25,
+            fragLoadingTimeOut: 20000,
+            manifestLoadingTimeOut: 10000,
+            xhrSetup: function(xhr, url) {
+              // Add CORS headers for better compatibility
+              xhr.withCredentials = false;
+            }
           });
           
           setHlsInstance(hls);
@@ -300,6 +317,9 @@ const SimpleVideoPlayer = ({
             controls
             autoPlay={false}
             muted
+            crossOrigin="anonymous"
+            playsInline
+            webkit-playsinline="true"
             style={{
               width: '100%',
               height: '100%',
@@ -310,37 +330,58 @@ const SimpleVideoPlayer = ({
               console.error('Video error:', e);
               const target = e.target;
               let errorMessage = 'Video playback error';
+              let canRecover = true;
               
               if (target && target.error) {
                 switch (target.error.code) {
+                  case target.error.MEDIA_ERR_ABORTED:
+                    errorMessage = 'Video loading was aborted';
+                    break;
                   case target.error.MEDIA_ERR_NETWORK:
                     if (proxyEnabled) {
-                      errorMessage = 'Network error with proxy. Try disabling proxy mode or check if PlexBridge streaming service is available';
+                      errorMessage = 'Network error with PlexBridge proxy. Check if streaming service is running.';
                     } else {
-                      errorMessage = 'Network error - check stream URL or try proxy mode';
+                      errorMessage = 'Network error - check stream URL or try proxy mode to avoid CORS issues';
                     }
                     break;
                   case target.error.MEDIA_ERR_DECODE:
-                    errorMessage = 'Video decode error - unsupported format';
+                    errorMessage = 'Video decode error - unsupported video format. Audio may work but video cannot be decoded.';
+                    canRecover = false;
                     break;
                   case target.error.MEDIA_ERR_SRC_NOT_SUPPORTED:
                     if (proxyEnabled) {
-                      errorMessage = 'Stream format not supported by proxy. Try disabling proxy mode or using external player';
+                      errorMessage = 'Stream format not supported by PlexBridge proxy or browser. The audio codec may be supported but video codec is not.';
                     } else {
-                      errorMessage = 'Stream format not supported by browser. Try enabling proxy mode or using external player';
+                      errorMessage = 'Stream format not supported by browser directly. Try enabling proxy mode or using external player';
                     }
                     break;
                   default:
-                    errorMessage = 'Unknown video error';
+                    errorMessage = target.error.message || `Unknown video error (code: ${target.error.code})`;
                 }
               }
               
-              setError({ message: errorMessage, canRecover: true });
+              setError({ 
+                message: errorMessage, 
+                canRecover,
+                technicalDetails: `Video Error ${target?.error?.code}: ${target?.error?.message || 'Unknown'}`
+              });
             }}
             onLoadStart={() => console.log('Video load started')}
             onCanPlay={() => {
               console.log('Video can play');
               setVideoReady(true);
+            }}
+            onLoadedMetadata={() => {
+              console.log('Video metadata loaded');
+              const video = videoRef.current;
+              if (video) {
+                console.log('Video details:', {
+                  duration: video.duration,
+                  videoWidth: video.videoWidth,
+                  videoHeight: video.videoHeight,
+                  readyState: video.readyState
+                });
+              }
             }}
           />
 

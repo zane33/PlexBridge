@@ -33,4 +33,4 @@ cd /app
 
 # Start the server
 echo "Starting PlexBridge server..."
-exec node server/production-start.js
+exec node server/index.js
