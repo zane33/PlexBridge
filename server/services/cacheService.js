@@ -13,68 +13,57 @@ class CacheService {
       return this.client;
     }
 
-    try {
-      // Create Redis client with shorter timeout for development
-      this.client = redis.createClient({
-        socket: {
-          host: config.cache.host,
-          port: config.cache.port,
-          connectTimeout: 5000,      // 5 second connection timeout
-          commandTimeout: 2000       // 2 second command timeout
-        },
-        password: config.cache.password,
-        database: config.cache.db,
-        retryDelayOnFailover: 100,
-        maxRetriesPerRequest: 1,     // Reduce retries for faster fallback
-        lazyConnect: true
-      });
+    // Use immediate fallback to memory cache to prevent hanging
+    console.log('Initializing cache service with memory fallback...');
+    this.client = new MemoryCache();
+    this.isConnected = true;
+    console.log('Memory cache initialized successfully');
+    
+    // Optionally try Redis connection in background (non-blocking)
+    this.tryRedisConnection();
+    
+    return this.client;
+  }
 
-      // Event handlers
-      this.client.on('connect', () => {
-        logger.info('Redis client connected');
-        this.isConnected = true;
-      });
+  // Non-blocking Redis connection attempt
+  tryRedisConnection() {
+    // Don't block startup - attempt Redis connection in background
+    setTimeout(async () => {
+      try {
+        console.log('Attempting background Redis connection...');
+        
+        const redisClient = redis.createClient({
+          socket: {
+            host: '127.0.0.1', // Force IPv4
+            port: config.cache.port,
+            connectTimeout: 2000
+          },
+          password: config.cache.password,
+          database: config.cache.db
+        });
 
-      this.client.on('ready', () => {
-        logger.info('Redis client ready');
-      });
+        redisClient.on('error', (err) => {
+          console.log('Background Redis connection failed:', err.message);
+        });
 
-      this.client.on('error', (err) => {
-        logger.error('Redis client error:', err);
-        this.isConnected = false;
-      });
+        // Try to connect with strict timeout
+        const connectPromise = redisClient.connect();
+        const timeoutPromise = new Promise((_, reject) => {
+          setTimeout(() => reject(new Error('Background Redis timeout')), 2000);
+        });
 
-      this.client.on('end', () => {
-        logger.info('Redis client connection ended');
-        this.isConnected = false;
-      });
-
-      // Connect to Redis with timeout
-      const connectPromise = this.client.connect();
-      const timeoutPromise = new Promise((_, reject) => {
-        setTimeout(() => reject(new Error('Redis connection timeout')), 5000);
-      });
-      
-      await Promise.race([connectPromise, timeoutPromise]);
-      
-      return this.client;
-    } catch (error) {
-      logger.warn('Redis connection failed, falling back to memory cache:', error.message);
-      
-      // Clean up failed Redis client
-      if (this.client && typeof this.client.quit === 'function') {
-        try {
-          await this.client.quit();
-        } catch (cleanupError) {
-          // Ignore cleanup errors
+        await Promise.race([connectPromise, timeoutPromise]);
+        await redisClient.ping();
+        
+        // Success - replace memory cache with Redis
+        if (this.client instanceof MemoryCache) {
+          this.client = redisClient;
+          console.log('Successfully upgraded to Redis cache');
         }
+      } catch (error) {
+        console.log('Background Redis connection failed, continuing with memory cache:', error.message);
       }
-      
-      // Fallback to in-memory cache if Redis is not available
-      this.client = new MemoryCache();
-      this.isConnected = true;
-      return this.client;
-    }
+    }, 1000); // Try Redis after 1 second delay
   }
 
   async get(key) {

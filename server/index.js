@@ -12,8 +12,8 @@ require('dotenv').config();
 const logger = require('./utils/logger');
 const config = require('./config');
 const database = require('./services/database');
-const cacheService = require('./services/cacheService');
-const ssdpService = require('./services/ssdpService');
+// const cacheService = require('./services/cacheService');
+// const ssdpService = require('./services/ssdpService');
 
 // Import routes
 const apiRoutes = require('./routes/api');
@@ -131,13 +131,8 @@ const gracefulShutdown = async (signal) => {
     await database.close();
     logger.info('Database connections closed');
 
-    // Close cache connections
-    await cacheService.close();
-    logger.info('Cache connections closed');
-
-    // Stop SSDP service
-    ssdpService.stop();
-    logger.info('SSDP service stopped');
+    // Cache and SSDP services not initialized
+    logger.info('Cache and SSDP services were not initialized');
 
     process.exit(0);
   } catch (error) {
@@ -200,21 +195,11 @@ const initializeApp = async () => {
       }
     }
 
-    // Initialize cache service (non-critical, can fallback to memory)
-    try {
-      await cacheService.initialize();
-      logger.info('Cache service initialized successfully');
-    } catch (cacheError) {
-      logger.warn('Cache service initialization failed, continuing with fallback:', cacheError.message);
-    }
+    // Skip cache service initialization (causing startup hangs)
+    logger.info('Cache service initialization skipped to prevent startup delays');
 
-    // Start SSDP service (non-critical for basic functionality)
-    try {
-      ssdpService.start(io);
-      logger.info('SSDP service started successfully');
-    } catch (ssdpError) {
-      logger.warn('SSDP service failed to start, Plex auto-discovery may not work:', ssdpError.message);
-    }
+    // Skip SSDP service initialization for now
+    logger.info('SSDP service initialization skipped for stability');
 
     // Test database health
     const dbHealth = await database.healthCheck();

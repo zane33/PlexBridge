@@ -33,8 +33,8 @@ const { app, server, io } = require('./index.js');
 const logger = require('./utils/logger');
 const config = require('./config');
 const database = require('./services/database');
-const cacheService = require('./services/cacheService');
-const ssdpService = require('./services/ssdpService');
+// const cacheService = require('./services/cacheService');
+// const ssdpService = require('./services/ssdpService');
 
 // Custom initialization that avoids the database logger issue
 async function initializeApp() {
@@ -56,23 +56,12 @@ async function initializeApp() {
       }
     }
     
-    // Initialize cache service
-    console.log('Initializing cache service...');
-    try {
-      await cacheService.initialize();
-      console.log('Cache service initialized successfully');
-    } catch (cacheError) {
-      console.warn('Cache service initialization failed (non-critical):', cacheError.message);
-    }
+    // Skip cache service initialization for now to resolve startup hanging
+    console.log('Skipping cache service initialization to prevent startup hanging...');
+    console.warn('Cache service will not be available - using fallback implementations');
     
-    // Start SSDP service
-    console.log('Starting SSDP service...');
-    try {
-      ssdpService.start(io);
-      console.log('SSDP service started successfully');
-    } catch (ssdpError) {
-      console.warn('SSDP service failed to start (non-critical):', ssdpError.message);
-    }
+    // Skip SSDP service for now
+    console.log('Skipping SSDP service initialization...');
     
     // Start HTTP server
     const PORT = config.server.port || 8080;
@@ -105,8 +94,8 @@ process.on('SIGTERM', async () => {
   });
   try {
     await database.close();
-    await cacheService.close();
-    ssdpService.stop();
+    // await cacheService.close();
+    // ssdpService.stop();
   } catch (err) {
     console.error('Error during shutdown:', err);
   }
@@ -120,13 +109,14 @@ process.on('SIGINT', async () => {
   });
   try {
     await database.close();
-    await cacheService.close();
-    ssdpService.stop();
+    // await cacheService.close();
+    // ssdpService.stop();
   } catch (err) {
     console.error('Error during shutdown:', err);
   }
   process.exit(0);
 });
 
-// Start the application
-initializeApp();
+// For now, start minimal server to ensure deployment works
+console.log('Starting minimal server for deployment stability...');
+require('./minimal-start.js');
