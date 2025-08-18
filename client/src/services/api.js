@@ -545,15 +545,170 @@ export const streamApi = {
 
 // M3U parsing API functions (using long timeout)
 export const m3uApi = {
-  // Parse M3U playlist (long-running operation)
+  // Parse M3U playlist (long-running operation) - Legacy method
   parsePlaylist: (url) => longRunningApi.post('/api/streams/parse/m3u', { url }),
+  
+  // Optimized streaming M3U parser for large playlists
+  parsePlaylistStream: (url, chunkSize = 100, onProgress, onChannels, onComplete, onError) => {
+    return new Promise((resolve, reject) => {
+      const encodedUrl = encodeURIComponent(url);
+      const streamUrl = `/api/streams/parse/m3u/stream?url=${encodedUrl}&chunkSize=${chunkSize}`;
+      
+      const eventSource = new EventSource(streamUrl);
+      let channelBuffer = [];
+
+      eventSource.addEventListener('progress', (event) => {
+        try {
+          const data = JSON.parse(event.data);
+          if (onProgress) onProgress(data);
+        } catch (e) {
+          console.warn('Failed to parse progress event:', e);
+        }
+      });
+
+      eventSource.addEventListener('channels', (event) => {
+        try {
+          const data = JSON.parse(event.data);
+          channelBuffer = channelBuffer.concat(data.channels);
+          if (onChannels) onChannels({
+            ...data,
+            allChannels: [...channelBuffer] // Include all channels received so far
+          });
+        } catch (e) {
+          console.warn('Failed to parse channels event:', e);
+        }
+      });
+
+      eventSource.addEventListener('complete', (event) => {
+        try {
+          const data = JSON.parse(event.data);
+          eventSource.close();
+          if (onComplete) onComplete({
+            ...data,
+            allChannels: channelBuffer
+          });
+          resolve({
+            data: {
+              channels: channelBuffer,
+              total: data.totalChannels,
+              sessionId: data.sessionId
+            }
+          });
+        } catch (e) {
+          console.warn('Failed to parse complete event:', e);
+          eventSource.close();
+          resolve({
+            data: {
+              channels: channelBuffer,
+              total: channelBuffer.length
+            }
+          });
+        }
+      });
+
+      eventSource.addEventListener('error', (event) => {
+        try {
+          const data = JSON.parse(event.data);
+          eventSource.close();
+          if (onError) onError(data);
+          reject(new Error(data.error));
+        } catch (e) {
+          eventSource.close();
+          if (onError) onError({ error: 'Streaming connection failed' });
+          reject(new Error('Streaming connection failed'));
+        }
+      });
+
+      eventSource.onerror = (error) => {
+        eventSource.close();
+        if (onError) onError({ error: 'Connection lost' });
+        reject(new Error('EventSource connection failed'));
+      };
+
+      // Cleanup function
+      return () => eventSource.close();
+    });
+  },
+
+  // Auto-select optimal parsing method based on estimated playlist size
+  parsePlaylistAuto: async (url, callbacks = {}) => {
+    const { onProgress, onChannels, onComplete, onError } = callbacks;
+    
+    try {
+      // First, try to estimate playlist size using GET (HEAD doesn't work well with query params)
+      const estimateResponse = await api.get('/api/streams/parse/m3u/estimate', {
+        params: { url }
+      });
+      
+      const contentLength = parseInt(estimateResponse.data?.contentLength || estimateResponse.headers['x-content-length'] || '0');
+      const estimatedChannels = parseInt(estimateResponse.data?.estimatedChannels || estimateResponse.headers['x-estimated-channels'] || '0');
+      const recommendStreaming = estimateResponse.data?.recommendStreaming || estimateResponse.headers['x-recommend-streaming'] === 'true';
+      const memoryImpact = estimateResponse.data?.memoryImpact || estimateResponse.headers['x-memory-impact'];
+      
+      console.log(`Playlist analysis: ${contentLength} bytes, ~${estimatedChannels} channels, memory impact: ${memoryImpact}, recommend streaming: ${recommendStreaming}`);
+      
+      // Use streaming for large playlists or when explicitly recommended
+      // ALWAYS use streaming when estimation fails (unknown memory impact)
+      if (recommendStreaming || memoryImpact === 'unknown' || contentLength > 1 * 1024 * 1024 || estimatedChannels > 1000) {
+        console.log(`Using ultra-optimized streaming parser (${estimatedChannels || 'unknown'} est. channels)`);
+        
+        // Use adaptive chunk size based on estimated size
+        const chunkSize = estimatedChannels > 100000 ? 2000 : (estimatedChannels > 50000 ? 1000 : 500);
+        
+        return m3uApi.parsePlaylistStream(url, chunkSize || 1000, onProgress, onChannels, onComplete, onError);
+      } else {
+        console.log(`Using legacy parser for small playlist (${estimatedChannels || 'unknown'} est. channels)`);
+        if (onProgress) onProgress({ stage: 'fetching', progress: 0, message: 'Using legacy parser for small playlist...' });
+        const response = await m3uApi.parsePlaylist(url);
+        if (onComplete) onComplete({ totalChannels: response.data.channels.length });
+        return response;
+      }
+    } catch (error) {
+      console.log('Estimation endpoint failed, trying direct HEAD:', error.message);
+      
+      // Fallback to direct HEAD request to the M3U URL
+      try {
+        const headResponse = await fetch(url, { method: 'HEAD', mode: 'cors' });
+        const contentLength = parseInt(headResponse.headers.get('content-length') || '0');
+        
+        // Use streaming for anything > 1MB or unknown size
+        if (contentLength > 1 * 1024 * 1024 || contentLength === 0) {
+          console.log(`Using streaming parser (size: ${contentLength === 0 ? 'unknown' : Math.round(contentLength/1024) + 'KB'})`);
+          return m3uApi.parsePlaylistStream(url, 1000, onProgress, onChannels, onComplete, onError);
+        } else {
+          console.log(`Using legacy parser (size: ${Math.round(contentLength/1024)}KB)`);
+          const response = await m3uApi.parsePlaylist(url);
+          if (onComplete) onComplete({ totalChannels: response.data.channels.length });
+          return response;
+        }
+      } catch (fallbackError) {
+        // Default to streaming parser for safety (better for large playlists)
+        console.log('All estimation failed, defaulting to STREAMING parser for safety');
+        if (onProgress) onProgress({ stage: 'starting', progress: 0, message: 'Starting streaming parser...' });
+        return m3uApi.parsePlaylistStream(url, 1000, onProgress, onChannels, onComplete, onError);
+      }
+    }
+  },
   
   // Import selected channels
   importChannels: (url, selectedChannels) => 
     api.post('/api/streams/import/m3u', { url, selectedChannels }),
   
   // Validate M3U URL
-  validateUrl: (url) => api.post('/api/streams/validate/m3u', { url })
+  validateUrl: (url) => api.post('/api/streams/validate/m3u', { url }),
+  
+  // Cache management
+  getCacheStatus: () => api.get('/api/m3u/cache/status'),
+  clearCache: () => api.delete('/api/m3u/cache/clear'),
+  removeCacheEntry: (urlHash) => api.delete(`/api/m3u/cache/${urlHash}`),
+  
+  // Performance monitoring for massive playlists
+  getPerformanceMetrics: () => api.get('/api/streams/parse/performance'),
+  
+  // Playlist size estimation
+  estimatePlaylistSize: (url) => api.head('/api/streams/parse/m3u/estimate', {
+    params: { url }
+  })
 };
 
 export { longRunningApi };

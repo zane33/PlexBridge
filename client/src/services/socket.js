@@ -10,7 +10,11 @@ class SocketService {
   }
 
   connect() {
-    if (this.socket?.connected) {
+    // If socket already exists (connected or not), just return the existing one
+    if (this.socket) {
+      if (!this.socket.connected) {
+        this.socket.connect();
+      }
       return;
     }
 
@@ -25,6 +29,9 @@ class SocketService {
       upgrade: true,
       rememberUpgrade: true,
       forceNew: false,
+      reconnection: true,
+      reconnectionAttempts: 5,
+      reconnectionDelay: 1000,
     });
 
     this.setupEventListeners();

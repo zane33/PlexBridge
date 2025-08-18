@@ -64,6 +64,7 @@ import api, { m3uApi } from '../../services/api';
 import socketService from '../../services/socket';
 import EnhancedVideoPlayer from '../VideoPlayer/EnhancedVideoPlayer';
 import SimpleVideoPlayer from '../VideoPlayer/SimpleVideoPlayer';
+import VirtualizedChannelTable from '../VirtualizedTable';
 
 const STREAM_TYPES = [
   { value: 'hls', label: 'HLS (.m3u8)' },
@@ -177,20 +178,41 @@ function StreamManager() {
     return () => clearTimeout(timer);
   }, [searchQuery]);
 
-  // Optimized filtering with useMemo and debounced search
+  // Emergency optimized filtering with chunked processing for large datasets
   const filteredChannels = useMemo(() => {
+    // Emergency size limit to prevent total freeze
+    if (parsedChannels.length > 200000) {
+      enqueueSnackbar('⚠️ Dataset too large (200K+ channels). Please use API or contact support for enterprise solutions.', { variant: 'error' });
+      return parsedChannels.slice(0, 10000); // Emergency fallback
+    }
+    
     let filtered = parsedChannels;
 
     // Apply search filter with debounced query
     if (debouncedSearchQuery.trim()) {
       const query = debouncedSearchQuery.toLowerCase();
-      filtered = filtered.filter(channel => 
-        channel.name.toLowerCase().includes(query) ||
-        (channel.attributes?.['group-title'] || '').toLowerCase().includes(query) ||
-        (channel.attributes?.['tvg-id'] || '').toLowerCase().includes(query)
-      );
       
-      // For performance with very large results, limit search results
+      // For very large datasets, use more efficient filtering
+      if (parsedChannels.length > 50000) {
+        // Emergency: Limit search processing to prevent freeze
+        filtered = parsedChannels.slice(0, 50000).filter(channel => 
+          channel.name.toLowerCase().includes(query) ||
+          (channel.attributes?.['group-title'] || '').toLowerCase().includes(query) ||
+          (channel.attributes?.['tvg-id'] || '').toLowerCase().includes(query)
+        );
+        
+        if (filtered.length === 0 && parsedChannels.length > 50000) {
+          enqueueSnackbar('🔍 Search limited to first 50K channels for performance. Use group filters for better results.', { variant: 'warning' });
+        }
+      } else {
+        filtered = filtered.filter(channel => 
+          channel.name.toLowerCase().includes(query) ||
+          (channel.attributes?.['group-title'] || '').toLowerCase().includes(query) ||
+          (channel.attributes?.['tvg-id'] || '').toLowerCase().includes(query)
+        );
+      }
+      
+      // Emergency limit for search results
       if (filtered.length > 10000) {
         filtered = filtered.slice(0, 10000);
       }
@@ -204,7 +226,7 @@ function StreamManager() {
     }
 
     return filtered;
-  }, [parsedChannels, debouncedSearchQuery, groupFilter]);
+  }, [parsedChannels, debouncedSearchQuery, groupFilter, enqueueSnackbar]);
 
   // Reset pagination when filtering changes
   useEffect(() => {
@@ -460,79 +482,182 @@ function StreamManager() {
     }
 
     setImporting(true);
+    setParsedChannels([]); // Clear previous results
+    setSelectedChannels([]);
+    
     try {
       // Reset progress and show initial state
       setParsingProgress({
         show: true,
         progress: 0,
         stage: 'starting',
-        message: 'Initializing M3U parsing...',
+        message: 'Starting optimized M3U parsing...',
         sessionId: null
       });
       
-      enqueueSnackbar('Starting M3U parsing... Progress will be shown below.', { variant: 'info' });
+      enqueueSnackbar('Starting optimized M3U parsing with real-time updates...', { variant: 'info' });
       
-      const response = await m3uApi.parsePlaylist(importFormData.url.trim());
-
-      const channels = response.data.channels || [];
-      const sessionId = response.data.sessionId;
+      let allChannels = [];
+      let sessionId = null;
       
-      // Show frontend processing stage
-      setParsingProgress(prev => ({ 
-        ...prev, 
-        sessionId,
-        stage: 'processing',
-        progress: 100,
-        message: 'Processing channels and preparing interface...'
-      }));
+      // Use auto-selecting parser (streaming for large playlists)
+      await m3uApi.parsePlaylistAuto(importFormData.url.trim(), {
+        onProgress: (data) => {
+          setParsingProgress(prev => ({
+            ...prev,
+            sessionId: data.sessionId || sessionId,
+            stage: data.stage,
+            progress: data.progress,
+            message: data.message
+          }));
+        },
+        
+        onChannels: (data) => {
+          // Progressive channel loading for streaming parser with emergency limits
+          allChannels = data.allChannels || data.channels;
+          sessionId = data.sessionId;
+          
+          // Emergency check for massive datasets
+          if (allChannels.length > 200000) {
+            enqueueSnackbar('🚨 Dataset exceeds 200K channels. Truncating for UI stability.', { variant: 'error' });
+            allChannels = allChannels.slice(0, 200000);
+          }
+          
+          // Update UI progressively with throttling for large datasets
+          if (allChannels.length < 50000) {
+            setParsedChannels([...allChannels]);
+          } else {
+            // For huge datasets, throttle UI updates
+            if (allChannels.length % 5000 === 0) {
+              setParsedChannels([...allChannels]);
+            }
+          }
+          
+          // Update progress to show live count
+          setParsingProgress(prev => ({
+            ...prev,
+            sessionId,
+            message: `Loaded ${allChannels.length} channels so far...`
+          }));
+          
+          // For very large lists, provide user feedback with performance warnings
+          if (allChannels.length > 0 && allChannels.length % 10000 === 0) {
+            const message = allChannels.length > 100000 
+              ? `⚠️ ${allChannels.length} channels loaded - UI performance may be impacted`
+              : `📺 ${allChannels.length} channels loaded and ready for selection`;
+            enqueueSnackbar(message, { variant: allChannels.length > 100000 ? 'warning' : 'info' });
+          }
+        },
+        
+        onComplete: (data) => {
+          sessionId = data.sessionId;
+          
+          // Final channel count
+          const totalChannels = data.totalChannels || allChannels.length;
+          
+          setParsingProgress(prev => ({ 
+            ...prev,
+            sessionId,
+            stage: 'organizing',
+            progress: 95,
+            message: 'Organizing channel groups and finalizing...'
+          }));
+          
+          // Extract unique groups progressively to prevent main thread blocking
+          const extractGroupsProgressively = async () => {
+            const groupSet = new Set();
+            const CHUNK_SIZE = 1000;
+            
+            for (let i = 0; i < allChannels.length; i += CHUNK_SIZE) {
+              const chunk = allChannels.slice(i, i + CHUNK_SIZE);
+              
+              // Process chunk in next frame to prevent blocking
+              await new Promise(resolve => {
+                requestIdleCallback(() => {
+                  chunk.forEach(ch => {
+                    const group = ch.attributes?.['group-title'] || 'Ungrouped';
+                    if (group) groupSet.add(group);
+                  });
+                  resolve();
+                }, { timeout: 50 });
+              });
+              
+              // Update progress for very large datasets
+              if (allChannels.length > 50000 && i % 5000 === 0) {
+                setParsingProgress(prev => ({
+                  ...prev,
+                  message: `Organizing groups... ${Math.round((i / allChannels.length) * 100)}%`
+                }));
+              }
+            }
+            
+            const groups = Array.from(groupSet).sort();
+            setAvailableGroups(groups);
+            return groups;
+          };
+          
+          extractGroupsProgressively();
+          
+          // Smart selection based on playlist size - deferred to prevent blocking
+          setTimeout(() => {
+            if (totalChannels > 10000) {
+              setSelectedChannels([]); // Don't select any for very large lists
+              enqueueSnackbar(`🚀 Large playlist detected (${totalChannels} channels). Use search and filters to select specific channels for better performance.`, { variant: 'warning' });
+            } else if (totalChannels > 1000) {
+              setSelectedChannels([]); // Don't auto-select for large lists
+              enqueueSnackbar(`📋 Medium playlist loaded (${totalChannels} channels). Select specific channels or groups for import.`, { variant: 'info' });
+            } else {
+              setSelectedChannels(allChannels.map((_, index) => index)); // Auto-select for small lists
+            }
+          }, 100); // Defer to next tick to prevent blocking
+          
+          // Final completion
+          setParsingProgress(prev => ({ 
+            ...prev,
+            stage: 'complete',
+            progress: 100,
+            message: `Successfully loaded ${totalChannels} channels! Ready for selection.`,
+            eta: null
+          }));
+          
+          // Show different messages based on playlist size and performance
+          if (totalChannels > 50000) {
+            enqueueSnackbar(`🚀 Massive playlist loaded! ${totalChannels} channels processed efficiently using streaming technology.`, { variant: 'success' });
+          } else if (totalChannels > 10000) {
+            enqueueSnackbar(`📊 Large playlist loaded! ${totalChannels} channels ready for selection.`, { variant: 'success' });
+          } else {
+            enqueueSnackbar(`✅ Parsing complete! Found ${totalChannels} channels.`, { variant: 'success' });
+          }
+          
+          // Auto-hide progress after completion
+          setTimeout(() => {
+            setParsingProgress(prev => ({ ...prev, show: false }));
+          }, 3000);
+        },
+        
+        onError: (error) => {
+          throw new Error(error.error || 'Streaming parser failed');
+        }
+      });
       
-      // Small delay to ensure progress update is visible
-      await new Promise(resolve => setTimeout(resolve, 100));
-      
-      setParsedChannels(channels);
-      
-      // Update progress for group extraction
-      setParsingProgress(prev => ({ 
-        ...prev,
-        stage: 'organizing',
-        message: 'Organizing channel groups...'
-      }));
-      
-      // Extract unique groups for filtering
-      const groups = [...new Set(channels.map(ch => ch.attributes?.['group-title'] || 'Ungrouped').filter(Boolean))];
-      setAvailableGroups(groups.sort());
-      
-      // Update progress for selection setup
-      setParsingProgress(prev => ({ 
-        ...prev,
-        stage: 'finalizing',
-        message: 'Setting up channel selection...'
-      }));
-      
-      // For large datasets, don't select all by default (performance)
-      if (channels.length > 5000) {
-        setSelectedChannels([]); // Don't select all for very large lists
-        enqueueSnackbar('💡 Tip: Use search and filters to select specific channels from this large playlist.', { variant: 'info' });
-      } else {
-        setSelectedChannels(channels.map((_, index) => index));
-      }
-      
-      // Final step - interface is ready
-      setParsingProgress(prev => ({ 
-        ...prev,
-        stage: 'complete',
-        message: `Interface ready! Found ${channels.length} channels`
-      }));
-      
-      // Give UI a moment to render the table, then hide progress bar
-      setTimeout(() => {
-        setParsingProgress(prev => ({ ...prev, show: false }));
-      }, 800);
-      
-      if (channels.length > 0) {
-        enqueueSnackbar(`Successfully parsed ${channels.length} channels! 🎉 Use search and filters to find specific channels.`, { variant: 'success' });
-      } else {
-        enqueueSnackbar('No channels found in the source', { variant: 'warning' });
+      // Fallback: If auto parser returns data directly (legacy mode)
+      if (!allChannels.length && arguments[0]?.data?.channels) {
+        const response = arguments[0];
+        allChannels = response.data.channels || [];
+        setParsedChannels(allChannels);
+        
+        // Handle legacy response
+        const groups = [...new Set(allChannels.map(ch => ch.attributes?.['group-title'] || 'Ungrouped').filter(Boolean))];
+        setAvailableGroups(groups.sort());
+        setSelectedChannels(allChannels.length > 1000 ? [] : allChannels.map((_, index) => index));
+        
+        setParsingProgress({
+          show: true,
+          progress: 100,
+          stage: 'complete',
+          message: `Legacy parser used: ${allChannels.length} channels loaded`,
+          sessionId: response.data.sessionId
+        });
       }
     } catch (error) {
       const errorMessage = error.response?.data?.error || 'Failed to parse stream source';
@@ -1152,10 +1277,26 @@ function StreamManager() {
         </DialogTitle>
         
         <DialogContent>
+          {/* Emergency processing overlay for large datasets */}
+          {parsedChannels.length > 50000 && importing && (
+            <Backdrop open={true} sx={{ zIndex: 9999, color: '#fff' }}>
+              <Box textAlign="center">
+                <CircularProgress size={60} sx={{ mb: 2 }} />
+                <Typography variant="h6">Processing Large Dataset...</Typography>
+                <Typography variant="body2">
+                  {parsedChannels.length} channels detected. Please wait...
+                </Typography>
+              </Box>
+            </Backdrop>
+          )}
+          
           <Alert severity="info" sx={{ mb: 2 }}>
             <Typography variant="body2">
               🎯 Import multiple channels from M3U playlists, XMLTV files, or other multi-channel sources.
               This will automatically create channels and streams for each entry found.
+            </Typography>
+            <Typography variant="caption" color="text.secondary" sx={{ mt: 1, display: 'block' }}>
+              💡 Large playlists are automatically streamed and cached for faster subsequent access.
             </Typography>
           </Alert>
 
@@ -1331,8 +1472,17 @@ function StreamManager() {
                   </Grid>
                 </Box>
 
-                {/* Performance warning for large datasets */}
-                {filteredChannels.length > 10000 && (
+                {/* Emergency performance warnings for large datasets */}
+                {parsedChannels.length > 100000 && (
+                  <Alert severity="error" sx={{ mb: 2 }}>
+                    <Typography variant="body2">
+                      🚨 HUGE DATASET ({parsedChannels.length} channels)! UI limited to prevent freezing. 
+                      Use group filters and search for better performance. 
+                      Consider using API for bulk operations.
+                    </Typography>
+                  </Alert>
+                )}
+                {filteredChannels.length > 10000 && parsedChannels.length <= 100000 && (
                   <Alert severity="warning" sx={{ mb: 2 }}>
                     <Typography variant="body2">
                       ⚠️ Large dataset detected ({filteredChannels.length} channels). 
@@ -1366,24 +1516,62 @@ function StreamManager() {
                     <Button
                       size="small"
                       onClick={() => {
+                        // Emergency safety check for massive selections
+                        if (parsedChannels.length > 100000) {
+                          enqueueSnackbar('⚠️ Cannot select all channels in datasets over 100K. Use group filters to select smaller subsets.', { variant: 'warning' });
+                          return;
+                        }
+                        
                         if (searchQuery || groupFilter) {
-                          // Select all filtered channels
-                          const filteredIndices = filteredChannels.map(filteredChannel => 
-                            parsedChannels.findIndex(originalChannel => originalChannel.id === filteredChannel.id)
-                          ).filter(index => index !== -1);
-                          setSelectedChannels([...new Set([...selectedChannels, ...filteredIndices])]);
+                          // Emergency limit for filtered selections
+                          if (filteredChannels.length > 50000) {
+                            enqueueSnackbar('⚠️ Selection limited to 50K channels for performance. Use more specific filters.', { variant: 'warning' });
+                            return;
+                          }
+                          
+                          // Select all filtered channels with chunked processing
+                          const processSelection = async () => {
+                            const CHUNK_SIZE = 1000;
+                            const newSelection = [...selectedChannels];
+                            
+                            for (let i = 0; i < filteredChannels.length; i += CHUNK_SIZE) {
+                              const chunk = filteredChannels.slice(i, i + CHUNK_SIZE);
+                              
+                              await new Promise(resolve => {
+                                requestIdleCallback(() => {
+                                  chunk.forEach(filteredChannel => {
+                                    const originalIndex = parsedChannels.findIndex(originalChannel => originalChannel.id === filteredChannel.id);
+                                    if (originalIndex !== -1 && !newSelection.includes(originalIndex)) {
+                                      newSelection.push(originalIndex);
+                                    }
+                                  });
+                                  resolve();
+                                }, { timeout: 50 });
+                              });
+                            }
+                            
+                            setSelectedChannels([...new Set(newSelection)]);
+                          };
+                          
+                          processSelection();
                         } else {
-                          // Select all channels
-                          setSelectedChannels(parsedChannels.map((_, index) => index));
+                          // Select all channels with safety limit
+                          if (parsedChannels.length > 50000) {
+                            enqueueSnackbar('⚠️ Auto-select limited to 50K channels. Use filters for larger selections.', { variant: 'warning' });
+                            setSelectedChannels(Array.from({ length: 50000 }, (_, index) => index));
+                          } else {
+                            setSelectedChannels(parsedChannels.map((_, index) => index));
+                          }
                         }
                       }}
-                      disabled={searchQuery || groupFilter ? 
-                        filteredChannels.every(filteredChannel => {
-                          const originalIndex = parsedChannels.findIndex(originalChannel => originalChannel.id === filteredChannel.id);
-                          return selectedChannels.includes(originalIndex);
-                        }) :
-                        selectedChannels.length === parsedChannels.length
-                      }
+                      disabled={(
+                        searchQuery || groupFilter ? 
+                          filteredChannels.length > 50000 || filteredChannels.every(filteredChannel => {
+                            const originalIndex = parsedChannels.findIndex(originalChannel => originalChannel.id === filteredChannel.id);
+                            return selectedChannels.includes(originalIndex);
+                          }) :
+                          parsedChannels.length > 100000 || selectedChannels.length === parsedChannels.length
+                      )}
                     >
                       {searchQuery || groupFilter ? 'Select Filtered' : 'Select All'}
                     </Button>
@@ -1391,23 +1579,50 @@ function StreamManager() {
                       size="small"
                       onClick={() => {
                         if (searchQuery || groupFilter) {
-                          // Deselect filtered channels only
-                          const filteredIndices = filteredChannels.map(filteredChannel => 
-                            parsedChannels.findIndex(originalChannel => originalChannel.id === filteredChannel.id)
-                          ).filter(index => index !== -1);
-                          setSelectedChannels(selectedChannels.filter(index => !filteredIndices.includes(index)));
+                          // Emergency limit for deselection operations
+                          if (filteredChannels.length > 50000) {
+                            enqueueSnackbar('⚠️ Deselection limited for large filtered sets. Use more specific filters.', { variant: 'warning' });
+                            return;
+                          }
+                          
+                          // Deselect filtered channels with chunked processing
+                          const processDeselection = async () => {
+                            const CHUNK_SIZE = 1000;
+                            let newSelection = [...selectedChannels];
+                            
+                            for (let i = 0; i < filteredChannels.length; i += CHUNK_SIZE) {
+                              const chunk = filteredChannels.slice(i, i + CHUNK_SIZE);
+                              
+                              await new Promise(resolve => {
+                                requestIdleCallback(() => {
+                                  chunk.forEach(filteredChannel => {
+                                    const originalIndex = parsedChannels.findIndex(originalChannel => originalChannel.id === filteredChannel.id);
+                                    if (originalIndex !== -1) {
+                                      newSelection = newSelection.filter(index => index !== originalIndex);
+                                    }
+                                  });
+                                  resolve();
+                                }, { timeout: 50 });
+                              });
+                            }
+                            
+                            setSelectedChannels(newSelection);
+                          };
+                          
+                          processDeselection();
                         } else {
-                          // Deselect all
+                          // Deselect all - always safe
                           setSelectedChannels([]);
                         }
                       }}
-                      disabled={searchQuery || groupFilter ? 
-                        !filteredChannels.some(filteredChannel => {
-                          const originalIndex = parsedChannels.findIndex(originalChannel => originalChannel.id === filteredChannel.id);
-                          return selectedChannels.includes(originalIndex);
-                        }) :
-                        selectedChannels.length === 0
-                      }
+                      disabled={(
+                        searchQuery || groupFilter ? 
+                          filteredChannels.length > 50000 || !filteredChannels.some(filteredChannel => {
+                            const originalIndex = parsedChannels.findIndex(originalChannel => originalChannel.id === filteredChannel.id);
+                            return selectedChannels.includes(originalIndex);
+                          }) :
+                          selectedChannels.length === 0
+                      )}
                       sx={{ ml: 1 }}
                     >
                       {searchQuery || groupFilter ? 'Deselect Filtered' : 'Select None'}
@@ -1415,110 +1630,58 @@ function StreamManager() {
                   </Box>
                 </Box>
                 
-                <TableContainer component={Paper} sx={{ maxHeight: 400 }}>
-                  <Table stickyHeader size="small">
-                    <TableHead>
-                      <TableRow>
-                        <TableCell padding="checkbox">
-                          <Checkbox
-                            indeterminate={selectedChannels.length > 0 && selectedChannels.length < parsedChannels.length}
-                            checked={parsedChannels.length > 0 && selectedChannels.length === parsedChannels.length}
-                            onChange={(e) => {
-                              if (e.target.checked) {
-                                setSelectedChannels(parsedChannels.map((_, index) => index));
-                              } else {
-                                setSelectedChannels([]);
-                              }
-                            }}
-                          />
-                        </TableCell>
-                        <TableCell>Number</TableCell>
-                        <TableCell>Name</TableCell>
-                        <TableCell>Type</TableCell>
-                        <TableCell>URL</TableCell>
-                        <TableCell>EPG ID</TableCell>
-                      </TableRow>
-                    </TableHead>
-                    <TableBody>
-                      {filteredChannels
-                        .slice(importPage * importRowsPerPage, importPage * importRowsPerPage + importRowsPerPage)
-                        .map((channel, relativeIndex) => {
-                          const actualIndex = parsedChannels.findIndex(c => c.id === channel.id);
-                          return (
-                            <TableRow 
-                              key={actualIndex} 
-                              hover
-                              selected={selectedChannels.includes(actualIndex)}
-                            >
-                              <TableCell padding="checkbox">
-                                <Checkbox
-                                  checked={selectedChannels.includes(actualIndex)}
-                                  onChange={() => {
-                                    if (selectedChannels.includes(actualIndex)) {
-                                      setSelectedChannels(selectedChannels.filter(i => i !== actualIndex));
-                                    } else {
-                                      setSelectedChannels([...selectedChannels, actualIndex]);
-                                    }
-                                  }}
-                                />
-                              </TableCell>
-                              <TableCell>{channel.number}</TableCell>
-                              <TableCell>
-                                <Box display="flex" alignItems="center" gap={1}>
-                                  {channel.logo && (
-                                    <img 
-                                      src={channel.logo} 
-                                      alt="" 
-                                      style={{ width: 24, height: 24, objectFit: 'contain' }}
-                                      onError={(e) => { e.target.style.display = 'none'; }}
-                                    />
-                                  )}
-                                  <Typography variant="body2">{channel.name}</Typography>
-                                </Box>
-                              </TableCell>
-                              <TableCell>
-                                <Chip 
-                                  label={channel.type?.toUpperCase()} 
-                                  size="small" 
-                                  color="primary" 
-                                  variant="outlined" 
-                                />
-                              </TableCell>
-                              <TableCell>
-                                <Typography 
-                                  variant="body2" 
-                                  sx={{ 
-                                    maxWidth: 200, 
-                                    overflow: 'hidden', 
-                                    textOverflow: 'ellipsis',
-                                    whiteSpace: 'nowrap'
-                                  }}
-                                >
-                                  {channel.url}
-                                </Typography>
-                              </TableCell>
-                              <TableCell>
-                                <Typography variant="body2" color="text.secondary">
-                                  {channel.epg_id || '-'}
-                                </Typography>
-                              </TableCell>
-                            </TableRow>
-                          );
-                        })}
-                    </TableBody>
-                  </Table>
-                </TableContainer>
-                
-                <TablePagination
-                  component="div"
-                  count={filteredChannels.length}
-                  page={importPage}
-                  onPageChange={handleImportPageChange}
-                  rowsPerPage={importRowsPerPage}
-                  onRowsPerPageChange={handleImportRowsPerPageChange}
-                  rowsPerPageOptions={filteredChannels.length > 10000 ? [10, 25, 50] : [10, 25, 50, 100, 250]}
-                  labelRowsPerPage="Rows per page:"
-                  sx={{ borderTop: '1px solid rgba(224, 224, 224, 1)' }}
+                <VirtualizedChannelTable
+                  channels={parsedChannels}
+                  selectedChannels={selectedChannels}
+                  onSelectionChange={(channelIndex) => {
+                    // Emergency throttling for very large datasets
+                    if (parsedChannels.length > 100000) {
+                      // Use setTimeout to prevent blocking on massive datasets
+                      setTimeout(() => {
+                        if (selectedChannels.includes(channelIndex)) {
+                          setSelectedChannels(prev => prev.filter(i => i !== channelIndex));
+                        } else {
+                          setSelectedChannels(prev => [...prev, channelIndex]);
+                        }
+                      }, 0);
+                    } else {
+                      if (selectedChannels.includes(channelIndex)) {
+                        setSelectedChannels(selectedChannels.filter(i => i !== channelIndex));
+                      } else {
+                        setSelectedChannels([...selectedChannels, channelIndex]);
+                      }
+                    }
+                  }}
+                  onSelectAll={(checked, indices) => {
+                    if (indices) {
+                      // For filtered selection
+                      if (checked) {
+                        const newSelection = [...new Set([...selectedChannels, ...indices])];
+                        setSelectedChannels(newSelection);
+                      } else {
+                        setSelectedChannels(selectedChannels.filter(i => !indices.includes(i)));
+                      }
+                    } else {
+                      // For all channels
+                      if (checked) {
+                        setSelectedChannels(parsedChannels.map((_, index) => index));
+                      } else {
+                        setSelectedChannels([]);
+                      }
+                    }
+                  }}
+                  onPreview={(channel) => {
+                    setCurrentStream({
+                      url: channel.url,
+                      name: channel.name,
+                      type: channel.type,
+                      id: channel.id
+                    });
+                    setEnhancedPlayerOpen(true);
+                  }}
+                  maxHeight={isMobile ? 300 : 400}
+                  searchQuery={searchQuery}
+                  groupFilter={groupFilter}
                 />
               </Grid>
             )}
