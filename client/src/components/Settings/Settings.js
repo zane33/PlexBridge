@@ -514,6 +514,21 @@ function Settings() {
                 </Grid>
                 
                 <Grid item xs={12} md={6}>
+                  <Typography gutterBottom>Maximum Concurrent Streams Per Channel</Typography>
+                  <Slider
+                    value={getSetting('plexlive.streaming.maxConcurrentPerChannel', 3)}
+                    onChange={(e, value) => updateSetting('plexlive.streaming.maxConcurrentPerChannel', value)}
+                    min={1}
+                    max={10}
+                    marks
+                    valueLabelDisplay="auto"
+                  />
+                  <Typography variant="caption" color="textSecondary">
+                    Maximum simultaneous streams per individual channel
+                  </Typography>
+                </Grid>
+                
+                <Grid item xs={12} md={6}>
                   <TextField
                     fullWidth
                     label="Stream Timeout"
