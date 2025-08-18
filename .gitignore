@@ -67,3 +67,5 @@ test-results/
 test-reports/
 /.claude
 /data./cache
+/data./database
+/test-screenshots
