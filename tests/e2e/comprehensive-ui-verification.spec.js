@@ -8,12 +8,14 @@ if (!fs.existsSync(screenshotsDir)) {
   fs.mkdirSync(screenshotsDir, { recursive: true });
 }
 
+// Configure test settings at top level
+test.use({
+  viewport: { width: 1920, height: 1080 },
+  video: 'on',
+  trace: 'on',
+});
+
 test.describe('Comprehensive UI Verification with Screenshots', () => {
-  test.use({
-    viewport: { width: 1920, height: 1080 },
-    video: 'on',
-    trace: 'on',
-  });
 
   let screenshotCounter = 1;
   let consoleErrors = [];

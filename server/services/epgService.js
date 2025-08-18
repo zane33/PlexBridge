@@ -297,10 +297,12 @@ class EPGService {
     // Find matching channel in our database by EPG ID
     const channelId = await this.findChannelByEpgId(programme.channel);
     if (!channelId) {
-      // Log this for debugging - many programs might be skipped due to unmapped channels
-      logger.debug('Skipping program for unmapped EPG channel', { 
+      // Enhanced logging: show which programs are being skipped and why
+      logger.warn('Program skipped - no channel mapping found', { 
         epgChannelId: programme.channel,
-        title: this.extractText(programme.title)
+        title: this.extractText(programme.title),
+        startTime: programme.start,
+        suggestion: `Map a channel to EPG ID: ${programme.channel}`
       });
       return null; // Skip programs for unmapped channels
     }
@@ -341,12 +343,33 @@ class EPGService {
         return channelCaseInsensitive.id;
       }
 
-      // Log unmapped EPG ID for debugging
-      logger.debug('No channel found for EPG ID', { epgId });
+      // Enhanced logging with mapping suggestions
+      const epgChannelInfo = await database.get(
+        'SELECT display_name FROM epg_channels WHERE epg_id = ?',
+        [epgId]
+      );
+      
+      logger.warn('No channel mapping found for EPG ID', { 
+        epgId,
+        displayName: epgChannelInfo?.display_name || 'Unknown',
+        suggestion: `Create channel or update existing channel EPG ID to: ${epgId}`,
+        availableChannels: await this.getUnmappedChannelsCount()
+      });
       return null;
     } catch (error) {
       logger.error('Error finding channel by EPG ID', { epgId, error: error.message });
       return null;
+    }
+  }
+
+  async getUnmappedChannelsCount() {
+    try {
+      const result = await database.get(
+        'SELECT COUNT(*) as count FROM channels WHERE epg_id IS NULL OR epg_id = ""'
+      );
+      return result?.count || 0;
+    } catch (error) {
+      return 0;
     }
   }
 
@@ -446,6 +469,9 @@ class EPGService {
 
   async storePrograms(programs) {
     if (programs.length === 0) {
+      logger.warn('No programs to store - check channel mappings', {
+        suggestion: 'Ensure channels have correct EPG IDs that match XMLTV source'
+      });
       return;
     }
 
@@ -453,7 +479,12 @@ class EPGService {
       await database.transaction(async (db) => {
         // Clear old programs first
         const threeDaysAgo = new Date(Date.now() - 3 * 24 * 60 * 60 * 1000).toISOString();
-        await db.run('DELETE FROM epg_programs WHERE end_time < ?', [threeDaysAgo]);
+        const deletedResult = await db.run('DELETE FROM epg_programs WHERE end_time < ?', [threeDaysAgo]);
+        
+        logger.info('Cleared old EPG programs', { 
+          deletedCount: deletedResult.changes,
+          cutoffDate: threeDaysAgo 
+        });
 
         // Insert new programs in batches
         const batchSize = 1000;
@@ -465,6 +496,7 @@ class EPGService {
 
         let insertedCount = 0;
         let errorCount = 0;
+        const channelCounts = {};
         
         for (let i = 0; i < programs.length; i += batchSize) {
           const batch = programs.slice(i, i + batchSize);
@@ -483,6 +515,9 @@ class EPGService {
                 program.season_number
               ]);
               insertedCount++;
+              
+              // Count programs per channel for reporting
+              channelCounts[program.channel_id] = (channelCounts[program.channel_id] || 0) + 1;
             } catch (error) {
               errorCount++;
               logger.debug('Failed to insert program', { 
@@ -502,9 +537,18 @@ class EPGService {
             errors: errorCount 
           });
         }
+        
+        logger.info('EPG programs stored successfully', {
+          totalPrograms: insertedCount,
+          channelsWithPrograms: Object.keys(channelCounts).length,
+          programsPerChannel: channelCounts
+        });
       });
 
-      logger.epg('EPG programs stored', { count: programs.length });
+      logger.epg('EPG programs storage completed', { 
+        inserted: programs.length,
+        timestamp: new Date().toISOString()
+      });
 
     } catch (error) {
       logger.error('EPG storage failed:', error);
@@ -664,7 +708,8 @@ class EPGService {
           status: 'database_unavailable',
           sources: [],
           programs: { total: 0, upcoming24h: 0 },
-          isInitialized: false
+          isInitialized: false,
+          message: 'Database not initialized'
         };
       }
 
@@ -678,6 +723,30 @@ class EPGService {
         SELECT COUNT(*) as count FROM epg_programs 
         WHERE start_time BETWEEN ? AND ?
       `, [now, nextDay]) || { count: 0 };
+
+      // Get channel mapping statistics
+      const channelStats = await database.get(`
+        SELECT 
+          COUNT(*) as total_channels,
+          SUM(CASE WHEN epg_id IS NOT NULL AND epg_id != '' THEN 1 ELSE 0 END) as mapped_channels
+        FROM channels
+      `) || { total_channels: 0, mapped_channels: 0 };
+
+      // Get EPG channels count
+      const epgChannelsCount = await database.get(
+        'SELECT COUNT(*) as count FROM epg_channels'
+      ) || { count: 0 };
+
+      // Determine if initialization should be forced
+      const shouldInitialize = !this.isInitialized && sources.length > 0;
+      
+      if (shouldInitialize) {
+        logger.info('EPG service not initialized but sources exist, initializing now');
+        // Initialize in background without blocking status response
+        setImmediate(() => this.initialize().catch(err => 
+          logger.error('Background EPG initialization failed:', err)
+        ));
+      }
 
       return {
         status: 'available',
@@ -693,7 +762,19 @@ class EPGService {
           total: totalPrograms?.count || 0,
           upcoming24h: upcomingPrograms?.count || 0
         },
-        isInitialized: this.isInitialized
+        channels: {
+          total: channelStats.total_channels || 0,
+          mapped: channelStats.mapped_channels || 0,
+          epgAvailable: epgChannelsCount.count || 0
+        },
+        mapping: {
+          efficiency: channelStats.total_channels > 0 
+            ? Math.round((channelStats.mapped_channels / channelStats.total_channels) * 100)
+            : 0,
+          needsMapping: Math.max(0, channelStats.total_channels - channelStats.mapped_channels)
+        },
+        isInitialized: this.isInitialized,
+        lastCheck: new Date().toISOString()
       };
 
     } catch (error) {
@@ -703,7 +784,10 @@ class EPGService {
         error: error.message,
         sources: [],
         programs: { total: 0, upcoming24h: 0 },
-        isInitialized: false
+        channels: { total: 0, mapped: 0, epgAvailable: 0 },
+        mapping: { efficiency: 0, needsMapping: 0 },
+        isInitialized: false,
+        lastCheck: new Date().toISOString()
       };
     }
   }
