@@ -20,6 +20,8 @@ const apiRoutes = require('./routes/api');
 const streamRoutes = require('./routes/streams');
 const epgRoutes = require('./routes/epg');
 const ssdpRoutes = require('./routes/ssdp');
+const m3uRoutes = require('./routes/m3u');
+const m3uImportRoutes = require('./routes/m3uImport');
 
 const app = express();
 const server = http.createServer(app);
@@ -63,15 +65,20 @@ app.use(morgan('combined', { stream: { write: message => logger.info(message.tri
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 
-// Serve static files
-app.use('/logos', express.static(path.join(__dirname, '../data/logos')));
-app.use(express.static(path.join(__dirname, '../client/build')));
+// Make io accessible to routes
+app.set('io', io);
 
-// API Routes
+// API Routes - MUST BE BEFORE STATIC FILES
+app.use('/api/streams/parse/m3u', m3uRoutes);
+app.use('/api/streams/import/m3u', m3uImportRoutes);
 app.use('/api', apiRoutes);
-app.use('/', streamRoutes);
 app.use('/epg', epgRoutes);
 app.use('/', ssdpRoutes);
+app.use('/', streamRoutes);
+
+// Serve static files - MUST BE AFTER API ROUTES
+app.use('/logos', express.static(path.join(__dirname, '../data/logos')));
+app.use(express.static(path.join(__dirname, '../client/build')));
 
 // Health check endpoint
 app.get('/health', (req, res) => {
