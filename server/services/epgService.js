@@ -658,8 +658,18 @@ class EPGService {
 
   async getStatus() {
     try {
-      const sources = await database.all('SELECT * FROM epg_sources');
-      const totalPrograms = await database.get('SELECT COUNT(*) as count FROM epg_programs');
+      // Check if database is available
+      if (!database || !database.isInitialized) {
+        return {
+          status: 'database_unavailable',
+          sources: [],
+          programs: { total: 0, upcoming24h: 0 },
+          isInitialized: false
+        };
+      }
+
+      const sources = await database.all('SELECT * FROM epg_sources') || [];
+      const totalPrograms = await database.get('SELECT COUNT(*) as count FROM epg_programs') || { count: 0 };
       
       const now = new Date().toISOString();
       const nextDay = new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString();
@@ -667,27 +677,34 @@ class EPGService {
       const upcomingPrograms = await database.get(`
         SELECT COUNT(*) as count FROM epg_programs 
         WHERE start_time BETWEEN ? AND ?
-      `, [now, nextDay]);
+      `, [now, nextDay]) || { count: 0 };
 
       return {
-        sources: sources.map(source => ({
+        status: 'available',
+        sources: Array.isArray(sources) ? sources.map(source => ({
           id: source.id,
           name: source.name,
           enabled: source.enabled,
           lastRefresh: source.last_refresh,
           lastSuccess: source.last_success,
           nextRefresh: this.getNextRefreshTime(source)
-        })),
+        })) : [],
         programs: {
-          total: totalPrograms.count,
-          upcoming24h: upcomingPrograms.count
+          total: totalPrograms?.count || 0,
+          upcoming24h: upcomingPrograms?.count || 0
         },
         isInitialized: this.isInitialized
       };
 
     } catch (error) {
       logger.error('EPG status retrieval failed:', error);
-      return { error: error.message };
+      return { 
+        status: 'error',
+        error: error.message,
+        sources: [],
+        programs: { total: 0, upcoming24h: 0 },
+        isInitialized: false
+      };
     }
   }
 

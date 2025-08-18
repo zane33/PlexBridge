@@ -216,11 +216,26 @@ class CacheService {
   }
 
   async getMetrics() {
-    return await this.get('metrics:system');
+    try {
+      const metrics = await this.get('metrics:system');
+      return metrics || null;
+    } catch (error) {
+      logger.warn('Failed to get metrics from cache:', error);
+      return null;
+    }
   }
 
   async setMetrics(metrics) {
-    return await this.set('metrics:system', metrics, 60); // 1 minute TTL
+    try {
+      if (!metrics || typeof metrics !== 'object') {
+        logger.warn('Invalid metrics data for caching:', metrics);
+        return false;
+      }
+      return await this.set('metrics:system', metrics, 60); // 1 minute TTL
+    } catch (error) {
+      logger.warn('Failed to set metrics in cache:', error);
+      return false;
+    }
   }
 
   // Stream session tracking

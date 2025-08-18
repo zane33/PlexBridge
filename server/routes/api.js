@@ -600,17 +600,29 @@ router.post('/epg/refresh', async (req, res) => {
 
 router.get('/epg/sources', async (req, res) => {
   try {
+    // Always return JSON content-type header
+    res.setHeader('Content-Type', 'application/json');
+    
     // Check if database is initialized
     if (!database || !database.isInitialized || !database.db) {
       logger.info('Database not initialized, returning empty EPG sources array');
-      return res.json([]); // Return empty array if database not initialized
+      return res.status(200).json([]); // Return empty array if database not initialized
     }
 
     const sources = await database.all('SELECT * FROM epg_sources ORDER BY name');
-    res.json(sources);
+    const safeResponse = Array.isArray(sources) ? sources : [];
+    
+    res.status(200).json(safeResponse);
   } catch (error) {
     logger.error('EPG sources error:', error);
-    res.status(500).json({ error: 'Failed to fetch EPG sources' });
+    
+    // Always return JSON, never fallback to HTML
+    res.status(200).json({
+      error: 'Failed to fetch EPG sources',
+      message: error.message,
+      sources: [],
+      timestamp: new Date().toISOString()
+    });
   }
 });
 
@@ -658,10 +670,13 @@ router.put('/epg/sources/:id', validate(epgSourceSchema), async (req, res) => {
 // Get all available EPG channels across all sources
 router.get('/epg/channels', async (req, res) => {
   try {
+    // Always return JSON content-type header
+    res.setHeader('Content-Type', 'application/json');
+    
     // Check if database is initialized
     if (!database || !database.isInitialized || !database.db) {
       logger.info('Database not initialized, returning empty EPG channels');
-      return res.json({ available_channels: [] }); // Return empty array if database not initialized
+      return res.status(200).json({ available_channels: [] }); // Return empty array if database not initialized
     }
 
     // Get all EPG channels with display names from all sources
@@ -686,22 +701,31 @@ router.get('/epg/channels', async (req, res) => {
       ORDER BY ec.display_name
     `);
 
+    // Ensure we have an array
+    const safeChannels = Array.isArray(availableChannels) ? availableChannels : [];
+
     // Format response with proper display names
-    const channelsWithNames = availableChannels.map(ch => ({
+    const channelsWithNames = safeChannels.map(ch => ({
       epg_id: ch.epg_id,
-      program_count: ch.program_count,
+      program_count: ch.program_count || 0,
       channel_name: ch.channel_name || ch.epg_id, // Fallback to epg_id if no display name
       icon_url: ch.icon_url,
       source_name: ch.source_name,
       source_id: ch.source_id
     }));
 
-    res.json({
+    res.status(200).json({
       available_channels: channelsWithNames
     });
   } catch (error) {
-    console.error('EPG channels error:', error);
-    res.status(500).json({ error: error.message || 'Failed to fetch EPG channels' });
+    logger.error('EPG channels error:', error);
+    
+    // Always return JSON response with safe structure
+    res.status(200).json({ 
+      available_channels: [],
+      error: error.message || 'Failed to fetch EPG channels',
+      timestamp: new Date().toISOString()
+    });
   }
 });
 
@@ -793,10 +817,13 @@ router.delete('/epg/sources/:id', async (req, res) => {
 // Get all EPG programs
 router.get('/epg/programs', async (req, res) => {
   try {
+    // Always return JSON content-type header
+    res.setHeader('Content-Type', 'application/json');
+    
     // Check if database is initialized
     if (!database || !database.isInitialized || !database.db) {
       logger.info('Database not initialized, returning empty EPG programs');
-      return res.json([]); // Return empty array if database not initialized
+      return res.status(200).json([]); // Return empty array if database not initialized
     }
 
     const { channel_id, start_time, end_time, limit = 1000 } = req.query;
@@ -837,10 +864,18 @@ router.get('/epg/programs', async (req, res) => {
     params.push(parseInt(limit));
     
     const programs = await database.all(query, params);
-    res.json(programs);
+    const safePrograms = Array.isArray(programs) ? programs : [];
+    
+    res.status(200).json(safePrograms);
   } catch (error) {
-    console.error('EPG programs error:', error);
-    res.status(500).json({ error: error.message || 'Failed to fetch EPG programs' });
+    logger.error('EPG programs error:', error);
+    
+    // Always return JSON array, never 500 error
+    res.status(200).json({
+      programs: [],
+      error: error.message || 'Failed to fetch EPG programs',
+      timestamp: new Date().toISOString()
+    });
   }
 });
 
@@ -1050,14 +1085,36 @@ router.get('/metrics', async (req, res) => {
   try {
     // Check cache first
     const cached = await cacheService.getMetrics();
-    if (cached) {
+    if (cached && typeof cached === 'object' && cached.timestamp) {
       return res.json(cached);
     }
 
-    const activeStreams = streamManager.getActiveStreams();
-    const dbHealth = await database.healthCheck();
+    // Get active streams safely
+    let activeStreams = [];
+    let streamsByChannel = {};
+    let concurrencyMetrics = {};
+    
+    try {
+      activeStreams = streamManager.getActiveStreams() || [];
+      streamsByChannel = streamManager.getStreamsByChannel() || {};
+      concurrencyMetrics = streamManager.getConcurrencyMetrics() || {};
+    } catch (streamError) {
+      logger.warn('Stream manager not available for metrics:', streamError);
+      activeStreams = [];
+      streamsByChannel = {};
+      concurrencyMetrics = {};
+    }
+
+    // Get health checks with fallbacks
+    const dbHealth = database.isInitialized ? await database.healthCheck() : { status: 'initializing' };
     const cacheHealth = await cacheService.healthCheck();
-    const epgStatus = await epgService.getStatus();
+    let epgStatus = { status: 'unavailable', sources: [] };
+    
+    try {
+      epgStatus = await epgService.getStatus();
+    } catch (epgError) {
+      logger.warn('EPG service not available for metrics:', epgError);
+    }
     
     const metrics = {
       system: {
@@ -1068,23 +1125,55 @@ router.get('/metrics', async (req, res) => {
         nodeVersion: process.version
       },
       streams: {
-        active: activeStreams.length,
+        active: Array.isArray(activeStreams) ? activeStreams.length : 0,
         maximum: parseInt(process.env.MAX_CONCURRENT_STREAMS) || 10,
-        utilization: (activeStreams.length / (parseInt(process.env.MAX_CONCURRENT_STREAMS) || 10)) * 100
+        utilization: Array.isArray(activeStreams) 
+          ? (activeStreams.length / (parseInt(process.env.MAX_CONCURRENT_STREAMS) || 10)) * 100 
+          : 0,
+        byChannel: streamsByChannel,
+        concurrency: concurrencyMetrics
       },
-      database: dbHealth,
-      cache: cacheHealth,
-      epg: epgStatus,
+      database: dbHealth || { status: 'unknown' },
+      cache: cacheHealth || { status: 'unknown' },
+      epg: epgStatus || { status: 'unknown', sources: [] },
       timestamp: new Date().toISOString()
     };
 
-    // Cache for 1 minute
-    await cacheService.setMetrics(metrics);
+    // Cache for 1 minute - only cache if successful
+    try {
+      await cacheService.setMetrics(metrics);
+    } catch (cacheError) {
+      logger.warn('Failed to cache metrics:', cacheError);
+    }
     
     res.json(metrics);
   } catch (error) {
     logger.error('Metrics error:', error);
-    res.status(500).json({ error: 'Failed to fetch metrics' });
+    
+    // Return fallback metrics structure on error
+    const fallbackMetrics = {
+      system: {
+        uptime: process.uptime(),
+        memory: process.memoryUsage(),
+        cpu: { user: 0, system: 0 },
+        platform: process.platform,
+        nodeVersion: process.version
+      },
+      streams: {
+        active: 0,
+        maximum: 10,
+        utilization: 0,
+        byChannel: {},
+        concurrency: {}
+      },
+      database: { status: 'error', error: 'Database check failed' },
+      cache: { status: 'error', error: 'Cache check failed' },
+      epg: { status: 'error', sources: [], error: 'EPG check failed' },
+      timestamp: new Date().toISOString(),
+      error: 'Failed to fetch complete metrics'
+    };
+    
+    res.status(200).json(fallbackMetrics); // Return 200 with error info instead of 500
   }
 });
 
@@ -1100,21 +1189,37 @@ router.get('/logs', async (req, res) => {
       search = null
     } = req.query;
     
-    // Get logs from database
-    const logs = await logger.getLogs({
-      level,
-      limit: parseInt(limit),
-      offset: parseInt(offset),
-      startDate,
-      endDate,
-      category,
-      search
-    });
+    // Initialize default response structure
+    let logs = [];
+    let fileLogs = [];
     
-    // Also get recent file logs for real-time viewing
-    const fileLogs = await getRecentFileLogs(level, 50);
+    // Get logs from database with error handling
+    try {
+      const dbLogs = await logger.getLogs({
+        level,
+        limit: parseInt(limit),
+        offset: parseInt(offset),
+        startDate,
+        endDate,
+        category,
+        search
+      });
+      logs = Array.isArray(dbLogs) ? dbLogs : [];
+    } catch (dbError) {
+      logger.warn('Database logs not available:', dbError);
+      logs = [];
+    }
     
-    res.json({
+    // Get recent file logs for real-time viewing with error handling
+    try {
+      fileLogs = await getRecentFileLogs(level, 50);
+      fileLogs = Array.isArray(fileLogs) ? fileLogs : [];
+    } catch (fileError) {
+      logger.warn('File logs not available:', fileError);
+      fileLogs = [];
+    }
+    
+    const response = {
       database_logs: logs,
       recent_file_logs: fileLogs,
       pagination: {
@@ -1130,10 +1235,33 @@ router.get('/logs', async (req, res) => {
         search
       },
       timestamp: new Date().toISOString()
-    });
+    };
+    
+    res.json(response);
   } catch (error) {
     logger.error('Logs error:', error);
-    res.status(500).json({ error: 'Failed to fetch logs' });
+    
+    // Return safe fallback response
+    const fallbackResponse = {
+      database_logs: [],
+      recent_file_logs: [],
+      pagination: {
+        limit: parseInt(req.query.limit) || 100,
+        offset: parseInt(req.query.offset) || 0,
+        total: 0
+      },
+      filters: {
+        level: req.query.level || null,
+        category: req.query.category || null,
+        startDate: req.query.startDate || null,
+        endDate: req.query.endDate || null,
+        search: req.query.search || null
+      },
+      timestamp: new Date().toISOString(),
+      error: 'Failed to fetch logs'
+    };
+    
+    res.status(200).json(fallbackResponse); // Return 200 with error info instead of 500
   }
 });
 
@@ -1314,11 +1442,14 @@ function parseLogLine(line) {
 // SETTINGS API
 router.get('/settings', async (req, res) => {
   try {
+    // Always return JSON content-type header
+    res.setHeader('Content-Type', 'application/json');
+    
     // Check if database is initialized
     if (!database || !database.isInitialized || !database.db) {
       logger.info('Database not initialized, returning default settings');
       // Return default settings structure when database not available
-      return res.json({
+      const defaultSettings = {
         plexlive: {
           ssdp: {
             enabled: true,
@@ -1379,28 +1510,55 @@ router.get('/settings', async (req, res) => {
             channelLogoFallback: true
           }
         }
-      });
+      };
+      
+      return res.status(200).json(defaultSettings);
     }
 
     const settings = await database.all('SELECT * FROM settings ORDER BY key');
+    const safeSettings = Array.isArray(settings) ? settings : [];
     
     const settingsObj = {};
-    settings.forEach(setting => {
+    safeSettings.forEach(setting => {
       let value = setting.value;
-      if (setting.type === 'number') {
-        value = parseFloat(value);
-      } else if (setting.type === 'boolean') {
-        value = value === 'true';
-      } else if (setting.type === 'json') {
-        value = JSON.parse(value);
+      
+      try {
+        if (setting.type === 'number') {
+          value = parseFloat(value);
+        } else if (setting.type === 'boolean') {
+          value = value === 'true';
+        } else if (setting.type === 'json') {
+          value = JSON.parse(value);
+        }
+      } catch (parseError) {
+        logger.warn(`Failed to parse setting ${setting.key}:`, parseError);
+        value = setting.value; // Keep original value if parsing fails
       }
+      
       settingsObj[setting.key] = value;
     });
 
-    res.json(settingsObj);
+    res.status(200).json(settingsObj);
   } catch (error) {
     logger.error('Settings get error:', error);
-    res.status(500).json({ error: 'Failed to fetch settings' });
+    
+    // Return safe fallback settings structure
+    const fallbackSettings = {
+      error: 'Failed to fetch settings',
+      message: error.message,
+      plexlive: {
+        ssdp: { enabled: true },
+        streaming: { maxConcurrentStreams: 10 },
+        transcoding: { enabled: true },
+        caching: { enabled: true },
+        device: { name: 'PlexTV' },
+        network: { bindAddress: '0.0.0.0' },
+        compatibility: { hdHomeRunMode: true }
+      },
+      timestamp: new Date().toISOString()
+    };
+    
+    res.status(200).json(fallbackSettings); // Return 200 with error info instead of 500
   }
 });
 
