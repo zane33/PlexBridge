@@ -790,6 +790,60 @@ router.delete('/epg/sources/:id', async (req, res) => {
   }
 });
 
+// Get all EPG programs
+router.get('/epg/programs', async (req, res) => {
+  try {
+    // Check if database is initialized
+    if (!database || !database.isInitialized || !database.db) {
+      logger.info('Database not initialized, returning empty EPG programs');
+      return res.json([]); // Return empty array if database not initialized
+    }
+
+    const { channel_id, start_time, end_time, limit = 1000 } = req.query;
+    
+    let query = `
+      SELECT 
+        p.*,
+        ec.display_name as channel_name,
+        es.name as source_name
+      FROM epg_programs p
+      LEFT JOIN epg_channels ec ON p.channel_id = ec.epg_id
+      LEFT JOIN epg_sources es ON ec.source_id = es.id
+    `;
+    
+    const params = [];
+    const conditions = [];
+    
+    if (channel_id) {
+      conditions.push('p.channel_id = ?');
+      params.push(channel_id);
+    }
+    
+    if (start_time) {
+      conditions.push('p.start_time >= ?');
+      params.push(start_time);
+    }
+    
+    if (end_time) {
+      conditions.push('p.end_time <= ?');
+      params.push(end_time);
+    }
+    
+    if (conditions.length > 0) {
+      query += ' WHERE ' + conditions.join(' AND ');
+    }
+    
+    query += ' ORDER BY p.start_time ASC LIMIT ?';
+    params.push(parseInt(limit));
+    
+    const programs = await database.all(query, params);
+    res.json(programs);
+  } catch (error) {
+    console.error('EPG programs error:', error);
+    res.status(500).json({ error: error.message || 'Failed to fetch EPG programs' });
+  }
+});
+
 // Debug EPG data endpoint
 router.get('/debug/epg', async (req, res) => {
   try {

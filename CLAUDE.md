@@ -213,6 +213,46 @@ SSDP_PORT=1900
 
 ## Testing Strategy
 
+### **CRITICAL: Mandatory Testing Protocol for All Changes**
+
+**Every change to the PlexBridge application MUST be tested using Playwright MCP with Chrome browser automation including detailed screenshot analysis.**
+
+#### **Required Testing Steps:**
+1. **Comprehensive Playwright Testing**: Use Playwright MCP with Chrome browser to test all application functionality
+2. **Screenshot Capture**: Take screenshots of EVERY page and UI state during testing
+3. **Screenshot Analysis**: Carefully analyze each screenshot for:
+   - Visual errors, broken layouts, missing elements
+   - JavaScript errors displayed in browser console
+   - Network failures or API issues shown in the UI
+   - UI/UX problems, accessibility issues
+   - Loading states, error messages
+   - Layout responsiveness across different screen sizes
+
+#### **Testing Scope Requirements:**
+- **All Pages**: Dashboard, Channels, Streams, EPG, Logs, Settings
+- **All API Endpoints**: /health, /api/channels, /api/streams, /api/metrics, /api/settings, /api/logs, /api/epg-sources, /api/epg/channels, /api/epg/programs, /discover.json, /lineup.json
+- **Responsive Design**: Desktop (1920x1080), Mobile (375x667)
+- **Interactive Elements**: Navigation, buttons, forms, menus
+- **Error States**: Test error boundaries and JavaScript console
+
+#### **Documentation Requirements:**
+- **Screenshot Inventory**: Document all screenshots taken with detailed analysis
+- **Issue Identification**: Report ANY visual problems, errors, or issues found
+- **Error Analysis**: List all JavaScript console errors and network failures
+- **Status Report**: Provide comprehensive assessment of application health
+- **Fix Verification**: Verify that all identified issues are resolved
+
+#### **Acceptance Criteria:**
+- ✅ All pages load without JavaScript errors
+- ✅ All API endpoints return proper JSON responses (not HTML error pages)
+- ✅ No visual layout issues or broken UI elements
+- ✅ Responsive design works on all tested screen sizes
+- ✅ Navigation functions properly between all sections
+- ✅ No React error boundaries triggered
+- ✅ Browser console shows only normal operation messages
+
+**This testing protocol MUST be followed for every deployment and code change to ensure consistent application quality and user experience.**
+
 ### Testing Framework Setup
 The project uses **Playwright** for comprehensive end-to-end testing with Chrome browser automation. Tests verify M3U import pagination fixes and stream preview functionality.
 
