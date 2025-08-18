@@ -581,21 +581,63 @@ router.get('/epg', async (req, res) => {
 
 router.post('/epg/refresh', async (req, res) => {
   try {
-    const { source_id } = req.body;
+    const { source_id, force_initialize = false } = req.body;
+    
+    // Force EPG service initialization if requested
+    if (force_initialize && !epgService.isInitialized) {
+      logger.info('Force initializing EPG service');
+      await epgService.initialize();
+    }
     
     if (source_id) {
       await epgService.forceRefresh(source_id);
-      res.json({ message: `EPG refresh started for source ${source_id}` });
+      res.json({ 
+        message: `EPG refresh started for source ${source_id}`,
+        initialized: epgService.isInitialized
+      });
     } else {
       const sources = await database.all('SELECT id FROM epg_sources WHERE enabled = 1');
       for (const source of sources) {
         epgService.forceRefresh(source.id);
       }
-      res.json({ message: 'EPG refresh started for all sources' });
+      res.json({ 
+        message: 'EPG refresh started for all sources',
+        sourceCount: sources.length,
+        initialized: epgService.isInitialized
+      });
     }
   } catch (error) {
     logger.error('EPG refresh error:', error);
     res.status(500).json({ error: 'Failed to refresh EPG' });
+  }
+});
+
+// EPG Service initialization endpoint
+router.post('/epg/initialize', async (req, res) => {
+  try {
+    logger.info('Manual EPG service initialization requested');
+    
+    if (epgService.isInitialized) {
+      return res.json({ 
+        message: 'EPG service already initialized',
+        isInitialized: true,
+        timestamp: new Date().toISOString()
+      });
+    }
+    
+    await epgService.initialize();
+    
+    res.json({ 
+      message: 'EPG service initialized successfully',
+      isInitialized: epgService.isInitialized,
+      timestamp: new Date().toISOString()
+    });
+  } catch (error) {
+    logger.error('EPG initialization error:', error);
+    res.status(500).json({ 
+      error: 'Failed to initialize EPG service',
+      message: error.message
+    });
   }
 });
 
@@ -880,6 +922,96 @@ router.get('/epg/programs', async (req, res) => {
   }
 });
 
+// EPG Mapping suggestions endpoint
+router.get('/epg/mapping-suggestions', async (req, res) => {
+  try {
+    // Get unmapped channels
+    const unmappedChannels = await database.all(`
+      SELECT id, name, number, epg_id 
+      FROM channels 
+      WHERE epg_id IS NULL OR epg_id = '' OR epg_id NOT IN (
+        SELECT DISTINCT epg_id FROM epg_channels
+      )
+      ORDER BY number
+    `);
+
+    // Get available EPG channels that aren't mapped
+    const availableEpgChannels = await database.all(`
+      SELECT 
+        ec.epg_id,
+        ec.display_name,
+        ec.source_id,
+        es.name as source_name,
+        COALESCE(pc.program_count, 0) as program_count
+      FROM epg_channels ec
+      LEFT JOIN epg_sources es ON ec.source_id = es.id
+      LEFT JOIN (
+        SELECT channel_id, COUNT(*) as program_count
+        FROM epg_programs
+        GROUP BY channel_id
+      ) pc ON ec.epg_id = pc.channel_id
+      WHERE ec.epg_id NOT IN (
+        SELECT DISTINCT epg_id FROM channels WHERE epg_id IS NOT NULL AND epg_id != ''
+      )
+      ORDER BY ec.display_name
+    `);
+
+    // Generate smart mapping suggestions
+    const suggestions = [];
+    for (const channel of unmappedChannels) {
+      const matches = availableEpgChannels.filter(epgCh => {
+        const channelName = channel.name.toLowerCase();
+        const epgName = epgCh.display_name.toLowerCase();
+        
+        // Direct name match
+        if (channelName.includes(epgName) || epgName.includes(channelName)) {
+          return true;
+        }
+        
+        // Channel number match patterns
+        const channelNumber = channel.number.toString();
+        if (epgName.includes(channelNumber) || epgCh.epg_id.includes(channelNumber)) {
+          return true;
+        }
+        
+        return false;
+      });
+      
+      if (matches.length > 0) {
+        suggestions.push({
+          channel: {
+            id: channel.id,
+            name: channel.name,
+            number: channel.number,
+            current_epg_id: channel.epg_id
+          },
+          suggestions: matches.map(match => ({
+            epg_id: match.epg_id,
+            display_name: match.display_name,
+            source_name: match.source_name,
+            program_count: match.program_count,
+            confidence: match.display_name.toLowerCase() === channel.name.toLowerCase() ? 'high' : 'medium'
+          }))
+        });
+      }
+    }
+
+    res.json({
+      unmapped_channels: unmappedChannels.length,
+      available_epg_channels: availableEpgChannels.length,
+      suggestions,
+      summary: {
+        channels_needing_mapping: unmappedChannels.length,
+        available_for_mapping: availableEpgChannels.length,
+        suggested_mappings: suggestions.length
+      }
+    });
+  } catch (error) {
+    logger.error('EPG mapping suggestions error:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
 // Debug EPG data endpoint
 router.get('/debug/epg', async (req, res) => {
   try {
@@ -936,19 +1068,40 @@ router.get('/debug/epg', async (req, res) => {
     const totalPrograms = await database.get('SELECT COUNT(*) as count FROM epg_programs');
     const totalEPGChannels = await database.get('SELECT COUNT(*) as count FROM epg_channels');
 
+    // Get invalid mappings (channels with EPG IDs that don't exist in sources)
+    const invalidMappings = await database.all(`
+      SELECT 
+        c.id,
+        c.name,
+        c.number,
+        c.epg_id
+      FROM channels c
+      WHERE c.epg_id IS NOT NULL 
+        AND c.epg_id != ''
+        AND c.epg_id NOT IN (
+          SELECT DISTINCT epg_id FROM epg_channels
+        )
+      ORDER BY c.number
+    `);
+
     res.json({
       table_schema: tableInfo,
       sample_programs: samplePrograms,
       distinct_channels: distinctChannels,
       channel_mapping: channelMapping,
+      invalid_mappings: invalidMappings,
       epg_sources: epgSources,
       epg_channels: epgChannels,
       summary: {
         total_channels: channelMapping.length,
         channels_with_programs: channelMapping.filter(c => c.program_count > 0).length,
+        channels_with_valid_epg_id: channelMapping.filter(c => c.epg_id).length,
+        channels_with_invalid_epg_id: invalidMappings.length,
         total_programs: totalPrograms.count,
         total_epg_channels: totalEPGChannels.count,
-        channels_with_epg_id: channelMapping.filter(c => c.epg_id).length
+        mapping_efficiency: channelMapping.length > 0 
+          ? Math.round((channelMapping.filter(c => c.program_count > 0).length / channelMapping.length) * 100)
+          : 0
       }
     });
   } catch (error) {
@@ -1139,10 +1292,22 @@ router.get('/metrics', async (req, res) => {
     // Get health checks with fallbacks
     const dbHealth = database.isInitialized ? await database.healthCheck() : { status: 'initializing' };
     const cacheHealth = await cacheService.healthCheck();
-    let epgStatus = { status: 'unavailable', sources: [] };
+    let epgStatus = { 
+      status: 'unavailable', 
+      sources: [],
+      programs: { total: 0, upcoming24h: 0 },
+      channels: { total: 0, mapped: 0, epgAvailable: 0 },
+      mapping: { efficiency: 0, needsMapping: 0 },
+      isInitialized: false
+    };
     
     try {
       epgStatus = await epgService.getStatus();
+      logger.debug('EPG status retrieved for metrics', {
+        totalPrograms: epgStatus.programs?.total,
+        mappedChannels: epgStatus.channels?.mapped,
+        isInitialized: epgStatus.isInitialized
+      });
     } catch (epgError) {
       logger.warn('EPG service not available for metrics:', epgError);
     }

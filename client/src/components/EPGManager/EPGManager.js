@@ -208,7 +208,22 @@ function EPGManager() {
   const fetchEpgStatus = async () => {
     try {
       const response = await api.get('/api/metrics');
-      setEpgStatus(response.data.epg);
+      const epgData = response.data.epg;
+      
+      // Enhance EPG status with additional context
+      const enhancedStatus = {
+        ...epgData,
+        hasData: (epgData.programs?.total || 0) > 0,
+        hasMapping: (epgData.channels?.mapped || 0) > 0,
+        needsAttention: (epgData.programs?.total || 0) === 0 && (epgData.sources || []).length > 0
+      };
+      
+      setEpgStatus(enhancedStatus);
+      
+      // Show helpful notification if no programs but sources exist
+      if (enhancedStatus.needsAttention && enhancedStatus.channels?.total > 0) {
+        console.info('EPG Notice: Sources configured but no programs loaded. Check channel mappings.');
+      }
     } catch (error) {
       console.error('Failed to fetch EPG status:', error);
     }
@@ -285,20 +300,40 @@ function EPGManager() {
     }
   };
 
-  const handleRefresh = async (sourceId = null) => {
+  const handleRefresh = async (sourceId = null, forceInitialize = false) => {
     setRefreshing(sourceId || 'all');
     try {
-      await api.post('/api/epg/refresh', sourceId ? { source_id: sourceId } : {});
-      enqueueSnackbar(
-        sourceId ? 'EPG refresh started for source' : 'EPG refresh started for all sources', 
-        { variant: 'success' }
-      );
+      const payload = sourceId ? { source_id: sourceId } : {};
+      if (forceInitialize) {
+        payload.force_initialize = true;
+      }
+      
+      await api.post('/api/epg/refresh', payload);
+      
+      const message = sourceId 
+        ? `EPG refresh started for source${forceInitialize ? ' (with initialization)' : ''}` 
+        : `EPG refresh started for all sources${forceInitialize ? ' (with initialization)' : ''}`;
+      
+      enqueueSnackbar(message, { variant: 'success' });
+      
+      // If force initialize was used, also try to initialize the service
+      if (forceInitialize) {
+        try {
+          await api.post('/api/epg/initialize');
+          enqueueSnackbar('EPG service initialized! ⚙️', { variant: 'info' });
+        } catch (initError) {
+          console.warn('EPG initialization warning:', initError);
+        }
+      }
       
       // Refresh status after a short delay
       setTimeout(() => {
         fetchEpgStatus();
         if (activeTab === 1) {
           fetchEpgPrograms();
+        }
+        if (activeTab === 2) {
+          fetchAvailableEpgIds();
         }
       }, 2000);
     } catch (error) {
@@ -333,6 +368,90 @@ function EPGManager() {
   const handleEpgIdCancel = () => {
     setEditingChannelEpg(null);
     setTempEpgId('');
+  };
+
+  const handleAutoMapping = async () => {
+    try {
+      const response = await api.get('/api/epg/mapping-suggestions');
+      const suggestions = response.data.suggestions || [];
+      
+      if (suggestions.length === 0) {
+        enqueueSnackbar('No automatic mapping suggestions found', { variant: 'info' });
+        return;
+      }
+      
+      let mappedCount = 0;
+      
+      for (const suggestion of suggestions) {
+        // Use the highest confidence suggestion
+        const bestMatch = suggestion.suggestions.find(s => s.confidence === 'high') || suggestion.suggestions[0];
+        
+        if (bestMatch) {
+          try {
+            const channel = channels.find(c => c.id === suggestion.channel.id);
+            if (channel) {
+              await api.put(`/api/channels/${channel.id}`, {
+                ...channel,
+                epg_id: bestMatch.epg_id
+              });
+              mappedCount++;
+            }
+          } catch (error) {
+            console.warn('Failed to auto-map channel:', suggestion.channel.name, error);
+          }
+        }
+      }
+      
+      if (mappedCount > 0) {
+        enqueueSnackbar(`Successfully auto-mapped ${mappedCount} channels! 🎉`, { 
+          variant: 'success',
+          autoHideDuration: 6000
+        });
+        fetchChannels();
+        fetchEpgStatus();
+        fetchAvailableEpgIds();
+      } else {
+        enqueueSnackbar('No channels could be auto-mapped', { variant: 'warning' });
+      }
+    } catch (error) {
+      console.error('Auto-mapping failed:', error);
+      enqueueSnackbar('Auto-mapping failed', { variant: 'error' });
+    }
+  };
+
+  const handleDiagnoseMappings = async () => {
+    try {
+      const response = await api.get('/api/debug/epg');
+      const data = response.data;
+      
+      const issues = [];
+      
+      if (data.invalid_mappings && data.invalid_mappings.length > 0) {
+        issues.push(`${data.invalid_mappings.length} channels have invalid EPG IDs`);
+      }
+      
+      if (data.summary.channels_with_programs === 0 && data.summary.total_epg_channels > 0) {
+        issues.push('No programs loaded despite EPG channels being available');
+      }
+      
+      if (data.summary.mapping_efficiency < 50) {
+        issues.push(`Low mapping efficiency: ${data.summary.mapping_efficiency}%`);
+      }
+      
+      if (issues.length > 0) {
+        enqueueSnackbar(`Issues found: ${issues.join(', ')}`, { 
+          variant: 'warning',
+          autoHideDuration: 8000
+        });
+      } else {
+        enqueueSnackbar('EPG mappings look good! ✓', { variant: 'success' });
+      }
+      
+      console.log('EPG Diagnostics:', data);
+    } catch (error) {
+      console.error('Diagnostic failed:', error);
+      enqueueSnackbar('Diagnostic check failed', { variant: 'error' });
+    }
   };
 
   const renderSkeletonTable = () => (
@@ -380,6 +499,19 @@ function EPGManager() {
             {refreshing === 'all' ? <CircularProgress size={20} /> : 'Refresh All'}
           </Button>
           
+          {epgStatus && !epgStatus.isInitialized && (
+            <Button
+              variant="contained"
+              color="warning"
+              startIcon={<RefreshIcon />}
+              onClick={() => handleRefresh(null, true)}
+              disabled={refreshing === 'all'}
+              size={isMobile ? "small" : "medium"}
+            >
+              {refreshing === 'all' ? <CircularProgress size={20} /> : 'Fix & Refresh'}
+            </Button>
+          )}
+          
           {!isMobile && (
             <Button
               variant="contained"
@@ -393,11 +525,31 @@ function EPGManager() {
       </Box>
 
       {epgStatus && (
-        <Alert severity="info" sx={{ mb: 2 }} icon={<InfoIcon />}>
-          <Typography variant="body2">
-            📊 Total Programs: {epgStatus.programs?.total || 0} | 
-            📅 Upcoming 24h: {epgStatus.programs?.upcoming24h || 0}
+        <Alert 
+          severity={epgStatus.programs?.total > 0 ? "success" : "warning"} 
+          sx={{ mb: 2 }} 
+          icon={<InfoIcon />}
+        >
+          <Typography variant="body2" sx={{ display: 'flex', flexWrap: 'wrap', gap: 2, alignItems: 'center' }}>
+            <span>📊 Total Programs: <strong>{epgStatus.programs?.total || 0}</strong></span>
+            <span>📅 Upcoming 24h: <strong>{epgStatus.programs?.upcoming24h || 0}</strong></span>
+            {epgStatus.channels && (
+              <>
+                <span>📺 Channels: <strong>{epgStatus.channels.mapped || 0}/{epgStatus.channels.total || 0}</strong> mapped</span>
+                {epgStatus.mapping?.efficiency !== undefined && (
+                  <span>⚡ Efficiency: <strong>{epgStatus.mapping.efficiency}%</strong></span>
+                )}
+              </>
+            )}
+            {epgStatus.programs?.total === 0 && epgStatus.channels?.epgAvailable > 0 && (
+              <span style={{ color: '#f57c00' }}>⚠️ Check channel EPG mappings</span>
+            )}
           </Typography>
+          {epgStatus.programs?.total === 0 && epgStatus.channels?.total > 0 && (
+            <Typography variant="caption" sx={{ mt: 1, display: 'block', fontStyle: 'italic' }}>
+              Tip: Map your channels to EPG IDs in the "Channel Mapping" tab to see program data
+            </Typography>
+          )}
         </Alert>
       )}
 
@@ -621,12 +773,34 @@ function EPGManager() {
 
   const renderChannelMappingTab = () => (
     <Box>
-      <Typography variant="h6" mb={3}>Channel EPG Mapping</Typography>
+      <Box display="flex" justifyContent="space-between" alignItems="center" mb={3}>
+        <Typography variant="h6">Channel EPG Mapping</Typography>
+        
+        <Box display="flex" gap={1}>
+          <Button
+            variant="outlined"
+            size="small"
+            onClick={handleAutoMapping}
+            disabled={!availableEpgIds.length}
+            startIcon={<CheckIcon />}
+          >
+            Auto-Map Channels
+          </Button>
+          <Button
+            variant="outlined"
+            size="small"
+            onClick={handleDiagnoseMappings}
+            startIcon={<InfoIcon />}
+          >
+            Diagnose Issues
+          </Button>
+        </Box>
+      </Box>
       
       <Alert severity="info" sx={{ mb: 2 }}>
         <Typography variant="body2">
           🔗 Map your channels to EPG IDs from your XMLTV sources to get program guide data.
-          Click the EPG ID chip to edit inline. Available EPG IDs are shown below.
+          Click the EPG ID chip to edit inline. Use "Auto-Map Channels" for smart suggestions.
         </Typography>
       </Alert>
 
