@@ -756,8 +756,7 @@ function EPGManager() {
                       secondary={
                         <Box>
                           <Typography variant="body2" color="text.secondary">
-                            {new Date(program.start_time).toLocaleString()} - 
-                            {new Date(program.end_time).toLocaleString()}
+                            {formatNZDateTime(program.start_time)} - {formatNZDateTime(program.end_time)}
                           </Typography>
                           {program.description && (
                             <Typography variant="body2" sx={{ mt: 0.5 }}>
