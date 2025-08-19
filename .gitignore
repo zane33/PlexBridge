@@ -74,3 +74,5 @@ test-reports/
 /tests/e2e/screenshots-comprehensive
 /tests/e2e/screenshots-settings-analysis
 /tests/e2e
+/playwright-report
+/playwright-report
