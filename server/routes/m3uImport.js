@@ -25,14 +25,30 @@ router.post('/', async (req, res) => {
       const existingChannels = await database.all('SELECT number FROM channels');
       const existingNumbers = new Set(existingChannels.map(c => c.number));
       
-      // Determine starting channel number
-      let nextChannelNumber = startingChannelNumber ? parseInt(startingChannelNumber) : 1;
+      // Enhanced starting channel number logic
+      let nextChannelNumber;
       
-      // If starting number conflicts, find next available
-      if (startingChannelNumber && existingNumbers.has(nextChannelNumber)) {
-        const maxExisting = Math.max(...Array.from(existingNumbers), 0);
-        nextChannelNumber = maxExisting + 1;
-        logger.info(`Starting channel number ${startingChannelNumber} conflicts, using ${nextChannelNumber} instead`);
+      if (startingChannelNumber) {
+        // User specified a starting number
+        nextChannelNumber = parseInt(startingChannelNumber);
+        
+        // If starting number conflicts, find next available
+        if (existingNumbers.has(nextChannelNumber)) {
+          const maxExisting = Math.max(...Array.from(existingNumbers), 0);
+          nextChannelNumber = maxExisting + 1;
+          logger.info(`Starting channel number ${startingChannelNumber} conflicts, using ${nextChannelNumber} instead`);
+        }
+      } else {
+        // No starting number provided - auto-append after last channel
+        if (existingNumbers.size > 0) {
+          const maxExisting = Math.max(...Array.from(existingNumbers));
+          nextChannelNumber = maxExisting + 1;
+          logger.info(`No starting channel number provided, auto-appending from channel ${nextChannelNumber}`);
+        } else {
+          // No existing channels, start from 1
+          nextChannelNumber = 1;
+          logger.info('No existing channels found, starting from channel 1');
+        }
       }
       
       const findNextAvailableNumber = () => {

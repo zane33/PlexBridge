@@ -186,7 +186,9 @@ class SSDPService {
       DeviceAuth: 'test1234',
       BaseURL: `http://${localIP}:${config.server.port}`,
       LineupURL: `http://${localIP}:${config.server.port}/lineup.json`,
-      TunerCount: config.streams.maxConcurrent
+      TunerCount: config.streams.maxConcurrent,
+      // Add EPG URL for Plex - using xmltv.xml endpoint which is the standard format
+      EPGURL: `http://${localIP}:${config.server.port}/epg/xmltv.xml`
     };
   }
 

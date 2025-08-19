@@ -112,6 +112,28 @@ function Dashboard() {
     const unsubscribeStreamStop = socketService.on('stream:stopped', () => {
       fetchActiveStreams();
     });
+
+    const unsubscribeBandwidthUpdate = socketService.on('streams:bandwidth:update', (data) => {
+      // Update active streams with real-time bandwidth data
+      if (data.streams && data.streams.length > 0) {
+        setActiveStreams(prevStreams => {
+          return prevStreams.map(stream => {
+            const updatedStream = data.streams.find(s => s.sessionId === stream.sessionId);
+            if (updatedStream) {
+              return {
+                ...stream,
+                currentBitrate: updatedStream.currentBitrate,
+                avgBitrate: updatedStream.avgBitrate,
+                peakBitrate: updatedStream.peakBitrate,
+                bytesTransferred: updatedStream.bytesTransferred,
+                duration: updatedStream.duration
+              };
+            }
+            return stream;
+          });
+        });
+      }
+    });
     
     // Fallback polling for when socket is not connected
     const interval = setInterval(() => {
@@ -131,6 +153,7 @@ function Dashboard() {
       unsubscribeMetrics();
       unsubscribeStreamStart();
       unsubscribeStreamStop();
+      unsubscribeBandwidthUpdate();
       unsubscribeSettingsChange();
     };
   }, []);

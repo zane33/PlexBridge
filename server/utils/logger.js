@@ -179,6 +179,32 @@ logger.stream = function(message, meta = {}) {
   }
 };
 
+// Enhanced stream session logging
+logger.streamSession = function(action, sessionData) {
+  const message = `Stream session ${action}`;
+  const meta = {
+    category: 'stream_session',
+    action,
+    ...sessionData,
+    timestamp: new Date().toISOString()
+  };
+  
+  this.info(message, meta);
+  if (dbLogger) {
+    dbLogger.log('info', message, meta);
+  }
+  
+  // Also emit socket event for real-time log monitoring
+  if (global.io) {
+    global.io.to('logs').emit('log:new', {
+      level: 'info',
+      message,
+      meta,
+      timestamp: new Date().toISOString()
+    });
+  }
+};
+
 logger.security = function(message, meta = {}) {
   this.warn(message, { ...meta, category: 'security' });
   if (dbLogger) {

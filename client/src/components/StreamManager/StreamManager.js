@@ -1594,7 +1594,7 @@ function StreamManager() {
 
             {/* Starting Channel Number - only show for M3U imports with auto-create enabled */}
             {importFormData.isM3UMode && importFormData.auto_create_channels && (
-              <Grid item xs={12} sm={6}>
+              <Grid item xs={12}>
                 <TextField
                   label="Starting Channel Number"
                   type="number"
@@ -1604,9 +1604,32 @@ function StreamManager() {
                   onChange={(e) => handleImportInputChange('startingChannelNumber', e.target.value)}
                   disabled={importing}
                   inputProps={{ min: 1, max: 9999 }}
-                  helperText="Optional - Channel numbers will start from this value (auto-detects conflicts)"
+                  helperText={`Optional - Leave empty to auto-append after channel ${channels.length > 0 ? Math.max(...channels.map(c => c.number)) : 0} (auto-detects conflicts)`}
                   data-testid="import-starting-channel-input"
                 />
+                
+                {/* Enhanced Channel Assignment Preview */}
+                {selectedChannels.length > 0 && (
+                  <Alert severity="info" sx={{ mt: 2 }}>
+                    <Typography variant="body2">
+                      <strong>📺 Channel Assignment Preview:</strong>
+                      {' '}
+                      {selectedChannels.length} channel{selectedChannels.length !== 1 ? 's' : ''} will be assigned numbers{' '}
+                      {importFormData.startingChannelNumber ? (
+                        <>
+                          <strong>{importFormData.startingChannelNumber}</strong> through{' '}
+                          <strong>{parseInt(importFormData.startingChannelNumber) + selectedChannels.length - 1}</strong>
+                        </>
+                      ) : (
+                        <>
+                          <strong>{(channels.length > 0 ? Math.max(...channels.map(c => c.number)) : 0) + 1}</strong> through{' '}
+                          <strong>{(channels.length > 0 ? Math.max(...channels.map(c => c.number)) : 0) + selectedChannels.length}</strong>
+                        </>
+                      )}
+                      {' '}(conflicts automatically resolved)
+                    </Typography>
+                  </Alert>
+                )}
               </Grid>
             )}
 

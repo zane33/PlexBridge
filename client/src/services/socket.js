@@ -105,6 +105,10 @@ class SocketService {
     this.socket.on('settings:updated', (data) => {
       this.notifyListeners('settings:updated', data);
     });
+
+    this.socket.on('streams:bandwidth:update', (data) => {
+      this.notifyListeners('streams:bandwidth:update', data);
+    });
   }
 
   disconnect() {

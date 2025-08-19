@@ -482,13 +482,15 @@ class StreamPreviewService {
 
       this.concurrencyCounter++;
 
-      // Set response headers for video streaming
-      res.setHeader('Content-Type', 'video/mp4');
+      // Set response headers for HLS streaming
+      res.setHeader('Content-Type', 'application/vnd.apple.mpegurl');
       res.setHeader('Access-Control-Allow-Origin', '*');
       res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Range');
+      res.setHeader('Access-Control-Expose-Headers', 'Content-Length, Content-Range');
       res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
       res.setHeader('Pragma', 'no-cache');
       res.setHeader('Expires', '0');
+      res.setHeader('Connection', 'keep-alive');
 
       // Set up timeout
       const timeoutId = setTimeout(() => {
@@ -610,41 +612,53 @@ class StreamPreviewService {
         return null; // Signal that transcoding is not available
       }
       
-      // Enhanced FFmpeg arguments for better compatibility and performance
-      // CRITICAL FIX: Handle streams with/without audio properly
+      // Enhanced FFmpeg arguments for HLS streaming compatibility
+      // CRITICAL FIX: Output HLS instead of fragmented MP4 for better browser compatibility
       const args = [
+        '-re',                                // Read input at native frame rate
         '-i', stream.url,
-        '-map', '0',                          // Map all input streams
+        '-map', '0:v:0',                      // Map first video stream
+        '-map', '0:a:0?',                     // Map first audio stream if exists (optional)
         '-c:v', 'libx264',                    // H.264 video codec
         '-preset', 'veryfast',                // Fast encoding for real-time
+        '-tune', 'zerolatency',               // Optimize for low latency
         '-profile:v', 'baseline',             // Compatible H.264 profile
-        '-level', '3.1',                      // H.264 level for broad compatibility
+        '-level', '3.0',                      // H.264 level for broad compatibility
+        '-pix_fmt', 'yuv420p',                // Pixel format for compatibility
         '-s', qualityProfile.resolution,      // Video resolution
         '-b:v', qualityProfile.bitrate,       // Video bitrate
         '-maxrate', qualityProfile.bitrate,   // Max bitrate
         '-bufsize', `${parseInt(qualityProfile.bitrate) * 2}k`, // Buffer size
-        '-movflags', 'frag_keyframe+empty_moov+faststart', // Web streaming optimizations
-        '-f', 'mp4',                          // MP4 container
-        '-fflags', '+genpts',                 // Generate presentation timestamps
+        '-g', '30',                           // GOP size (keyframe interval)
+        '-keyint_min', '30',                  // Minimum GOP size
+        '-sc_threshold', '0',                 // Disable scene change detection
+        '-c:a', 'aac',                        // AAC audio codec
+        '-b:a', '128k',                       // Audio bitrate
+        '-ar', '44100',                       // Audio sample rate
+        '-ac', '2',                           // Stereo audio
+        // HLS-specific options for browser compatibility
+        '-hls_time', '2',                     // 2-second segments
+        '-hls_list_size', '6',                // Keep 6 segments in playlist
+        '-hls_delete_threshold', '1',         // Delete old segments
+        '-hls_flags', 'delete_segments+omit_endlist', // Live streaming flags
+        '-f', 'hls',                          // HLS output format
+        '-method', 'PUT',                     // Use PUT for segment upload
+        '-fflags', '+genpts',                 // Generate timestamps
         '-avoid_negative_ts', 'make_zero',    // Handle timestamp issues
-        '-max_muxing_queue_size', '1024',     // Prevent buffer overflow
-        '-threads', '2',                      // Limit CPU usage
-        '-rtbufsize', '100M',                 // Real-time buffer size
-        '-probesize', '10M',                  // Input probing size
-        '-analyzeduration', '5000000',        // Analysis duration (5 seconds)
-        '-loglevel', 'error',                 // Reduce log verbosity
-        '-nostats',                           // Disable statistics output
+        '-max_muxing_queue_size', '9999',     // Large queue to prevent drops
+        '-threads', '0',                      // Auto-select thread count
+        '-loglevel', 'warning',               // Show warnings
         'pipe:1'                              // Output to stdout
       ];
 
-      // CRITICAL FIX: Conditionally handle audio based on stream content
-      // Check if this is an HLS stream that likely has audio
+      // Additional input options for specific stream types
       if (stream.type === 'hls' || stream.url.includes('.m3u8')) {
-        // For HLS streams, expect audio and configure AAC codec
-        args.splice(-8, 0, 
-          '-c:a', 'aac',                      // AAC audio codec for HLS streams
-          '-b:a', '128k',                     // Audio bitrate
-          '-ar', '48000',                     // Audio sample rate (48kHz for MPEG AAC)
+        // For HLS streams, add specific input options
+        args.splice(2, 0, 
+          '-protocol_whitelist', 'file,http,https,tcp,tls,crypto',
+          '-reconnect', '1',
+          '-reconnect_streamed', '1',
+          '-reconnect_delay_max', '5'
           '-ac', '2'                          // Stereo audio (2 channels)
         );
         logger.stream('Configured FFmpeg for HLS stream with audio', { 

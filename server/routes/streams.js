@@ -78,11 +78,11 @@ router.get('/streams/convert/hls/:streamId', async (req, res) => {
   }
 });
 
-// Active streams endpoint
-router.get('/streams/active', (req, res) => {
+// Active streams endpoint - Enhanced to return Promise-based data
+router.get('/streams/active', async (req, res) => {
   try {
-    const activeStreams = streamManager.getActiveStreams();
-    res.json(activeStreams);
+    const activeStreams = await streamManager.getActiveStreams();
+    res.json({ streams: activeStreams });
   } catch (error) {
     logger.error('Error getting active streams:', error);
     res.status(500).json({ error: 'Failed to get active streams' });

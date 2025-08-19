@@ -267,7 +267,7 @@ function ChannelManager() {
     });
   };
 
-  // Handle drag end for reordering with automatic channel numbering
+  // Enhanced drag end handler with improved automatic channel numbering
   const handleDragEnd = async (event) => {
     const { active, over } = event;
     
@@ -283,16 +283,47 @@ function ChannelManager() {
       const draggedChannel = sortedChannels.find(ch => ch.id === active.id);
       const reorderedChannels = arrayMove(sortedChannels, oldIndex, newIndex);
       
-      // Calculate new channel numbers based on the new order
-      // Start with the lowest existing channel number to maintain continuity
-      const sortedByNumber = [...sortedChannels].sort((a, b) => a.number - b.number);
-      const startingNumber = sortedByNumber[0]?.number || 1;
+      // Enhanced automatic numbering with gap detection and intelligent placement
+      let updatedChannels;
       
-      // Reassign channel numbers sequentially based on new drag order
-      const updatedChannels = reorderedChannels.map((channel, index) => ({
-        ...channel,
-        number: startingNumber + index
-      }));
+      if (newIndex === 0) {
+        // Dragged to top - assign starting from 1
+        updatedChannels = reorderedChannels.map((channel, index) => ({
+          ...channel,
+          number: index + 1
+        }));
+      } else if (newIndex === reorderedChannels.length - 1) {
+        // Dragged to bottom - maintain existing numbers for others, assign next available
+        const maxNumber = Math.max(...reorderedChannels.slice(0, -1).map(ch => ch.number));
+        updatedChannels = reorderedChannels.map((channel, index) => {
+          if (index === reorderedChannels.length - 1) {
+            return { ...channel, number: maxNumber + 1 };
+          }
+          return channel;
+        });
+      } else {
+        // Dragged to middle - smart gap filling or sequential numbering
+        const prevChannel = reorderedChannels[newIndex - 1];
+        const nextChannel = reorderedChannels[newIndex + 1];
+        
+        if (prevChannel && nextChannel && (nextChannel.number - prevChannel.number) > 1) {
+          // There's a gap, place in between
+          const newNumber = prevChannel.number + 1;
+          updatedChannels = reorderedChannels.map((channel, index) => {
+            if (index === newIndex) {
+              return { ...channel, number: newNumber };
+            }
+            return channel;
+          });
+        } else {
+          // No gap, renumber sequentially from the target position
+          const startNumber = prevChannel?.number || 1;
+          updatedChannels = reorderedChannels.map((channel, index) => ({
+            ...channel,
+            number: startNumber + index
+          }));
+        }
+      }
       
       // Update UI optimistically
       const newChannelsState = channels.map(channel => {
@@ -309,9 +340,12 @@ function ChannelManager() {
         
         const oldNumber = draggedChannel.number;
         const newNumber = updatedChannels.find(ch => ch.id === active.id).number;
+        const affectedChannels = updatedChannels.filter(ch => 
+          ch.number !== sortedChannels.find(sc => sc.id === ch.id)?.number
+        ).length;
         
         enqueueSnackbar(
-          `Channel "${draggedChannel.name}" moved from #${oldNumber} to #${newNumber}! All channels renumbered automatically. 🎉`, 
+          `Channel "${draggedChannel.name}" moved from #${oldNumber} to #${newNumber}! ${affectedChannels > 1 ? `${affectedChannels} channels renumbered` : 'No other channels affected'} 🎯`, 
           { 
             variant: 'success',
             autoHideDuration: 4000,

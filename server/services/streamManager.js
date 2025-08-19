@@ -475,13 +475,25 @@ class StreamManager {
   }
 
   // Create a stream proxy for Plex
-  createStreamProxy(streamId, streamData, req, res) {
+  async createStreamProxy(streamId, streamData, req, res) {
     try {
       logger.stream('Creating stream proxy', { streamId, url: streamData.url });
 
       const clientIdentifier = this.generateClientIdentifier(req);
       const sessionId = `${streamId}_${clientIdentifier}_${Date.now()}`;
       const { url, type, auth, headers: customHeaders = {} } = streamData;
+      
+      // Get channel information for real-time updates
+      let channelInfo = null;
+      try {
+        const database = require('./database');
+        const channel = await database.get('SELECT name, number FROM channels WHERE id = ?', [streamId]);
+        if (channel) {
+          channelInfo = { name: channel.name, number: channel.number };
+        }
+      } catch (error) {
+        logger.warn('Failed to get channel info for stream', { streamId, error: error.message });
+      }
 
       // Check if client already has an active session for this stream
       if (this.hasActiveClientSession(streamId, clientIdentifier)) {
@@ -662,14 +674,22 @@ class StreamManager {
           stats.errors++;
         }
         
-        // Log stream errors with session context
-        logger.error('Stream session error', {
+        // Enhanced error logging for stream sessions
+        logger.streamSession('error', {
           sessionId,
           streamId: stream?.streamId,
+          channelName: stream?.channelName || 'Unknown',
+          channelNumber: stream?.channelNumber || 'N/A',
           clientIP: stream?.clientIP,
+          clientIdentifier: stream?.clientIdentifier,
           streamUrl: stream?.url,
-          errorData,
-          timestamp: new Date().toISOString()
+          streamType: stream?.type,
+          errorDetails: {
+            message: errorData,
+            category: 'stream_processing',
+            severity: errorData.includes('fatal') ? 'critical' : 'warning'
+          },
+          sessionDuration: stream?.startTime ? Date.now() - stream.startTime : 0
         });
         
         logger.stream('Stream process stderr', { sessionId, data: errorData });
@@ -677,12 +697,19 @@ class StreamManager {
 
       streamProcess.on('close', (code) => {
         const stream = this.activeStreams.get(sessionId);
-        logger.stream('Stream process closed', { 
-          sessionId, 
-          code,
+        
+        // Enhanced process close logging
+        logger.streamSession('process_closed', {
+          sessionId,
           streamId: stream?.streamId,
-          clientIP: stream?.clientIP 
+          channelName: stream?.channelName || 'Unknown',
+          channelNumber: stream?.channelNumber || 'N/A',
+          clientIP: stream?.clientIP,
+          exitCode: code,
+          exitReason: code === 0 ? 'normal' : code === 1 ? 'error' : 'signal',
+          sessionDuration: stream?.startTime ? Date.now() - stream.startTime : 0
         });
+        
         this.cleanupStream(sessionId);
       });
 
@@ -727,19 +754,46 @@ class StreamManager {
         userAgent: req.get('User-Agent')
       });
 
-      // Log detailed session start information
-      logger.info('Stream session started', {
+      // Log detailed session start information using enhanced stream session logging
+      logger.streamSession('started', {
         sessionId,
-        streamId: stream.streamId,
+        streamId,
+        channelName: channelInfo?.name || 'Unknown',
+        channelNumber: channelInfo?.number || 'N/A',
         clientIP: req.ip,
         clientIdentifier,
         userAgent: req.get('User-Agent'),
         streamUrl: streamData.url,
         streamType: streamData.type,
-        timestamp: new Date().toISOString(),
         maxConcurrent,
-        currentActiveStreams: this.activeStreams.size
+        currentActiveStreams: this.activeStreams.size,
+        bufferSize: '1MB',
+        protocols: {
+          source: streamData.type,
+          output: 'mpegts'
+        }
       });
+      
+      // Emit Socket.IO event for real-time dashboard updates
+      if (global.io) {
+        const streamEventData = {
+          sessionId,
+          streamId,
+          channelName: channelInfo?.name || 'Unknown',
+          channelNumber: channelInfo?.number || 'N/A',
+          clientIP: req.ip,
+          userAgent: req.get('User-Agent'),
+          streamType: streamData.type,
+          startTime: stream.startTime,
+          currentBitrate: 0,
+          avgBitrate: 0,
+          peakBitrate: 0,
+          bytesTransferred: 0
+        };
+        
+        global.io.emit('stream:started', streamEventData);
+        logger.stream('Emitted stream:started event', { sessionId });
+      }
       
       logger.stream('Stream proxy created successfully', { sessionId, streamId });
 
@@ -953,23 +1007,54 @@ class StreamManager {
       const stats = this.streamStats.get(sessionId);
       const duration = Date.now() - stream.startTime;
       
-      logger.info('Stream session ended', {
+      // Enhanced session end logging with detailed statistics
+      logger.streamSession('ended', {
         sessionId,
         streamId: stream.streamId,
+        channelName: stream.channelName || 'Unknown',
+        channelNumber: stream.channelNumber || 'N/A',
         clientIP: stream.clientIP,
         clientIdentifier: stream.clientIdentifier,
         userAgent: stream.userAgent,
         streamUrl: stream.url,
         streamType: stream.type,
-        duration,
-        durationFormatted: this.formatDuration(duration),
-        bytesTransferred: stats?.bytesTransferred || 0,
-        avgBitrate: stats?.avgBitrate || 0,
-        peakBitrate: stats?.peakBitrate || 0,
-        reason,
-        timestamp: new Date().toISOString(),
-        remainingActiveStreams: this.activeStreams.size - 1
+        performance: {
+          duration,
+          durationFormatted: this.formatDuration(duration),
+          bytesTransferred: stats?.bytesTransferred || 0,
+          avgBitrate: stats?.avgBitrate || 0,
+          peakBitrate: stats?.peakBitrate || 0,
+          errorCount: stats?.errors || 0
+        },
+        endReason: reason,
+        remainingActiveStreams: this.activeStreams.size - 1,
+        sessionMetrics: {
+          bandwidth: {
+            avg: this.formatBandwidth(stats?.avgBitrate || 0),
+            peak: this.formatBandwidth(stats?.peakBitrate || 0),
+            total: this.formatBytes(stats?.bytesTransferred || 0)
+          },
+          quality: (stats?.errors || 0) === 0 ? 'excellent' : (stats?.errors || 0) < 5 ? 'good' : 'poor'
+        }
       });
+      
+      // Emit Socket.IO event for real-time dashboard updates
+      if (global.io) {
+        const streamEndEventData = {
+          sessionId,
+          streamId: stream.streamId,
+          clientIP: stream.clientIP,
+          duration,
+          bytesTransferred: stats?.bytesTransferred || 0,
+          avgBitrate: stats?.avgBitrate || 0,
+          peakBitrate: stats?.peakBitrate || 0,
+          reason,
+          timestamp: new Date().toISOString()
+        };
+        
+        global.io.emit('stream:stopped', streamEndEventData);
+        logger.stream('Emitted stream:stopped event', { sessionId });
+      }
     }
     
     logger.stream('Stream cleaned up', { sessionId, reason, streamId: stream?.streamId });
@@ -1503,6 +1588,30 @@ class StreamManager {
     }
   }
 
+  // Format bandwidth for logging
+  formatBandwidth(bps) {
+    if (!bps || bps === 0) return '0 bps';
+    const kbps = bps / 1000;
+    const mbps = bps / 1000000;
+    
+    if (mbps >= 1) {
+      return `${mbps.toFixed(1)} Mbps`;
+    } else if (kbps >= 1) {
+      return `${kbps.toFixed(0)} kbps`;
+    } else {
+      return `${bps} bps`;
+    }
+  }
+
+  // Format bytes for logging
+  formatBytes(bytes) {
+    if (bytes === 0) return '0 Bytes';
+    const k = 1024;
+    const sizes = ['Bytes', 'KB', 'MB', 'GB'];
+    const i = Math.floor(Math.log(bytes) / Math.log(k));
+    return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
+  }
+
   async cleanup() {
     logger.info('Cleaning up all active streams');
     const sessionIds = Array.from(this.activeStreams.keys());
@@ -1538,5 +1647,28 @@ setInterval(() => {
     }
   }
 }, 5 * 60 * 1000);
+
+// Periodic bandwidth updates for real-time monitoring (every 2 seconds)
+setInterval(async () => {
+  if (streamManager.activeStreams.size > 0 && global.io) {
+    const activeStreamsData = await streamManager.getActiveStreams();
+    
+    // Emit bandwidth update for each active stream
+    global.io.emit('streams:bandwidth:update', {
+      timestamp: new Date().toISOString(),
+      streams: activeStreamsData.map(stream => ({
+        sessionId: stream.sessionId,
+        streamId: stream.streamId,
+        channelName: stream.channelName,
+        channelNumber: stream.channelNumber,
+        currentBitrate: stream.currentBitrate,
+        avgBitrate: stream.avgBitrate,
+        peakBitrate: stream.peakBitrate,
+        bytesTransferred: stream.bytesTransferred,
+        duration: stream.duration
+      }))
+    });
+  }
+}, 2000); // Update every 2 seconds for real-time feel
 
 module.exports = streamManager;

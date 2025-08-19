@@ -1230,30 +1230,97 @@ function Settings() {
                       onChange={(e) => updateSetting('plexlive.localization.timezone', e.target.value)}
                       label="Timezone"
                     >
-                      <MenuItem value="UTC">UTC</MenuItem>
+                      <MenuItem value="UTC">UTC - Coordinated Universal Time</MenuItem>
+                      
+                      {/* Americas */}
+                      <MenuItem disabled><em>— Americas —</em></MenuItem>
                       <MenuItem value="America/New_York">Eastern Time (New York)</MenuItem>
                       <MenuItem value="America/Chicago">Central Time (Chicago)</MenuItem>
                       <MenuItem value="America/Denver">Mountain Time (Denver)</MenuItem>
+                      <MenuItem value="America/Phoenix">Mountain Time - no DST (Phoenix)</MenuItem>
                       <MenuItem value="America/Los_Angeles">Pacific Time (Los Angeles)</MenuItem>
+                      <MenuItem value="America/Anchorage">Alaska Time (Anchorage)</MenuItem>
+                      <MenuItem value="Pacific/Honolulu">Hawaii Time (Honolulu)</MenuItem>
                       <MenuItem value="America/Toronto">Eastern Time (Toronto)</MenuItem>
                       <MenuItem value="America/Vancouver">Pacific Time (Vancouver)</MenuItem>
-                      <MenuItem value="Europe/London">GMT (London)</MenuItem>
-                      <MenuItem value="Europe/Paris">CET (Paris)</MenuItem>
-                      <MenuItem value="Europe/Berlin">CET (Berlin)</MenuItem>
-                      <MenuItem value="Europe/Rome">CET (Rome)</MenuItem>
-                      <MenuItem value="Europe/Madrid">CET (Madrid)</MenuItem>
-                      <MenuItem value="Europe/Amsterdam">CET (Amsterdam)</MenuItem>
-                      <MenuItem value="Europe/Stockholm">CET (Stockholm)</MenuItem>
+                      <MenuItem value="America/Edmonton">Mountain Time (Edmonton)</MenuItem>
+                      <MenuItem value="America/Winnipeg">Central Time (Winnipeg)</MenuItem>
+                      <MenuItem value="America/Halifax">Atlantic Time (Halifax)</MenuItem>
+                      <MenuItem value="America/St_Johns">Newfoundland Time (St. John's)</MenuItem>
+                      <MenuItem value="America/Mexico_City">Central Time (Mexico City)</MenuItem>
+                      <MenuItem value="America/Sao_Paulo">Brasília Time (São Paulo)</MenuItem>
+                      <MenuItem value="America/Buenos_Aires">Argentina Time (Buenos Aires)</MenuItem>
+                      <MenuItem value="America/Santiago">Chile Time (Santiago)</MenuItem>
+                      <MenuItem value="America/Lima">Peru Time (Lima)</MenuItem>
+                      <MenuItem value="America/Bogota">Colombia Time (Bogotá)</MenuItem>
+                      
+                      {/* Europe */}
+                      <MenuItem disabled><em>— Europe —</em></MenuItem>
+                      <MenuItem value="Europe/London">GMT/BST (London)</MenuItem>
+                      <MenuItem value="Europe/Dublin">IST (Dublin)</MenuItem>
+                      <MenuItem value="Europe/Lisbon">WET/WEST (Lisbon)</MenuItem>
+                      <MenuItem value="Europe/Paris">CET/CEST (Paris)</MenuItem>
+                      <MenuItem value="Europe/Berlin">CET/CEST (Berlin)</MenuItem>
+                      <MenuItem value="Europe/Rome">CET/CEST (Rome)</MenuItem>
+                      <MenuItem value="Europe/Madrid">CET/CEST (Madrid)</MenuItem>
+                      <MenuItem value="Europe/Amsterdam">CET/CEST (Amsterdam)</MenuItem>
+                      <MenuItem value="Europe/Brussels">CET/CEST (Brussels)</MenuItem>
+                      <MenuItem value="Europe/Vienna">CET/CEST (Vienna)</MenuItem>
+                      <MenuItem value="Europe/Warsaw">CET/CEST (Warsaw)</MenuItem>
+                      <MenuItem value="Europe/Stockholm">CET/CEST (Stockholm)</MenuItem>
+                      <MenuItem value="Europe/Oslo">CET/CEST (Oslo)</MenuItem>
+                      <MenuItem value="Europe/Copenhagen">CET/CEST (Copenhagen)</MenuItem>
+                      <MenuItem value="Europe/Helsinki">EET/EEST (Helsinki)</MenuItem>
+                      <MenuItem value="Europe/Athens">EET/EEST (Athens)</MenuItem>
+                      <MenuItem value="Europe/Bucharest">EET/EEST (Bucharest)</MenuItem>
+                      <MenuItem value="Europe/Kiev">EET/EEST (Kyiv)</MenuItem>
                       <MenuItem value="Europe/Moscow">MSK (Moscow)</MenuItem>
-                      <MenuItem value="Asia/Tokyo">JST (Tokyo)</MenuItem>
-                      <MenuItem value="Asia/Shanghai">CST (Shanghai)</MenuItem>
-                      <MenuItem value="Asia/Seoul">KST (Seoul)</MenuItem>
-                      <MenuItem value="Asia/Singapore">SGT (Singapore)</MenuItem>
-                      <MenuItem value="Asia/Mumbai">IST (Mumbai)</MenuItem>
+                      <MenuItem value="Europe/Istanbul">TRT (Istanbul)</MenuItem>
+                      
+                      {/* Asia */}
+                      <MenuItem disabled><em>— Asia —</em></MenuItem>
                       <MenuItem value="Asia/Dubai">GST (Dubai)</MenuItem>
-                      <MenuItem value="Australia/Sydney">AEDT (Sydney)</MenuItem>
-                      <MenuItem value="Australia/Melbourne">AEDT (Melbourne)</MenuItem>
+                      <MenuItem value="Asia/Riyadh">AST (Riyadh)</MenuItem>
+                      <MenuItem value="Asia/Tehran">IRST (Tehran)</MenuItem>
+                      <MenuItem value="Asia/Karachi">PKT (Karachi)</MenuItem>
+                      <MenuItem value="Asia/Kolkata">IST (India - Kolkata)</MenuItem>
+                      <MenuItem value="Asia/Mumbai">IST (India - Mumbai)</MenuItem>
+                      <MenuItem value="Asia/Dhaka">BST (Dhaka)</MenuItem>
+                      <MenuItem value="Asia/Bangkok">ICT (Bangkok)</MenuItem>
+                      <MenuItem value="Asia/Jakarta">WIB (Jakarta)</MenuItem>
+                      <MenuItem value="Asia/Singapore">SGT (Singapore)</MenuItem>
+                      <MenuItem value="Asia/Kuala_Lumpur">MYT (Kuala Lumpur)</MenuItem>
+                      <MenuItem value="Asia/Manila">PHT (Manila)</MenuItem>
+                      <MenuItem value="Asia/Hong_Kong">HKT (Hong Kong)</MenuItem>
+                      <MenuItem value="Asia/Shanghai">CST (China - Shanghai)</MenuItem>
+                      <MenuItem value="Asia/Beijing">CST (China - Beijing)</MenuItem>
+                      <MenuItem value="Asia/Taipei">CST (Taiwan - Taipei)</MenuItem>
+                      <MenuItem value="Asia/Seoul">KST (Seoul)</MenuItem>
+                      <MenuItem value="Asia/Tokyo">JST (Tokyo)</MenuItem>
+                      <MenuItem value="Asia/Vladivostok">VLAT (Vladivostok)</MenuItem>
+                      
+                      {/* Africa */}
+                      <MenuItem disabled><em>— Africa —</em></MenuItem>
+                      <MenuItem value="Africa/Cairo">EET (Cairo)</MenuItem>
+                      <MenuItem value="Africa/Johannesburg">SAST (Johannesburg)</MenuItem>
+                      <MenuItem value="Africa/Lagos">WAT (Lagos)</MenuItem>
+                      <MenuItem value="Africa/Nairobi">EAT (Nairobi)</MenuItem>
+                      <MenuItem value="Africa/Casablanca">WET (Casablanca)</MenuItem>
+                      
+                      {/* Oceania */}
+                      <MenuItem disabled><em>— Oceania —</em></MenuItem>
                       <MenuItem value="Australia/Perth">AWST (Perth)</MenuItem>
+                      <MenuItem value="Australia/Adelaide">ACST/ACDT (Adelaide)</MenuItem>
+                      <MenuItem value="Australia/Darwin">ACST (Darwin - no DST)</MenuItem>
+                      <MenuItem value="Australia/Brisbane">AEST (Brisbane - no DST)</MenuItem>
+                      <MenuItem value="Australia/Sydney">AEST/AEDT (Sydney)</MenuItem>
+                      <MenuItem value="Australia/Melbourne">AEST/AEDT (Melbourne)</MenuItem>
+                      <MenuItem value="Australia/Hobart">AEST/AEDT (Hobart)</MenuItem>
+                      <MenuItem value="Pacific/Auckland">NZST/NZDT (Auckland, New Zealand)</MenuItem>
+                      <MenuItem value="Pacific/Chatham">CHAST/CHADT (Chatham Islands, NZ)</MenuItem>
+                      <MenuItem value="Pacific/Fiji">FJT (Fiji)</MenuItem>
+                      <MenuItem value="Pacific/Guam">ChST (Guam)</MenuItem>
+                      <MenuItem value="Pacific/Tahiti">TAHT (Tahiti)</MenuItem>
                     </Select>
                   </FormControl>
                 </Grid>

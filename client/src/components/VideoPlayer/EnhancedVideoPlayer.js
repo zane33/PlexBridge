@@ -43,6 +43,7 @@ import {
 import { useSnackbar } from 'notistack';
 import videojs from 'video.js';
 import 'video.js/dist/video-js.css';
+import Hls from 'hls.js';
 
 const EnhancedVideoPlayer = ({ 
   open, 
@@ -338,6 +339,13 @@ const EnhancedVideoPlayer = ({
     
     // Reset video element
     if (videoRef.current) {
+      // Clean up HLS.js instance if exists
+      if (videoRef.current.hlsInstance) {
+        console.log('Cleaning up HLS.js instance');
+        videoRef.current.hlsInstance.destroy();
+        videoRef.current.hlsInstance = null;
+      }
+      
       // Remove any Video.js classes
       videoRef.current.className = 'video-js vjs-default-skin';
       videoRef.current.removeAttribute('data-vjs-player');
@@ -462,11 +470,21 @@ const EnhancedVideoPlayer = ({
                       'Loading native player...');
       setLoadingProgress(50);
 
-      // Use Video.js for complex streams (HLS, DASH, RTSP, etc.)
-      if (capabilities.useVideoJS || useVideoJS) {
+      // CRITICAL FIX: For transcoded MP4 streams, always use native player
+      // Video.js may have issues with the transcoded stream format
+      const isTranscodedMP4 = currentUrl.includes('transcode=true');
+      
+      if (isTranscodedMP4) {
+        console.log('Using native player for transcoded MP4 stream');
+        initializeNativePlayer(currentUrl, { 
+          ...capabilities, 
+          description: 'Transcoded MP4 Stream' 
+        });
+      } else if (capabilities.useVideoJS || useVideoJS) {
+        // Use Video.js for complex streams (HLS, DASH, RTSP, etc.)
         await initializeVideoJSPlayer(currentUrl, capabilities);
       } else {
-        // Use native HTML5 video for simple formats or transcoded streams
+        // Use native HTML5 video for simple formats
         initializeNativePlayer(currentUrl, capabilities);
       }
 
@@ -573,8 +591,11 @@ const EnhancedVideoPlayer = ({
         },
         // Add tech options for better stream handling
         techOrder: ['html5'],
-        // Preload metadata to help with stream initialization
-        preload: 'metadata'
+        // Preload auto to help with stream initialization and autoplay
+        preload: 'auto',
+        // Enable autoplay with muted for browser policies
+        autoplay: 'muted',
+        muted: true
       });
 
       setPlayerInstance(player);
@@ -583,7 +604,17 @@ const EnhancedVideoPlayer = ({
       player.ready(() => {
         console.log('Video.js player ready');
         setVideoReady(true);
-        enqueueSnackbar(`${capabilities.description} loaded with Video.js!`, { variant: 'success' });
+        
+        // Attempt autoplay after player is ready
+        player.play().then(() => {
+          console.log('Video.js autoplay started successfully');
+          setIsPlaying(true);
+          enqueueSnackbar(`${capabilities.description} loaded and playing!`, { variant: 'success' });
+        }).catch(error => {
+          console.log('Video.js autoplay blocked, user interaction required:', error);
+          // Still mark as ready, just not playing
+          enqueueSnackbar(`${capabilities.description} loaded! Click play to start.`, { variant: 'info' });
+        });
       });
 
       player.on('loadstart', () => {
@@ -692,14 +723,137 @@ const EnhancedVideoPlayer = ({
   // Initialize native HTML5 player for simple formats  
   const initializeNativePlayer = useCallback((url, capabilities) => {
     try {
-      console.log('Using native HTML5 video player');
-      videoRef.current.src = url;
-      videoRef.current.load();
-      setVideoReady(true);
-      enqueueSnackbar(`${capabilities.description} loaded with native player!`, { variant: 'success' });
+      console.log('Using native HTML5 video player for URL:', url);
+      const video = videoRef.current;
+      
+      // CRITICAL FIX: Use HLS.js for better transcoded stream compatibility
+      if (url.includes('transcode=true') && Hls.isSupported()) {
+        console.log('Using HLS.js for transcoded stream playback');
+        const hls = new Hls({
+          enableWorker: true,
+          lowLatencyMode: true,
+          backBufferLength: 90,
+          maxBufferLength: 30,
+          maxMaxBufferLength: 600,
+          maxBufferSize: 60 * 1000 * 1000, // 60 MB
+          maxBufferHole: 0.5,
+          highBufferWatchdogPeriod: 2,
+          nudgeOffset: 0.1,
+          nudgeMaxRetry: 3,
+          maxFragLookUpTolerance: 0.25,
+          liveSyncDurationCount: 3,
+          liveMaxLatencyDurationCount: Infinity,
+          liveDurationInfinity: true,
+          enableWebVTT: false,
+          enableCEA708Captions: false,
+          stretchShortVideoTrack: false,
+          maxAudioFramesDrift: 1,
+          forceKeyFrameOnDiscontinuity: true,
+          abrEwmaFastLive: 3,
+          abrEwmaSlowLive: 9,
+          abrEwmaFastVoD: 3,
+          abrEwmaSlowVoD: 9,
+          abrEwmaDefaultEstimate: 5e5,
+          abrBandWidthFactor: 0.95,
+          abrBandWidthUpFactor: 0.7,
+          abrMaxWithRealBitrate: false,
+          maxStarvationDelay: 4,
+          maxLoadingDelay: 4,
+          minAutoBitrate: 0,
+          emeEnabled: false,
+          widevineLicenseUrl: undefined,
+          licenseXhrSetup: undefined,
+          manifestLoadingTimeOut: 10000,
+          manifestLoadingMaxRetry: 1,
+          manifestLoadingRetryDelay: 1000,
+          manifestLoadingMaxRetryTimeout: 64000,
+          startLevel: undefined,
+          levelLoadingTimeOut: 10000,
+          levelLoadingMaxRetry: 4,
+          levelLoadingRetryDelay: 1000,
+          levelLoadingMaxRetryTimeout: 64000,
+          fragLoadingTimeOut: 20000,
+          fragLoadingMaxRetry: 6,
+          fragLoadingRetryDelay: 1000,
+          fragLoadingMaxRetryTimeout: 64000,
+          startFragPrefetch: false,
+          testBandwidth: true,
+          progressive: false,
+          lowLatencyMode: false
+        });
+        
+        // Store HLS instance for cleanup
+        video.hlsInstance = hls;
+        
+        hls.loadSource(url);
+        hls.attachMedia(video);
+        
+        hls.on(Hls.Events.MANIFEST_PARSED, () => {
+          console.log('HLS.js manifest parsed');
+          setVideoReady(true);
+          
+          // Attempt autoplay
+          video.muted = true;
+          video.play().then(() => {
+            console.log('HLS.js playback started');
+            setIsPlaying(true);
+            enqueueSnackbar('Stream loaded and playing!', { variant: 'success' });
+          }).catch(error => {
+            console.log('HLS.js autoplay blocked:', error);
+            enqueueSnackbar('Stream loaded! Click play to start.', { variant: 'info' });
+          });
+        });
+        
+        hls.on(Hls.Events.ERROR, (event, data) => {
+          console.error('HLS.js error:', data);
+          if (data.fatal) {
+            switch (data.type) {
+              case Hls.ErrorTypes.NETWORK_ERROR:
+                console.error('Fatal network error, trying to recover');
+                hls.startLoad();
+                break;
+              case Hls.ErrorTypes.MEDIA_ERROR:
+                console.error('Fatal media error, trying to recover');
+                hls.recoverMediaError();
+                break;
+              default:
+                console.error('Fatal error, cannot recover');
+                hls.destroy();
+                // Fallback to direct source
+                video.src = url;
+                video.load();
+                break;
+            }
+          }
+        });
+        
+      } else {
+        // Standard HTML5 video setup
+        video.src = url;
+        video.muted = true; // Mute to allow autoplay
+        video.autoplay = true;
+        video.load();
+        
+        // Wait for metadata to load then attempt play
+        video.addEventListener('loadedmetadata', () => {
+          console.log('Native player metadata loaded');
+          setVideoReady(true);
+          
+          // Attempt to play
+          video.play().then(() => {
+            console.log('Native player autoplay started');
+            setIsPlaying(true);
+            enqueueSnackbar(`${capabilities.description} loaded and playing!`, { variant: 'success' });
+          }).catch(error => {
+            console.log('Native player autoplay blocked:', error);
+            enqueueSnackbar(`${capabilities.description} loaded! Click play to start.`, { variant: 'info' });
+          });
+        }, { once: true });
+      }
+      
     } catch (error) {
-      console.error('Native player initialization error:', error);
-      throw new Error(`Native player setup failed: ${error.message}`);
+      console.error('Player initialization error:', error);
+      throw new Error(`Player setup failed: ${error.message}`);
     }
   }, [enqueueSnackbar]);
 
@@ -1233,8 +1387,8 @@ const EnhancedVideoPlayer = ({
             ref={videoRef}
             className="video-js vjs-default-skin"
             controls={!useVideoJS}
-            autoPlay={false}
-            muted={isMuted}
+            autoPlay
+            muted
             data-setup="{}"
             crossOrigin="anonymous"
             playsInline
