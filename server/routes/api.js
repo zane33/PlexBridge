@@ -1302,9 +1302,38 @@ router.get('/metrics', async (req, res) => {
     };
     
     try {
-      epgStatus = await epgService.getStatus();
+      // Get EPG status with fallback for basic program counts
+      try {
+        epgStatus = await epgService.getStatus();
+      } catch (serviceError) {
+        logger.warn('EPG service status unavailable, using direct database query');
+        
+        // Fallback: direct database query for program counts
+        const totalPrograms = await database.get('SELECT COUNT(*) as count FROM epg_programs') || { count: 0 };
+        const now = new Date().toISOString();
+        const nextDay = new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString();
+        const upcomingPrograms = await database.get(`
+          SELECT COUNT(*) as count FROM epg_programs 
+          WHERE start_time BETWEEN ? AND ?
+        `, [now, nextDay]) || { count: 0 };
+        
+        epgStatus = {
+          status: 'database_fallback',
+          programs: {
+            total: totalPrograms.count,
+            upcoming24h: upcomingPrograms.count
+          },
+          sources: [],
+          channels: { total: 0, mapped: 0, epgAvailable: 0 },
+          mapping: { efficiency: 0, needsMapping: 0 },
+          isInitialized: epgService.isInitialized
+        };
+      }
+      
       logger.debug('EPG status retrieved for metrics', {
+        status: epgStatus.status,
         totalPrograms: epgStatus.programs?.total,
+        upcoming24h: epgStatus.programs?.upcoming24h,
         mappedChannels: epgStatus.channels?.mapped,
         isInitialized: epgStatus.isInitialized
       });

@@ -149,7 +149,8 @@ class StreamPreviewService {
     if (forceTranscode) return true;
 
     // Formats that typically need transcoding for web playback
-    const needsTranscodingFormats = ['ts', 'mpegts', 'rtsp', 'rtmp', 'udp', 'mms', 'srt'];
+    // CRITICAL: .ts files need transcoding for browser compatibility
+    const needsTranscodingFormats = ['ts', 'mpegts', 'mts', 'rtsp', 'rtmp', 'udp', 'mms', 'srt'];
     return needsTranscodingFormats.includes(streamFormat);
   }
 
@@ -442,6 +443,8 @@ class StreamPreviewService {
         break;
       case 'ts':
       case 'mpegts':
+      case 'mts':
+        // CRITICAL FIX: Proper content type for Transport Stream files
         res.setHeader('Content-Type', 'video/mp2t');
         break;
       default:
@@ -449,8 +452,10 @@ class StreamPreviewService {
     }
     
     res.setHeader('Access-Control-Allow-Origin', '*');
-    res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Range');
-    res.setHeader('Cache-Control', 'no-cache');
+    res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Range, Authorization');
+    res.setHeader('Access-Control-Expose-Headers', 'Content-Range, Content-Length, Accept-Ranges');
+    res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
+    res.setHeader('Accept-Ranges', 'bytes');
   }
 
   // Cleanup transcoding session

@@ -13,6 +13,7 @@ const logger = require('./utils/logger');
 const config = require('./config');
 const database = require('./services/database');
 const settingsService = require('./services/settingsService');
+const epgService = require('./services/epgService');
 // const cacheService = require('./services/cacheService');
 // const ssdpService = require('./services/ssdpService');
 
@@ -143,6 +144,14 @@ const gracefulShutdown = async (signal) => {
       logger.info('HTTP server closed');
     });
 
+    // Shutdown EPG service
+    try {
+      await epgService.shutdown();
+      logger.info('EPG service shutdown completed');
+    } catch (epgShutdownError) {
+      logger.warn('EPG service shutdown error:', epgShutdownError);
+    }
+
     // Close database connections
     await database.close();
     logger.info('Database connections closed');
@@ -241,6 +250,16 @@ const initializeApp = async () => {
       logger.info('Settings loaded and applied successfully');
     } catch (settingsError) {
       logger.warn('Failed to load settings from database, using defaults:', settingsError.message);
+    }
+
+    // Initialize EPG service after database is ready
+    try {
+      logger.info('Initializing EPG service...');
+      await epgService.initialize();
+      logger.info('✅ EPG service initialized successfully');
+    } catch (epgError) {
+      logger.error('❌ EPG service initialization failed:', epgError.message);
+      logger.warn('EPG functionality will be limited until service is manually initialized');
     }
 
     // Start HTTP server

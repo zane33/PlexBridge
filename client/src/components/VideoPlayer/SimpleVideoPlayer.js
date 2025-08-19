@@ -141,6 +141,16 @@ const SimpleVideoPlayer = ({
             canRecover: false 
           });
         }
+      } else if (currentUrl.includes('.ts') || currentUrl.includes('.mpegts') || currentUrl.includes('.mts')) {
+        // CRITICAL FIX: Handle .ts (MPEG Transport Stream) files
+        // TS files typically need proxy/transcoding for browser compatibility
+        console.log('Detected Transport Stream file, handling with native player');
+        videoRef.current.src = currentUrl;
+        videoRef.current.load();
+        setVideoReady(true);
+        enqueueSnackbar('Transport Stream loaded! May need proxy mode for best compatibility.', { 
+          variant: 'warning' 
+        });
       } else {
         // Direct video for non-HLS
         videoRef.current.src = currentUrl;
@@ -250,7 +260,11 @@ const SimpleVideoPlayer = ({
           </Typography>
           <Box display="flex" alignItems="center" gap={1}>
             <Chip 
-              label={streamUrl?.includes('.m3u8') ? 'HLS' : 'Direct'} 
+              label={
+                streamUrl?.includes('.m3u8') ? 'HLS' : 
+                streamUrl?.includes('.ts') || streamUrl?.includes('.mpegts') ? 'TS' :
+                'Direct'
+              } 
               size="small" 
               color="primary" 
               variant="outlined"
@@ -405,7 +419,11 @@ const SimpleVideoPlayer = ({
               </Typography>
               <Box display="flex" alignItems="center" gap={1} flexWrap="wrap">
                 <Chip 
-                  label={getStreamUrl().includes('.m3u8') ? 'HLS' : 'Direct'}
+                  label={
+                    getStreamUrl().includes('.m3u8') ? 'HLS' : 
+                    getStreamUrl().includes('.ts') || getStreamUrl().includes('.mpegts') ? 'TS' :
+                    'Direct'
+                  }
                   size="small" 
                   color="primary" 
                 />

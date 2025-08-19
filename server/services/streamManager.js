@@ -33,6 +33,11 @@ class StreamManager {
         return { type: 'dash', protocol: 'http' };
       }
       
+      // CRITICAL FIX: Detect MPEG Transport Stream (.ts) files
+      if (urlLower.includes('.ts') || urlLower.includes('.mpegts') || urlLower.includes('.mts')) {
+        return { type: 'ts', protocol: 'http' };
+      }
+      
       if (urlLower.startsWith('rtsp://')) {
         return { type: 'rtsp', protocol: 'rtsp' };
       }
@@ -131,6 +136,9 @@ class StreamManager {
           return await this.validateHLSStream(url, auth);
         case 'dash':
           return await this.validateDashStream(url, auth);
+        case 'ts':
+        case 'mpegts':
+          return await this.validateTSStream(url, auth);
         case 'rtsp':
           return await this.validateRTSPStream(url, auth);
         case 'rtmp':
@@ -215,6 +223,38 @@ class StreamManager {
       };
     } catch (error) {
       return { valid: false, error: error.message, type: 'dash' };
+    }
+  }
+
+  async validateTSStream(url, auth) {
+    try {
+      const headers = { 'User-Agent': config.protocols.http.userAgent };
+      if (auth && auth.username) {
+        headers['Authorization'] = `Basic ${Buffer.from(`${auth.username}:${auth.password}`).toString('base64')}`;
+      }
+
+      // For .ts files, do a HEAD request to check accessibility and content type
+      const response = await axios.head(url, {
+        timeout: config.protocols.http.timeout,
+        headers
+      });
+
+      const contentType = response.headers['content-type'] || '';
+      const contentLength = response.headers['content-length'];
+
+      return {
+        valid: true,
+        type: 'ts',
+        info: {
+          contentType,
+          contentLength,
+          isTransportStream: true,
+          needsTranscoding: true, // TS files typically need transcoding for web playback
+          description: 'MPEG Transport Stream'
+        }
+      };
+    } catch (error) {
+      return { valid: false, error: error.message, type: 'ts' };
     }
   }
 
@@ -493,6 +533,10 @@ class StreamManager {
         case 'http':
           streamProcess = this.createHTTPStreamProxy(url, auth, customHeaders);
           break;
+        case 'ts':
+        case 'mpegts':
+          streamProcess = this.createTSStreamProxy(url, auth, customHeaders);
+          break;
         case 'rtsp':
           streamProcess = this.createRTSPStreamProxy(url, auth);
           break;
@@ -553,8 +597,9 @@ class StreamManager {
         errors: 0
       });
 
-      // Set enhanced response headers for streaming
-      res.setHeader('Content-Type', 'video/mp2t');
+      // Set enhanced response headers for streaming - fix content type based on stream type
+      const contentType = type === 'ts' || type === 'mpegts' ? 'video/mp2t' : 'video/mp2t';
+      res.setHeader('Content-Type', contentType);
       res.setHeader('Access-Control-Allow-Origin', '*');
       res.setHeader('Access-Control-Allow-Methods', 'GET, HEAD, OPTIONS');
       res.setHeader('Access-Control-Allow-Headers', 'Range, Accept, User-Agent, Authorization');
@@ -631,6 +676,27 @@ class StreamManager {
       '-i', url,
       '-c', 'copy',
       '-f', 'mpegts',
+      '-'
+    ];
+
+    if (auth && auth.username) {
+      args.splice(2, 0, '-headers', `Authorization: Basic ${Buffer.from(`${auth.username}:${auth.password}`).toString('base64')}`);
+    }
+
+    return spawn(config.streams.ffmpegPath, args);
+  }
+
+  createTSStreamProxy(url, auth, customHeaders) {
+    // For TS streams, we need to handle them properly for web browser compatibility
+    // TS files often need remuxing or transcoding to be played in browsers
+    const args = [
+      '-y',
+      '-i', url,
+      '-c:v', 'copy',        // Try to copy video codec if compatible
+      '-c:a', 'copy',        // Try to copy audio codec if compatible  
+      '-f', 'mpegts',        // Output as MPEG-TS
+      '-avoid_negative_ts', 'make_zero',
+      '-fflags', '+genpts',  // Generate timestamps for better compatibility
       '-'
     ];
 

@@ -27,12 +27,23 @@ class EPGService {
 
   async initialize() {
     if (this.isInitialized) {
+      logger.info('EPG service already initialized');
       return;
     }
 
     try {
+      // Check if database is available and initialized
+      if (!database || !database.isInitialized) {
+        throw new Error('Database not initialized - cannot initialize EPG service');
+      }
+
       // Get all EPG sources from database
       const sources = await database.all('SELECT * FROM epg_sources WHERE enabled = 1');
+      
+      logger.info('Found EPG sources for initialization', { 
+        sourceCount: sources.length,
+        sources: sources.map(s => ({ id: s.id, name: s.name, url: s.url }))
+      });
       
       // Schedule refresh jobs for each source
       for (const source of sources) {
@@ -45,10 +56,29 @@ class EPGService {
       });
 
       this.isInitialized = true;
-      logger.epg('EPG service initialized', { sourceCount: sources.length });
+      logger.info('✅ EPG service initialized successfully', { 
+        sourceCount: sources.length,
+        scheduledJobs: this.refreshJobs.size
+      });
+
+      // Trigger immediate refresh for sources that have never been refreshed
+      const unrefreshedSources = sources.filter(s => !s.last_success);
+      if (unrefreshedSources.length > 0) {
+        logger.info('Triggering immediate refresh for unrefreshed sources', {
+          sourceCount: unrefreshedSources.length
+        });
+        
+        // Trigger refreshes in background without blocking initialization
+        for (const source of unrefreshedSources) {
+          setImmediate(() => this.refreshSource(source.id).catch(err => 
+            logger.error('Background refresh failed:', { sourceId: source.id, error: err.message })
+          ));
+        }
+      }
 
     } catch (error) {
-      logger.error('EPG service initialization failed:', error);
+      logger.error('❌ EPG service initialization failed:', error);
+      this.isInitialized = false; // Ensure we stay uninitialized on failure
       throw error;
     }
   }
@@ -294,22 +324,11 @@ class EPGService {
       return null;
     }
 
-    // Find matching channel in our database by EPG ID
-    const channelId = await this.findChannelByEpgId(programme.channel);
-    if (!channelId) {
-      // Enhanced logging: show which programs are being skipped and why
-      logger.warn('Program skipped - no channel mapping found', { 
-        epgChannelId: programme.channel,
-        title: this.extractText(programme.title),
-        startTime: programme.start,
-        suggestion: `Map a channel to EPG ID: ${programme.channel}`
-      });
-      return null; // Skip programs for unmapped channels
-    }
-
+    // **CRITICAL FIX**: Use EPG channel ID directly, don't try to map to internal channel
+    // This allows programs to be stored even without channel mapping
     const program = {
       id: `${programme.channel}_${programme.start}`,
-      channel_id: channelId,
+      channel_id: programme.channel, // Use EPG channel ID directly
       title: this.extractText(programme.title) || 'Unknown',
       description: this.extractText(programme.desc) || null,
       start_time: this.parseXMLTVTime(programme.start),

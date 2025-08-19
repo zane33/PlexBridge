@@ -73,6 +73,38 @@ const REFRESH_INTERVALS = [
   { value: '1d', label: 'Daily' },
 ];
 
+// NZ timezone formatting function
+const formatNZDateTime = (dateString) => {
+  if (!dateString) return 'Never';
+  
+  const date = new Date(dateString);
+  return date.toLocaleString('en-NZ', {
+    timeZone: 'Pacific/Auckland',
+    day: '2-digit',
+    month: '2-digit', 
+    year: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: false
+  });
+};
+
+// Short NZ date formatting for Last Success column
+const formatNZDateTimeShort = (dateString) => {
+  if (!dateString) return 'Never';
+  
+  const date = new Date(dateString);
+  return date.toLocaleString('en-NZ', {
+    timeZone: 'Pacific/Auckland',
+    day: '2-digit',
+    month: '2-digit',
+    year: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: false
+  });
+};
+
 function EPGManager() {
   const [activeTab, setActiveTab] = useState(0);
   const [epgSources, setEpgSources] = useState([]);
@@ -603,18 +635,7 @@ function EPGManager() {
                       </TableCell>
                       <TableCell sx={{ display: { xs: 'none', sm: 'table-cell' } }}>
                         <Typography variant="body2" color="text.secondary">
-                          {source.last_success 
-                            ? new Date(source.last_success).toLocaleDateString('en-NZ', {
-                                timeZone: 'Pacific/Auckland',
-                                year: 'numeric',
-                                month: 'short',
-                                day: 'numeric',
-                                hour: '2-digit',
-                                minute: '2-digit',
-                                hour12: true
-                              })
-                            : 'Never'
-                          }
+                          {formatNZDateTimeShort(source.last_success)}
                         </Typography>
                       </TableCell>
                       <TableCell>

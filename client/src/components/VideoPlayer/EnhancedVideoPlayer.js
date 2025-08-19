@@ -163,6 +163,17 @@ const EnhancedVideoPlayer = ({
       };
     }
     
+    // CRITICAL FIX: Handle .ts (MPEG Transport Stream) files
+    if (urlLower.includes('.ts') || urlLower.includes('.mpegts') || urlLower.includes('.mts') || urlLower.includes('type=ts')) {
+      return {
+        type: 'ts',
+        useVideoJS: true,
+        needsSpecialHandling: true,
+        supportedByBrowser: false, // TS files need special handling in browsers
+        description: 'MPEG Transport Stream'
+      };
+    }
+    
     if (urlLower.startsWith('rtsp://') || urlLower.startsWith('rtmp://')) {
       return {
         type: 'streaming',
@@ -222,6 +233,17 @@ const EnhancedVideoPlayer = ({
             needsSpecialHandling: false,
             supportedByBrowser: videoRef.current?.canPlayType('video/webm') || false,
             description: 'WebM Video (Proxied)'
+          };
+        }
+        
+        // CRITICAL FIX: Handle MPEG Transport Stream content type
+        if (contentType.includes('video/mp2t') || contentType.includes('video/MP2T')) {
+          return {
+            type: 'ts',
+            useVideoJS: true,
+            needsSpecialHandling: true,
+            supportedByBrowser: false,
+            description: 'MPEG Transport Stream (Proxied)'
           };
         }
         
@@ -633,11 +655,19 @@ const EnhancedVideoPlayer = ({
         return 'video/mp4; codecs="avc1.42E01E, mp4a.40.2"'; // H.264 Baseline + AAC
       case 'webm':
         return 'video/webm; codecs="vp8, vorbis"'; // VP8 + Vorbis
+      case 'ts':
+      case 'mpegts':
+      case 'mts':
+        // CRITICAL FIX: Handle MPEG Transport Stream with proper MIME type
+        // For TS files going through proxy/transcoding, they're converted to MP4
+        if (url.includes('/streams/preview/') || url.includes('/stream/')) {
+          return 'video/mp4'; // Transcoded to MP4
+        } else {
+          return 'video/mp2t'; // Direct TS file
+        }
       case 'streaming':
       case 'rtsp':
       case 'rtmp':
-      case 'ts':
-      case 'mpegts':
         // For streams transcoded by backend - use HLS as most compatible
         return 'application/x-mpegURL';
       case 'http':
@@ -646,6 +676,7 @@ const EnhancedVideoPlayer = ({
         if (url.includes('.mpd')) return 'application/dash+xml';
         if (url.includes('.webm')) return 'video/webm; codecs="vp8, vorbis"';
         if (url.includes('.mp4')) return 'video/mp4; codecs="avc1.42E01E, mp4a.40.2"';
+        if (url.includes('.ts') || url.includes('.mpegts')) return 'video/mp2t';
         // For IPTV streams, default to HLS
         return 'application/x-mpegURL';
       default:
@@ -654,6 +685,7 @@ const EnhancedVideoPlayer = ({
         if (url.includes('.mpd')) return 'application/dash+xml';
         if (url.includes('.webm')) return 'video/webm; codecs="vp8, vorbis"';
         if (url.includes('.mp4')) return 'video/mp4; codecs="avc1.42E01E, mp4a.40.2"';
+        if (url.includes('.ts') || url.includes('.mpegts')) return 'video/mp2t';
         // For proxy URLs and unknown formats, assume HLS (most common for IPTV)
         return 'application/x-mpegURL';
     }
