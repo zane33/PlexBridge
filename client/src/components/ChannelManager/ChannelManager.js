@@ -38,6 +38,7 @@ import {
   FormControl,
   InputLabel,
   Select,
+  TableSortLabel,
 } from '@mui/material';
 import {
   Add as AddIcon,
@@ -49,9 +50,63 @@ import {
   CheckBox as CheckBoxIcon,
   CheckBoxOutlineBlank as CheckBoxOutlineBlankIcon,
   PlayArrow as StreamIcon,
+  DragHandle as DragHandleIcon,
 } from '@mui/icons-material';
+import {
+  DndContext,
+  closestCenter,
+  KeyboardSensor,
+  PointerSensor,
+  useSensor,
+  useSensors,
+} from '@dnd-kit/core';
+import {
+  arrayMove,
+  SortableContext,
+  sortableKeyboardCoordinates,
+  verticalListSortingStrategy,
+  useSortable,
+} from '@dnd-kit/sortable';
+import {
+  CSS,
+} from '@dnd-kit/utilities';
 import { useSnackbar } from 'notistack';
 import api from '../../services/api';
+
+// Sortable Channel Row Component
+function SortableChannelRow({ channel, index, ...props }) {
+  const {
+    attributes,
+    listeners,
+    setNodeRef,
+    transform,
+    transition,
+    isDragging,
+  } = useSortable({ id: channel.id });
+
+  const style = {
+    transform: CSS.Transform.toString(transform),
+    transition,
+    opacity: isDragging ? 0.5 : 1,
+  };
+
+  return (
+    <TableRow 
+      ref={setNodeRef}
+      style={style}
+      {...props}
+      sx={{
+        ...props.sx,
+        cursor: isDragging ? 'grabbing' : 'grab',
+        '&:hover .drag-handle': {
+          opacity: 1,
+        },
+      }}
+    >
+      {props.children(attributes, listeners, isDragging)}
+    </TableRow>
+  );
+}
 
 function ChannelManager() {
   const [channels, setChannels] = useState([]);
@@ -65,6 +120,8 @@ function ChannelManager() {
   const [page, setPage] = useState(0);
   const [rowsPerPage, setRowsPerPage] = useState(10);
   const [availableEpgIds, setAvailableEpgIds] = useState([]);
+  const [sortConfig, setSortConfig] = useState({ key: 'number', direction: 'asc' });
+  const [isDragReordering, setIsDragReordering] = useState(false);
   const [formData, setFormData] = useState({
     name: '',
     number: '',
@@ -75,6 +132,18 @@ function ChannelManager() {
   const { enqueueSnackbar } = useSnackbar();
   const theme = useTheme();
   const isMobile = useMediaQuery(theme.breakpoints.down('md'));
+
+  // Configure drag sensors
+  const sensors = useSensors(
+    useSensor(PointerSensor, {
+      activationConstraint: {
+        distance: 8,
+      },
+    }),
+    useSensor(KeyboardSensor, {
+      coordinateGetter: sortableKeyboardCoordinates,
+    })
+  );
 
   // Optimized form input handlers to prevent unnecessary re-renders
   const handleInputChange = useCallback((field, value) => {
@@ -93,6 +162,42 @@ function ChannelManager() {
       numberHelperText: !formData.number ? "Number required" : ""
     };
   }, [formData.name, formData.number]);
+
+  // Sort channels based on current sort configuration
+  const sortedChannels = useMemo(() => {
+    if (!channels.length) return [];
+    
+    const sorted = [...channels].sort((a, b) => {
+      const { key, direction } = sortConfig;
+      let aValue = a[key];
+      let bValue = b[key];
+      
+      // Handle different data types
+      if (key === 'number') {
+        aValue = parseInt(aValue) || 0;
+        bValue = parseInt(bValue) || 0;
+      } else if (key === 'name') {
+        aValue = (aValue || '').toLowerCase();
+        bValue = (bValue || '').toLowerCase();
+      } else if (key === 'stream_count') {
+        aValue = parseInt(aValue) || 0;
+        bValue = parseInt(bValue) || 0;
+      } else if (key === 'enabled') {
+        aValue = aValue ? 1 : 0;
+        bValue = bValue ? 1 : 0;
+      }
+      
+      if (aValue < bValue) {
+        return direction === 'asc' ? -1 : 1;
+      }
+      if (aValue > bValue) {
+        return direction === 'asc' ? 1 : -1;
+      }
+      return 0;
+    });
+    
+    return sorted;
+  }, [channels, sortConfig]);
 
   useEffect(() => {
     fetchChannels();
@@ -151,6 +256,73 @@ function ChannelManager() {
       enqueueSnackbar('Failed to load EPG data. Check EPG sources.', { variant: 'error' });
       setAvailableEpgIds([]); // Ensure we have an empty array on error
     }
+  };
+
+  // Handle column sorting
+  const handleSort = (property) => {
+    const isAsc = sortConfig.key === property && sortConfig.direction === 'asc';
+    setSortConfig({
+      key: property,
+      direction: isAsc ? 'desc' : 'asc',
+    });
+  };
+
+  // Handle drag end for reordering
+  const handleDragEnd = async (event) => {
+    const { active, over } = event;
+    
+    if (!over || active.id === over.id) {
+      setIsDragReordering(false);
+      return;
+    }
+
+    const oldIndex = sortedChannels.findIndex((channel) => channel.id === active.id);
+    const newIndex = sortedChannels.findIndex((channel) => channel.id === over.id);
+
+    if (oldIndex !== newIndex) {
+      const reorderedChannels = arrayMove(sortedChannels, oldIndex, newIndex);
+      
+      // Optimistically update the UI
+      const newChannels = [...channels];
+      const draggedChannel = newChannels.find(ch => ch.id === active.id);
+      
+      // Reassign channel numbers based on new order
+      const updatedChannels = reorderedChannels.map((channel, index) => ({
+        ...channel,
+        number: index + 1
+      }));
+      
+      setChannels(updatedChannels);
+      setIsDragReordering(true);
+      
+      try {
+        // Send bulk update to backend
+        await handleBulkReorder(updatedChannels);
+        enqueueSnackbar(`Channel "${draggedChannel.name}" moved successfully! 🎉`, { 
+          variant: 'success',
+          autoHideDuration: 3000,
+        });
+      } catch (error) {
+        // Revert optimistic update on error
+        fetchChannels();
+        enqueueSnackbar('Failed to reorder channels', { 
+          variant: 'error',
+          autoHideDuration: 5000,
+        });
+      } finally {
+        setIsDragReordering(false);
+      }
+    }
+  };
+
+  // Handle bulk channel reordering
+  const handleBulkReorder = async (reorderedChannels) => {
+    const updates = reorderedChannels.map(channel => ({
+      id: channel.id,
+      number: channel.number
+    }));
+    
+    await api.put('/api/channels/bulk-update', { updates });
   };
 
   const handleCreate = () => {
@@ -361,7 +533,7 @@ function ChannelManager() {
     </TableContainer>
   );
 
-  const paginatedChannels = channels.slice(page * rowsPerPage, page * rowsPerPage + rowsPerPage);
+  const paginatedChannels = sortedChannels.slice(page * rowsPerPage, page * rowsPerPage + rowsPerPage);
 
   return (
     <Box>
@@ -465,247 +637,335 @@ function ChannelManager() {
                         indeterminate={selectedChannels.length > 0 && selectedChannels.length < channels.length}
                         checked={channels.length > 0 && selectedChannels.length === channels.length}
                         onChange={handleSelectAll}
+                        data-testid="select-all-channels"
                       />
                     </TableCell>
-                    <TableCell sx={{ minWidth: 60 }}>Number</TableCell>
-                    <TableCell sx={{ minWidth: 150 }}>Name</TableCell>
+                    <TableCell sx={{ minWidth: 40 }} data-testid="drag-column-header">
+                      <Tooltip title="Drag to reorder channels">
+                        <DragHandleIcon sx={{ color: 'text.secondary', fontSize: 18 }} />
+                      </Tooltip>
+                    </TableCell>
+                    <TableCell sx={{ minWidth: 60 }}>
+                      <TableSortLabel
+                        active={sortConfig.key === 'number'}
+                        direction={sortConfig.key === 'number' ? sortConfig.direction : 'asc'}
+                        onClick={() => handleSort('number')}
+                        data-testid="sort-by-number"
+                      >
+                        Number
+                      </TableSortLabel>
+                    </TableCell>
+                    <TableCell sx={{ minWidth: 150 }}>
+                      <TableSortLabel
+                        active={sortConfig.key === 'name'}
+                        direction={sortConfig.key === 'name' ? sortConfig.direction : 'asc'}
+                        onClick={() => handleSort('name')}
+                        data-testid="sort-by-name"
+                      >
+                        Name
+                      </TableSortLabel>
+                    </TableCell>
                     <TableCell sx={{ minWidth: 100, display: { xs: 'none', sm: 'table-cell' } }}>EPG ID</TableCell>
-                    <TableCell sx={{ minWidth: 80 }}>Streams</TableCell>
-                    <TableCell sx={{ minWidth: 100 }}>Status</TableCell>
+                    <TableCell sx={{ minWidth: 80 }}>
+                      <TableSortLabel
+                        active={sortConfig.key === 'stream_count'}
+                        direction={sortConfig.key === 'stream_count' ? sortConfig.direction : 'asc'}
+                        onClick={() => handleSort('stream_count')}
+                        data-testid="sort-by-streams"
+                      >
+                        Streams
+                      </TableSortLabel>
+                    </TableCell>
+                    <TableCell sx={{ minWidth: 100 }}>
+                      <TableSortLabel
+                        active={sortConfig.key === 'enabled'}
+                        direction={sortConfig.key === 'enabled' ? sortConfig.direction : 'asc'}
+                        onClick={() => handleSort('enabled')}
+                        data-testid="sort-by-status"
+                      >
+                        Status
+                      </TableSortLabel>
+                    </TableCell>
                     <TableCell sx={{ minWidth: 120 }}>Actions</TableCell>
                   </TableRow>
                 </TableHead>
                 <TableBody>
-                  {paginatedChannels.map((channel, index) => (
-                    <TableRow 
-                      key={channel.id} 
-                      hover
-                      sx={{
-                        transition: 'all 0.2s ease',
-                        animation: `fadeInUp 0.3s ease ${index * 0.05}s both`,
-                        '@keyframes fadeInUp': {
-                          '0%': {
-                            opacity: 0,
-                            transform: 'translateY(20px)'
-                          },
-                          '100%': {
-                            opacity: 1,
-                            transform: 'translateY(0)'
-                          }
-                        },
-                        '&:hover': {
-                          backgroundColor: 'rgba(99, 102, 241, 0.08)',
-                          transform: 'scale(1.01)',
-                          boxShadow: '0 4px 12px rgba(99, 102, 241, 0.15)',
-                        }
-                      }}
+                  <DndContext 
+                    sensors={sensors}
+                    collisionDetection={closestCenter}
+                    onDragEnd={handleDragEnd}
+                  >
+                    <SortableContext 
+                      items={paginatedChannels.map(ch => ch.id)}
+                      strategy={verticalListSortingStrategy}
                     >
-                      <TableCell padding="checkbox">
-                        <Checkbox
-                          checked={selectedChannels.includes(channel.id)}
-                          onChange={() => handleSelectChannel(channel.id)}
+                      {paginatedChannels.map((channel, index) => (
+                        <SortableChannelRow 
+                          key={channel.id}
+                          channel={channel}
+                          index={index}
+                          hover
+                          data-testid={`channel-row-${channel.id}`}
                           sx={{
                             transition: 'all 0.2s ease',
+                            animation: `fadeInUp 0.3s ease ${index * 0.05}s both`,
+                            '@keyframes fadeInUp': {
+                              '0%': {
+                                opacity: 0,
+                                transform: 'translateY(20px)'
+                              },
+                              '100%': {
+                                opacity: 1,
+                                transform: 'translateY(0)'
+                              }
+                            },
                             '&:hover': {
-                              transform: 'scale(1.1)',
+                              backgroundColor: 'rgba(99, 102, 241, 0.08)',
+                              transform: 'scale(1.01)',
+                              boxShadow: '0 4px 12px rgba(99, 102, 241, 0.15)',
                             }
-                          }}
-                        />
-                      </TableCell>
-                      <TableCell>
-                        <Box 
-                          sx={{ 
-                            width: 32, 
-                            height: 32,
-                            borderRadius: 2,
-                            background: 'linear-gradient(135deg, #6366f1 0%, #8b5cf6 100%)',
-                            display: 'flex',
-                            alignItems: 'center',
-                            justifyContent: 'center',
-                            color: 'white',
-                            fontWeight: 700,
-                            fontSize: '0.875rem'
                           }}
                         >
-                          {channel.number}
-                        </Box>
-                      </TableCell>
-                      <TableCell>
-                        <Box display="flex" alignItems="center">
-                          <Box 
-                            sx={{ 
-                              width: 32, 
-                              height: 32,
-                              borderRadius: 2,
-                              background: 'linear-gradient(135deg, rgba(99, 102, 241, 0.1) 0%, rgba(139, 92, 246, 0.1) 100%)',
-                              display: 'flex',
-                              alignItems: 'center',
-                              justifyContent: 'center',
-                              mr: 2,
-                              transition: 'all 0.2s ease',
-                              '&:hover': {
-                                transform: 'rotate(5deg) scale(1.1)',
-                              }
-                            }}
-                          >
-                            <TvIcon sx={{ fontSize: 18, color: 'primary.main' }} />
-                          </Box>
-                          <Box>
-                            <Typography 
-                              variant="body2" 
-                              sx={{ 
-                                fontWeight: 600,
-                                color: 'text.primary',
-                                mb: 0.25
-                              }}
-                            >
-                              {channel.name}
-                            </Typography>
-                            {channel.epg_id && (
-                              <Typography 
-                                variant="caption" 
-                                sx={{ 
-                                  color: 'text.secondary',
-                                  fontSize: '0.7rem'
-                                }}
-                              >
-                                EPG: {channel.epg_id}
-                              </Typography>
-                            )}
-                          </Box>
-                        </Box>
-                      </TableCell>
-                      <TableCell sx={{ display: { xs: 'none', sm: 'table-cell' } }}>
-                        <Typography variant="body2" color="text.secondary">
-                          {channel.epg_id || '-'}
-                        </Typography>
-                      </TableCell>
-                      <TableCell>
-                        <Box display="flex" alignItems="center" gap={1.5}>
-                          <Chip
-                            label={`${channel.stream_count || 0} streams`}
-                            size="small"
-                            sx={{
-                              background: channel.stream_count > 0 
-                                ? 'linear-gradient(135deg, #6366f1 0%, #8b5cf6 100%)'
-                                : 'rgba(148, 163, 184, 0.2)',
-                              color: channel.stream_count > 0 ? '#ffffff' : 'text.secondary',
-                              fontWeight: 600,
-                              fontSize: '0.7rem',
-                              transition: 'all 0.2s ease',
-                              '&:hover': {
-                                transform: 'scale(1.05)',
-                              }
-                            }}
-                          />
-                          {channel.stream_count > 0 && (
-                            <Tooltip title="Manage Streams">
-                              <IconButton 
-                                onClick={() => window.location.href = `/streams?channel=${channel.id}`}
-                                size="small"
-                                sx={{
-                                  background: 'linear-gradient(135deg, rgba(59, 130, 246, 0.1) 0%, rgba(29, 78, 216, 0.1) 100%)',
-                                  transition: 'all 0.2s ease',
-                                  '&:hover': {
-                                    background: 'linear-gradient(135deg, #3b82f6 0%, #1d4ed8 100%)',
-                                    color: 'white',
-                                    transform: 'scale(1.1)',
-                                  }
-                                }}
-                              >
-                                <StreamIcon sx={{ fontSize: 16 }} />
-                              </IconButton>
-                            </Tooltip>
-                          )}
-                        </Box>
-                      </TableCell>
-                      <TableCell>
-                        <Chip
-                          label={channel.enabled ? 'Active' : 'Inactive'}
-                          sx={{
-                            background: channel.enabled 
-                              ? 'linear-gradient(135deg, #10b981 0%, #059669 100%)'
-                              : 'linear-gradient(135deg, #6b7280 0%, #4b5563 100%)',
-                            color: '#ffffff',
-                            fontWeight: 600,
-                            fontSize: '0.7rem',
-                            transition: 'all 0.2s ease',
-                            '&:hover': {
-                              transform: 'scale(1.05)',
-                            },
-                            '&::before': {
-                              content: channel.enabled ? '"●"' : '"○"',
-                              marginRight: '4px',
-                            }
-                          }}
-                          size="small"
-                        />
-                      </TableCell>
-                      <TableCell>
-                        <Box display="flex" gap={1}>
-                          <Tooltip title="Edit Channel">
-                            <IconButton 
-                              onClick={() => handleEdit(channel)} 
-                              size="small"
-                              data-testid="edit-channel-button"
-                              sx={{
-                                background: 'linear-gradient(135deg, rgba(99, 102, 241, 0.1) 0%, rgba(139, 92, 246, 0.1) 100%)',
-                                transition: 'all 0.2s ease',
-                                '&:hover': {
-                                  background: 'linear-gradient(135deg, #6366f1 0%, #8b5cf6 100%)',
-                                  color: 'white',
-                                  transform: 'scale(1.1) rotate(5deg)',
-                                  boxShadow: '0 4px 12px rgba(99, 102, 241, 0.4)',
-                                }
-                              }}
-                            >
-                              <EditIcon sx={{ fontSize: 16 }} />
-                            </IconButton>
-                          </Tooltip>
-                          <Tooltip title="Delete Channel">
-                            <IconButton
-                              onClick={() => handleDelete(channel)}
-                              size="small"
-                              disabled={deleting === channel.id}
-                              data-testid="delete-channel-button"
-                              sx={{
-                                background: 'linear-gradient(135deg, rgba(239, 68, 68, 0.1) 0%, rgba(220, 38, 38, 0.1) 100%)',
-                                transition: 'all 0.2s ease',
-                                '&:hover:not(:disabled)': {
-                                  background: 'linear-gradient(135deg, #ef4444 0%, #dc2626 100%)',
-                                  color: 'white',
-                                  transform: 'scale(1.1)',
-                                  boxShadow: '0 4px 12px rgba(239, 68, 68, 0.4)',
-                                },
-                                '&:disabled': {
-                                  background: 'rgba(148, 163, 184, 0.1)',
-                                }
-                              }}
-                            >
-                              {deleting === channel.id ? (
-                                <CircularProgress 
-                                  size={16} 
-                                  sx={{ 
-                                    color: 'primary.main',
-                                    animation: 'spin 1s linear infinite',
-                                    '@keyframes spin': {
-                                      '0%': { transform: 'rotate(0deg)' },
-                                      '100%': { transform: 'rotate(360deg)' },
+                          {(attributes, listeners, isDragging) => (
+                            <>
+                              <TableCell padding="checkbox">
+                                <Checkbox
+                                  checked={selectedChannels.includes(channel.id)}
+                                  onChange={() => handleSelectChannel(channel.id)}
+                                  data-testid={`select-channel-${channel.id}`}
+                                  sx={{
+                                    transition: 'all 0.2s ease',
+                                    '&:hover': {
+                                      transform: 'scale(1.1)',
                                     }
-                                  }} 
+                                  }}
                                 />
-                              ) : (
-                                <DeleteIcon sx={{ fontSize: 16 }} />
-                              )}
-                            </IconButton>
-                          </Tooltip>
-                        </Box>
-                      </TableCell>
-                    </TableRow>
-                  ))}
+                              </TableCell>
+                              <TableCell>
+                                <Box 
+                                  {...attributes}
+                                  {...listeners}
+                                  className="drag-handle"
+                                  sx={{ 
+                                    display: 'flex',
+                                    alignItems: 'center',
+                                    justifyContent: 'center',
+                                    cursor: isDragging ? 'grabbing' : 'grab',
+                                    opacity: 0.6,
+                                    transition: 'opacity 0.2s ease',
+                                    '&:hover': {
+                                      opacity: 1,
+                                    },
+                                    touchAction: 'none',
+                                  }}
+                                  data-testid={`drag-handle-${channel.id}`}
+                                >
+                                  <DragHandleIcon sx={{ fontSize: 18, color: 'text.secondary' }} />
+                                </Box>
+                              </TableCell>
+                              <TableCell>
+                                <Box 
+                                  sx={{ 
+                                    width: 32, 
+                                    height: 32,
+                                    borderRadius: 2,
+                                    background: 'linear-gradient(135deg, #6366f1 0%, #8b5cf6 100%)',
+                                    display: 'flex',
+                                    alignItems: 'center',
+                                    justifyContent: 'center',
+                                    color: 'white',
+                                    fontWeight: 700,
+                                    fontSize: '0.875rem'
+                                  }}
+                                  data-testid={`channel-number-${channel.id}`}
+                                >
+                                  {channel.number}
+                                </Box>
+                              </TableCell>
+                              <TableCell>
+                                <Box display="flex" alignItems="center">
+                                  <Box 
+                                    sx={{ 
+                                      width: 32, 
+                                      height: 32,
+                                      borderRadius: 2,
+                                      background: 'linear-gradient(135deg, rgba(99, 102, 241, 0.1) 0%, rgba(139, 92, 246, 0.1) 100%)',
+                                      display: 'flex',
+                                      alignItems: 'center',
+                                      justifyContent: 'center',
+                                      mr: 2,
+                                      transition: 'all 0.2s ease',
+                                      '&:hover': {
+                                        transform: 'rotate(5deg) scale(1.1)',
+                                      }
+                                    }}
+                                  >
+                                    <TvIcon sx={{ fontSize: 18, color: 'primary.main' }} />
+                                  </Box>
+                                  <Box>
+                                    <Typography 
+                                      variant="body2" 
+                                      sx={{ 
+                                        fontWeight: 600,
+                                        color: 'text.primary',
+                                        mb: 0.25
+                                      }}
+                                      data-testid={`channel-name-${channel.id}`}
+                                    >
+                                      {channel.name}
+                                    </Typography>
+                                    {channel.epg_id && (
+                                      <Typography 
+                                        variant="caption" 
+                                        sx={{ 
+                                          color: 'text.secondary',
+                                          fontSize: '0.7rem'
+                                        }}
+                                      >
+                                        EPG: {channel.epg_id}
+                                      </Typography>
+                                    )}
+                                  </Box>
+                                </Box>
+                              </TableCell>
+                              <TableCell sx={{ display: { xs: 'none', sm: 'table-cell' } }}>
+                                <Typography variant="body2" color="text.secondary">
+                                  {channel.epg_id || '-'}
+                                </Typography>
+                              </TableCell>
+                              <TableCell>
+                                <Box display="flex" alignItems="center" gap={1.5}>
+                                  <Chip
+                                    label={`${channel.stream_count || 0} streams`}
+                                    size="small"
+                                    data-testid={`stream-count-${channel.id}`}
+                                    sx={{
+                                      background: channel.stream_count > 0 
+                                        ? 'linear-gradient(135deg, #6366f1 0%, #8b5cf6 100%)'
+                                        : 'rgba(148, 163, 184, 0.2)',
+                                      color: channel.stream_count > 0 ? '#ffffff' : 'text.secondary',
+                                      fontWeight: 600,
+                                      fontSize: '0.7rem',
+                                      transition: 'all 0.2s ease',
+                                      '&:hover': {
+                                        transform: 'scale(1.05)',
+                                      }
+                                    }}
+                                  />
+                                  {channel.stream_count > 0 && (
+                                    <Tooltip title="Manage Streams">
+                                      <IconButton 
+                                        onClick={() => window.location.href = `/streams?channel=${channel.id}`}
+                                        size="small"
+                                        data-testid={`manage-streams-${channel.id}`}
+                                        sx={{
+                                          background: 'linear-gradient(135deg, rgba(59, 130, 246, 0.1) 0%, rgba(29, 78, 216, 0.1) 100%)',
+                                          transition: 'all 0.2s ease',
+                                          '&:hover': {
+                                            background: 'linear-gradient(135deg, #3b82f6 0%, #1d4ed8 100%)',
+                                            color: 'white',
+                                            transform: 'scale(1.1)',
+                                          }
+                                        }}
+                                      >
+                                        <StreamIcon sx={{ fontSize: 16 }} />
+                                      </IconButton>
+                                    </Tooltip>
+                                  )}
+                                </Box>
+                              </TableCell>
+                              <TableCell>
+                                <Chip
+                                  label={channel.enabled ? 'Active' : 'Inactive'}
+                                  data-testid={`channel-status-${channel.id}`}
+                                  sx={{
+                                    background: channel.enabled 
+                                      ? 'linear-gradient(135deg, #10b981 0%, #059669 100%)'
+                                      : 'linear-gradient(135deg, #6b7280 0%, #4b5563 100%)',
+                                    color: '#ffffff',
+                                    fontWeight: 600,
+                                    fontSize: '0.7rem',
+                                    transition: 'all 0.2s ease',
+                                    '&:hover': {
+                                      transform: 'scale(1.05)',
+                                    },
+                                    '&::before': {
+                                      content: channel.enabled ? '"●"' : '"○"',
+                                      marginRight: '4px',
+                                    }
+                                  }}
+                                  size="small"
+                                />
+                              </TableCell>
+                              <TableCell>
+                                <Box display="flex" gap={1}>
+                                  <Tooltip title="Edit Channel">
+                                    <IconButton 
+                                      onClick={() => handleEdit(channel)} 
+                                      size="small"
+                                      data-testid={`edit-channel-${channel.id}`}
+                                      sx={{
+                                        background: 'linear-gradient(135deg, rgba(99, 102, 241, 0.1) 0%, rgba(139, 92, 246, 0.1) 100%)',
+                                        transition: 'all 0.2s ease',
+                                        '&:hover': {
+                                          background: 'linear-gradient(135deg, #6366f1 0%, #8b5cf6 100%)',
+                                          color: 'white',
+                                          transform: 'scale(1.1) rotate(5deg)',
+                                          boxShadow: '0 4px 12px rgba(99, 102, 241, 0.4)',
+                                        }
+                                      }}
+                                    >
+                                      <EditIcon sx={{ fontSize: 16 }} />
+                                    </IconButton>
+                                  </Tooltip>
+                                  <Tooltip title="Delete Channel">
+                                    <IconButton
+                                      onClick={() => handleDelete(channel)}
+                                      size="small"
+                                      disabled={deleting === channel.id}
+                                      data-testid={`delete-channel-${channel.id}`}
+                                      sx={{
+                                        background: 'linear-gradient(135deg, rgba(239, 68, 68, 0.1) 0%, rgba(220, 38, 38, 0.1) 100%)',
+                                        transition: 'all 0.2s ease',
+                                        '&:hover:not(:disabled)': {
+                                          background: 'linear-gradient(135deg, #ef4444 0%, #dc2626 100%)',
+                                          color: 'white',
+                                          transform: 'scale(1.1)',
+                                          boxShadow: '0 4px 12px rgba(239, 68, 68, 0.4)',
+                                        },
+                                        '&:disabled': {
+                                          background: 'rgba(148, 163, 184, 0.1)',
+                                        }
+                                      }}
+                                    >
+                                      {deleting === channel.id ? (
+                                        <CircularProgress 
+                                          size={16} 
+                                          sx={{ 
+                                            color: 'primary.main',
+                                            animation: 'spin 1s linear infinite',
+                                            '@keyframes spin': {
+                                              '0%': { transform: 'rotate(0deg)' },
+                                              '100%': { transform: 'rotate(360deg)' },
+                                            }
+                                          }} 
+                                        />
+                                      ) : (
+                                        <DeleteIcon sx={{ fontSize: 16 }} />
+                                      )}
+                                    </IconButton>
+                                  </Tooltip>
+                                </Box>
+                              </TableCell>
+                            </>
+                          )}
+                        </SortableChannelRow>
+                      ))}
+                    </SortableContext>
+                  </DndContext>
                   {channels.length === 0 && !loading && (
                     <TableRow>
-                      <TableCell colSpan={7} align="center" sx={{ py: 8 }}>
+                      <TableCell colSpan={8} align="center" sx={{ py: 8 }}>
                         <Box display="flex" flexDirection="column" alignItems="center" gap={2}>
                           <TvIcon sx={{ fontSize: 64, color: 'text.disabled' }} />
                           <Typography variant="h6" color="text.secondary">
@@ -726,7 +986,7 @@ function ChannelManager() {
           {!loading && channels.length > 0 && (
             <TablePagination
               component="div"
-              count={channels.length}
+              count={sortedChannels.length}
               page={page}
               onPageChange={(event, newPage) => setPage(newPage)}
               rowsPerPage={rowsPerPage}
@@ -735,6 +995,7 @@ function ChannelManager() {
                 setPage(0);
               }}
               rowsPerPageOptions={[5, 10, 25, 50]}
+              data-testid="channel-pagination"
             />
           )}
         </CardContent>
@@ -806,6 +1067,7 @@ function ChannelManager() {
                 error={formValidation.nameError}
                 helperText={formValidation.nameHelperText}
                 disabled={saving}
+                data-testid="channel-name-input"
               />
             </Grid>
             
@@ -821,6 +1083,7 @@ function ChannelManager() {
                 helperText={formValidation.numberHelperText}
                 disabled={saving}
                 inputProps={{ min: 1, max: 9999 }}
+                data-testid="channel-number-input"
               />
             </Grid>
             
@@ -832,6 +1095,7 @@ function ChannelManager() {
                   onChange={(e) => handleInputChange('epg_id', e.target.value)}
                   label="EPG ID"
                   disabled={saving}
+                  data-testid="channel-epg-select"
                 >
                   <MenuItem value="">
                     <em>No EPG</em>
@@ -880,6 +1144,7 @@ function ChannelManager() {
                 onChange={(e) => handleInputChange('logo', e.target.value)}
                 helperText="Optional - URL to channel logo image (PNG, JPG, SVG)"
                 disabled={saving}
+                data-testid="channel-logo-input"
               />
             </Grid>
             
@@ -891,6 +1156,7 @@ function ChannelManager() {
                     onChange={(e) => handleInputChange('enabled', e.target.checked)}
                     disabled={saving}
                     color="success"
+                    data-testid="channel-enabled-switch"
                   />
                 }
                 label={
@@ -909,6 +1175,7 @@ function ChannelManager() {
             disabled={saving}
             startIcon={<CancelIcon />}
             color="inherit"
+            data-testid="cancel-channel-button"
           >
             Cancel
           </Button>
@@ -919,6 +1186,7 @@ function ChannelManager() {
             startIcon={saving ? <CircularProgress size={20} /> : <SaveIcon />}
             color="primary"
             size="large"
+            data-testid="save-channel-button"
           >
             {saving ? 'Saving...' : 'Save Channel'}
           </Button>

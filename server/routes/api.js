@@ -260,6 +260,77 @@ router.delete('/channels/:id', async (req, res) => {
   }
 });
 
+// Bulk update channels (for drag-and-drop reordering)
+router.put('/channels/bulk-update', async (req, res) => {
+  try {
+    const { updates } = req.body;
+    
+    if (!Array.isArray(updates) || updates.length === 0) {
+      return res.status(400).json({ error: 'Updates array is required' });
+    }
+
+    // Validate updates
+    for (const update of updates) {
+      if (!update.id || typeof update.number !== 'number') {
+        return res.status(400).json({ error: 'Each update must have id and number fields' });
+      }
+      if (update.number < 1 || update.number > 9999) {
+        return res.status(400).json({ error: 'Channel number must be between 1 and 9999' });
+      }
+    }
+
+    // Check for duplicate channel numbers
+    const numbers = updates.map(u => u.number);
+    const uniqueNumbers = new Set(numbers);
+    if (numbers.length !== uniqueNumbers.size) {
+      return res.status(400).json({ error: 'Duplicate channel numbers detected in updates' });
+    }
+
+    // Begin transaction for bulk update
+    await database.run('BEGIN TRANSACTION');
+    
+    try {
+      let updatedCount = 0;
+      
+      for (const update of updates) {
+        const result = await database.run(
+          'UPDATE channels SET number = ? WHERE id = ?',
+          [update.number, update.id]
+        );
+        
+        if (result.changes > 0) {
+          updatedCount++;
+        }
+      }
+      
+      await database.run('COMMIT');
+      
+      // Clear channel lineup cache
+      await cacheService.del('lineup:channels');
+      
+      logger.info('Bulk channel update completed', { 
+        updatedCount, 
+        totalRequested: updates.length,
+        updateDetails: updates.map(u => ({ id: u.id, number: u.number }))
+      });
+      
+      res.json({ 
+        message: 'Channels updated successfully',
+        updatedCount,
+        totalRequested: updates.length
+      });
+      
+    } catch (transactionError) {
+      await database.run('ROLLBACK');
+      throw transactionError;
+    }
+    
+  } catch (error) {
+    logger.error('Bulk channel update error:', error);
+    res.status(500).json({ error: 'Failed to update channels' });
+  }
+});
+
 // STREAMS API
 router.get('/streams', async (req, res) => {
   try {
