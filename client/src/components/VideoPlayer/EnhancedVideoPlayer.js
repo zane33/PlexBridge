@@ -534,7 +534,7 @@ const EnhancedVideoPlayer = ({
           liveTolerance: 15
         },
         // Add tech options for better stream handling
-        techOrder: ['html5', 'flash'],
+        techOrder: ['html5'],
         // Preload metadata to help with stream initialization
         preload: 'metadata'
       });

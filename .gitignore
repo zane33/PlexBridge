@@ -73,3 +73,4 @@ test-reports/
 /test-screenshots
 /tests/e2e/screenshots-comprehensive
 /tests/e2e/screenshots-settings-analysis
+/tests/e2e
