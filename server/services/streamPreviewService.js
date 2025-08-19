@@ -18,8 +18,14 @@ class StreamPreviewService {
   // Get stream from database with validation
   async getStreamById(streamId) {
     try {
-      if (!databaseService.db || !databaseService.isInitialized) {
-        throw new Error('Database not initialized');
+      // Ensure database is initialized before querying
+      if (!databaseService.isInitialized) {
+        logger.info('Database not initialized, attempting initialization...');
+        await databaseService.initialize();
+      }
+
+      if (!databaseService.db) {
+        throw new Error('Database connection failed after initialization');
       }
 
       const stream = await databaseService.get(
@@ -119,18 +125,6 @@ class StreamPreviewService {
         logger.stream('Stream format detected', { streamId, detectedFormat: streamFormat });
       }
 
-      // Check if this is a .ts file that needs HLS conversion for browser playback
-      if (this.needsHLSConversion(stream.url, streamFormat)) {
-        logger.stream('Detected .ts stream, converting to HLS for browser compatibility', { 
-          streamId, 
-          format: streamFormat,
-          url: stream.url
-        });
-        
-        // Always convert .ts files to HLS for browser compatibility
-        return await this.handleHLSConversion(stream, req, res);
-      }
-      
       // Check if this is a .ts file that needs conversion for browser compatibility
       const needsHLSConversion = this.needsHLSConversion(stream.url, streamFormat);
       
@@ -192,41 +186,74 @@ class StreamPreviewService {
     return isTsFile;
   }
 
+  // Detect if the client is an external player (VLC, etc.) that needs proxying
+  isExternalPlayer(userAgent) {
+    if (!userAgent) return false;
+    
+    const externalPlayerIndicators = [
+      'vlc', 'mpv', 'kodi', 'plex', 'jellyfin', 'emby',
+      'libavformat', 'ffmpeg', 'gstreamer', 'mplayer',
+      'potplayer', 'wmplayer', 'quicktime'
+    ];
+    
+    const lowerUA = userAgent.toLowerCase();
+    return externalPlayerIndicators.some(indicator => lowerUA.includes(indicator));
+  }
+
   // Handle direct stream preview (no transcoding)
   async handleDirectPreview(stream, req, res) {
     try {
+      const userAgent = req.get('User-Agent') || '';
+      const isExternal = this.isExternalPlayer(userAgent);
+      
       logger.stream('Handling direct stream preview', { 
         streamId: stream.id, 
         url: stream.url,
-        type: stream.type 
+        type: stream.type,
+        userAgent,
+        isExternalPlayer: isExternal
       });
 
       // Set appropriate headers based on stream type
       this.setStreamHeaders(res, stream.type);
 
-      // For HLS/DASH streams, proxy through our backend to avoid CORS issues
+      // For HLS/DASH streams, always proxy through our backend to avoid CORS issues
       // Don't redirect directly as this can cause CORS problems
       if (['hls', 'dash'].includes(stream.type)) {
         return streamManager.proxyStream(stream.url, req, res);
       }
       
-      // For direct HTTP video files, we can redirect if CORS allows
-      if (stream.type === 'http' && (stream.url.includes('.mp4') || stream.url.includes('.webm'))) {
+      // CRITICAL FIX: For external players (VLC, etc.), use simple HTTP proxy for basic streams
+      // External players don't handle HTTP redirects well for streaming content
+      if (isExternal && stream.type === 'http') {
+        logger.stream('Using simple HTTP proxy for external player', { 
+          streamId: stream.id,
+          userAgent,
+          streamType: stream.type
+        });
+        return this.simpleHttpProxy(stream.url, req, res);
+      }
+      
+      // For browsers with direct HTTP video files, redirect only if not an external player
+      if (stream.type === 'http' && (stream.url.includes('.mp4') || stream.url.includes('.webm')) && !isExternal) {
+        logger.stream('Redirecting browser to direct video file', { 
+          streamId: stream.id,
+          url: stream.url
+        });
         return res.redirect(stream.url);
       }
 
-      // For other formats, use stream manager for proxying
-      const streamData = {
-        url: stream.url,
-        type: stream.type,
-        auth: stream.auth_username ? {
-          username: stream.auth_username,
-          password: stream.auth_password
-        } : null,
-        headers: stream.headers || {}
-      };
-
-      return streamManager.createStreamProxy(stream.id, streamData, req, res);
+      // For other formats, use simple proxy if possible, otherwise fallback to redirect
+      if (stream.type === 'http') {
+        return this.simpleHttpProxy(stream.url, req, res);
+      } else {
+        // For non-HTTP streams, fallback to redirect for now
+        logger.stream('Redirecting to stream URL for non-HTTP stream', { 
+          streamId: stream.id,
+          streamType: stream.type
+        });
+        return res.redirect(stream.url);
+      }
 
     } catch (error) {
       logger.error('Direct preview error', { 
@@ -251,7 +278,7 @@ class StreamPreviewService {
       // Create FFmpeg process to convert .ts to HLS
       const ffmpegPath = config.streams?.ffmpegPath || '/usr/bin/ffmpeg';
       
-      // FFmpeg arguments for .ts to MP4 conversion for browser compatibility
+      // FFmpeg arguments for .ts to MP4 conversion with optimized streaming for browser compatibility
       const args = [
         '-i', stream.url,
         '-c:v', 'libx264',                    // H.264 codec for browser compatibility
@@ -264,6 +291,8 @@ class StreamPreviewService {
         '-bufsize', '5000k',                  // Buffer size (2x bitrate)
         '-b:a', '128k',                       // Audio bitrate
         '-ar', '48000',                       // Audio sample rate
+        '-g', '30',                           // GOP size (keyframe interval)
+        '-force_key_frames', 'expr:gte(t,n_forced*2)', // Force keyframes every 2 seconds
         '-movflags', 'frag_keyframe+empty_moov+faststart', // MP4 streaming optimizations
         '-f', 'mp4',                          // Output as MP4 for browser compatibility
         '-fflags', '+genpts',                 // Generate presentation timestamps
@@ -325,7 +354,7 @@ class StreamPreviewService {
 
       this.concurrencyCounter++;
 
-      // Set response headers for video streaming (MP4 format for browser compatibility)
+      // Set response headers for MP4 streaming (MP4 format for browser compatibility)
       res.setHeader('Content-Type', 'video/mp4');
       res.setHeader('Access-Control-Allow-Origin', '*');
       res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Range');
@@ -648,7 +677,8 @@ class StreamPreviewService {
       case 'mpegts':
       case 'mts':
         // CRITICAL FIX: Proper content type for Transport Stream files
-        res.setHeader('Content-Type', 'video/mp2t');
+        // When transcoded through proxy, these become MP4 streams
+        res.setHeader('Content-Type', 'video/mp4');
         break;
       default:
         res.setHeader('Content-Type', 'video/mp4');
@@ -735,6 +765,81 @@ class StreamPreviewService {
       utilizationPercentage: Math.round((sessions.length / this.maxConcurrentTranscodes) * 100),
       sessions
     };
+  }
+
+  // Simple HTTP proxy for basic streams (VLC compatibility)
+  async simpleHttpProxy(streamUrl, req, res) {
+    const axios = require('axios');
+    
+    try {
+      logger.stream('Creating simple HTTP proxy', { url: streamUrl });
+      
+      // Set streaming headers for compatibility
+      res.set({
+        'Content-Type': 'video/mp4',
+        'Access-Control-Allow-Origin': '*',
+        'Access-Control-Allow-Headers': 'Range, Content-Type, Authorization',
+        'Access-Control-Expose-Headers': 'Content-Range, Content-Length, Accept-Ranges',
+        'Cache-Control': 'no-cache, no-store, must-revalidate',
+        'Accept-Ranges': 'bytes'
+      });
+
+      // Forward range requests for video seeking
+      const headers = {
+        'User-Agent': 'PlexBridge/1.0'
+      };
+      
+      if (req.headers.range) {
+        headers['Range'] = req.headers.range;
+      }
+
+      // Create axios request with streaming response
+      const response = await axios.get(streamUrl, {
+        timeout: 30000,
+        responseType: 'stream',
+        headers
+      });
+
+      // Forward status code and headers from source
+      res.status(response.status);
+      
+      if (response.headers['content-length']) {
+        res.set('Content-Length', response.headers['content-length']);
+      }
+      
+      if (response.headers['content-range']) {
+        res.set('Content-Range', response.headers['content-range']);
+      }
+      
+      if (response.headers['content-type']) {
+        res.set('Content-Type', response.headers['content-type']);
+      }
+
+      // Pipe the response
+      response.data.pipe(res);
+      
+      response.data.on('error', (error) => {
+        logger.error('Simple HTTP proxy error', { url: streamUrl, error: error.message });
+        if (!res.headersSent) {
+          res.status(500).end();
+        }
+      });
+
+      // Handle client disconnect
+      req.on('close', () => {
+        logger.stream('Client disconnected from simple HTTP proxy', { url: streamUrl });
+        response.data.destroy();
+      });
+
+    } catch (error) {
+      logger.error('Simple HTTP proxy failed', { url: streamUrl, error: error.message });
+      if (!res.headersSent) {
+        res.status(500).json({ 
+          error: 'HTTP proxy failed',
+          message: error.message
+        });
+      }
+    }
   }
 
   // Graceful shutdown

@@ -49,24 +49,38 @@ const SimpleVideoPlayer = ({
   const theme = useTheme();
   const isMobile = useMediaQuery(theme.breakpoints.down('md'));
 
-  // Get the appropriate stream URL
+  // Get the appropriate stream URL (memoized to prevent unnecessary re-renders)
   const getStreamUrl = useCallback(() => {
     if (!streamUrl) return '';
     
     if (proxyEnabled && streamId) {
       // Use the backend stream preview endpoint to avoid CORS issues  
+      console.log('Using proxy URL for streamId:', streamId);
       return `${window.location.origin}/streams/preview/${streamId}`;
     } else if (proxyEnabled && channelId) {
       // Use the channel stream endpoint for channel-based playback
+      console.log('Using proxy URL for channelId:', channelId);
       return `${window.location.origin}/stream/${channelId}`;
     }
     
+    console.log('Using direct stream URL:', streamUrl);
     return streamUrl;
   }, [streamUrl, proxyEnabled, channelId, streamId]);
 
-  // Initialize simple HLS player
+  // Initialize simple HLS player (removed problematic dependencies to prevent loops)
   const initializePlayer = useCallback(async () => {
-    if (!open || !streamUrl || !videoRef.current) return;
+    console.log('initializePlayer called with:', { open, streamUrl, hasVideoRef: !!videoRef.current });
+    
+    if (!open || !streamUrl) {
+      console.log('initializePlayer early return - missing requirements');
+      return;
+    }
+    
+    // Wait for video element to be available with timeout limit
+    if (!videoRef.current) {
+      console.log('Video element not ready, waiting...');
+      return;
+    }
 
     setLoading(true);
     setError(null);
@@ -75,14 +89,26 @@ const SimpleVideoPlayer = ({
     try {
       const currentUrl = getStreamUrl();
       
-      // Clean up previous HLS instance
+      // Debug logging
+      console.log('SimpleVideoPlayer initialization:', {
+        streamUrl,
+        streamType,
+        streamId,
+        channelId,
+        proxyEnabled,
+        currentUrl
+      });
+      
+      // Clean up previous HLS instance if it exists
       if (hlsInstance) {
+        console.log('Cleaning up previous HLS instance');
         hlsInstance.destroy();
         setHlsInstance(null);
       }
 
-      // Handle HLS streams
-      if (currentUrl.includes('.m3u8')) {
+      // Handle HLS streams - check both URL and stream type
+      if (currentUrl.includes('.m3u8') || streamType === 'hls' || 
+          (proxyEnabled && (streamType === 'hls' || streamType === 'unknown'))) {
         const Hls = (await import('hls.js')).default;
         
         if (Hls.isSupported()) {
@@ -126,8 +152,16 @@ const SimpleVideoPlayer = ({
             }
           });
           
-          hls.loadSource(currentUrl);
-          hls.attachMedia(videoRef.current);
+          try {
+            hls.loadSource(currentUrl);
+            hls.attachMedia(videoRef.current);
+            console.log('HLS source loaded and attached to video element');
+          } catch (hlsError) {
+            console.error('HLS attachment error:', hlsError);
+            hls.destroy();
+            setHlsInstance(null);
+            throw hlsError;
+          }
           
         } else if (videoRef.current.canPlayType('application/vnd.apple.mpegurl')) {
           // Safari native HLS support
@@ -152,11 +186,19 @@ const SimpleVideoPlayer = ({
           variant: 'warning' 
         });
       } else {
-        // Direct video for non-HLS
+        // Direct video for non-HLS streams or fallback for proxy URLs
+        console.log('Using native player for stream:', { currentUrl, streamType });
+        
+        // Clear any existing source before setting new one
+        videoRef.current.src = '';
+        videoRef.current.load();
+        
+        // Set new source and load
         videoRef.current.src = currentUrl;
         videoRef.current.load();
-        setVideoReady(true);
-        enqueueSnackbar('Direct video stream loaded!', { variant: 'success' });
+        
+        // Don't set videoReady immediately - wait for canplay event
+        enqueueSnackbar(`Loading ${streamType || 'direct'} video stream...`, { variant: 'info' });
       }
 
     } catch (error) {
@@ -180,7 +222,7 @@ const SimpleVideoPlayer = ({
     } finally {
       setLoading(false);
     }
-  }, [open, streamUrl, getStreamUrl, hlsInstance, enqueueSnackbar, onError]);
+  }, [open, streamUrl, streamType, streamId, channelId, proxyEnabled, enqueueSnackbar, onError]);
 
   const retryConnection = () => {
     initializePlayer();
@@ -210,24 +252,45 @@ const SimpleVideoPlayer = ({
     enqueueSnackbar(`Opening in ${playerType.toUpperCase()}...`, { variant: 'info' });
   };
 
-  // Effects
+  // Single consolidated effect for player initialization
   useEffect(() => {
-    if (open) {
-      initializePlayer();
+    let isMounted = true;
+    let timeoutId = null;
+
+    const initPlayer = async () => {
+      // Wait for video element with timeout
+      if (!videoRef.current) {
+        if (timeoutId) clearTimeout(timeoutId);
+        timeoutId = setTimeout(() => {
+          if (isMounted && videoRef.current && open) {
+            initializePlayer();
+          }
+        }, 100);
+        return;
+      }
+      
+      if (isMounted && open) {
+        await initializePlayer();
+      }
+    };
+
+    if (open && streamUrl) {
+      initPlayer();
     }
+
     return () => {
+      isMounted = false;
+      if (timeoutId) {
+        clearTimeout(timeoutId);
+      }
+      // Cleanup HLS instance on unmount
       if (hlsInstance) {
+        console.log('Cleaning up HLS instance on unmount');
         hlsInstance.destroy();
         setHlsInstance(null);
       }
     };
-  }, [open, initializePlayer]);
-
-  useEffect(() => {
-    if (open) {
-      initializePlayer();
-    }
-  }, [proxyEnabled, initializePlayer]);
+  }, [open, streamUrl, proxyEnabled, streamType, streamId, channelId]);
 
   const handleClose = () => {
     if (hlsInstance) {
@@ -252,6 +315,7 @@ const SimpleVideoPlayer = ({
           minHeight: isMobile ? '100vh' : '600px',
         }
       }}
+      data-testid="video-player-dialog"
     >
       <DialogTitle sx={{ color: 'white', borderBottom: '1px solid #333', p: 2 }}>
         <Box display="flex" justifyContent="space-between" alignItems="center">
@@ -269,7 +333,7 @@ const SimpleVideoPlayer = ({
               color="primary" 
               variant="outlined"
             />
-            <IconButton onClick={handleClose} sx={{ color: 'white' }}>
+            <IconButton onClick={handleClose} sx={{ color: 'white' }} data-testid="close-video-player">
               <CloseIcon />
             </IconButton>
           </Box>
@@ -382,19 +446,44 @@ const SimpleVideoPlayer = ({
             }}
             onLoadStart={() => console.log('Video load started')}
             onCanPlay={() => {
-              console.log('Video can play');
+              console.log('Video can play - setting videoReady to true');
               setVideoReady(true);
+              setLoading(false);
+              const video = videoRef.current;
+              if (video) {
+                console.log('Video ready details:', {
+                  hasVideo: video.videoWidth > 0 && video.videoHeight > 0,
+                  videoWidth: video.videoWidth,
+                  videoHeight: video.videoHeight,
+                  hasAudio: video.mozHasAudio || Boolean(video.webkitAudioDecodedByteCount) || Boolean(video.audioTracks?.length),
+                  duration: video.duration,
+                  readyState: video.readyState
+                });
+              }
             }}
             onLoadedMetadata={() => {
               console.log('Video metadata loaded');
               const video = videoRef.current;
               if (video) {
-                console.log('Video details:', {
+                const hasVideoTrack = video.videoWidth > 0 && video.videoHeight > 0;
+                const hasAudioTrack = video.mozHasAudio || Boolean(video.webkitAudioDecodedByteCount) || Boolean(video.audioTracks?.length);
+                
+                console.log('Video metadata details:', {
                   duration: video.duration,
                   videoWidth: video.videoWidth,
                   videoHeight: video.videoHeight,
-                  readyState: video.readyState
+                  hasVideoTrack,
+                  hasAudioTrack,
+                  readyState: video.readyState,
+                  networkState: video.networkState
                 });
+                
+                // Show warning if only audio detected
+                if (!hasVideoTrack && hasAudioTrack) {
+                  enqueueSnackbar('Only audio track detected - video may not display', { 
+                    variant: 'warning' 
+                  });
+                }
               }
             }}
           />

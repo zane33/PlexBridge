@@ -767,6 +767,9 @@ function StreamManager() {
       id: stream.id
     };
     
+    console.log('handleTestStream called with:', stream);
+    console.log('streamData created:', streamData);
+    
     setCurrentStream(streamData);
     setEnhancedPlayerOpen(true);
     
@@ -1034,7 +1037,10 @@ function StreamManager() {
                             </Tooltip>
                             <Tooltip title="Preview Stream in Player" arrow>
                               <IconButton
-                                onClick={() => handleTestStream(stream)}
+                                onClick={() => {
+                                  console.log('Preview button clicked for stream:', stream);
+                                  handleTestStream(stream);
+                                }}
                                 size="small"
                                 color="info"
                                 data-testid="preview-stream-button"

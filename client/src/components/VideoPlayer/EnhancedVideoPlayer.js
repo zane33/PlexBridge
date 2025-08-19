@@ -167,11 +167,11 @@ const EnhancedVideoPlayer = ({
     if (urlLower.includes('.ts') || urlLower.includes('.mpegts') || urlLower.includes('.mts') || urlLower.includes('type=ts')) {
       return {
         type: 'ts',
-        useVideoJS: false, // Use native player for transcoded MP4 output
+        useVideoJS: false, // Use native player for converted MP4 output
         needsSpecialHandling: true,
         supportedByBrowser: false, // TS files need transcoding for browsers
         requiresTranscoding: true, // Flag to indicate transcoding is required
-        description: 'MPEG Transport Stream (Transcoded)'
+        description: 'MPEG Transport Stream (Converting to MP4)'
       };
     }
     
@@ -242,11 +242,11 @@ const EnhancedVideoPlayer = ({
         if (contentType.includes('video/mp2t') || contentType.includes('video/MP2T')) {
           return {
             type: 'ts',
-            useVideoJS: false, // Use native player for transcoded output
+            useVideoJS: false, // Use native player for converted MP4 output
             needsSpecialHandling: true,
-            supportedByBrowser: true, // After transcoding, it's browser-compatible
+            supportedByBrowser: true, // After transcoding to MP4, it's browser-compatible
             requiresTranscoding: true,
-            description: 'MPEG Transport Stream (Transcoded to MP4)'
+            description: 'MPEG Transport Stream (Converted to MP4)'
           };
         }
         
@@ -345,7 +345,17 @@ const EnhancedVideoPlayer = ({
 
   // Initialize video player with enhanced progress tracking
   const initializePlayer = useCallback(async () => {
-    if (!open || !streamUrl || isCleaningUp.current) return;
+    console.log('EnhancedVideoPlayer initializePlayer called with:', { 
+      open, 
+      streamUrl, 
+      isCleaningUp: isCleaningUp.current,
+      hasVideoRef: !!videoRef.current 
+    });
+    
+    if (!open || !streamUrl || isCleaningUp.current) {
+      console.log('EnhancedVideoPlayer early return - missing requirements');
+      return;
+    }
     
     // Clear any pending initialization
     if (initializationTimeoutRef.current) {
@@ -673,9 +683,9 @@ const EnhancedVideoPlayer = ({
         // CRITICAL FIX: Handle MPEG Transport Stream with proper MIME type
         // For TS files going through proxy/transcoding, they're converted to MP4
         if (url.includes('/streams/preview/') || url.includes('/stream/') || url.includes('/streams/convert/hls/')) {
-          return 'video/mp4'; // Transcoded to MP4 by backend
+          return 'video/mp4'; // Backend converts TS to MP4 for browser compatibility
         } else {
-          return 'video/mp2t'; // Direct TS file (won't work in browsers)
+          return 'video/mp2t'; // Direct TS file (won't work in browsers without conversion)
         }
       case 'streaming':
       case 'rtsp':
@@ -901,9 +911,15 @@ const EnhancedVideoPlayer = ({
 
   // Effects
   useEffect(() => {
+    console.log('EnhancedVideoPlayer useEffect triggered:', { open, streamUrl, hasStreamUrl: !!streamUrl });
+    
     if (open && streamUrl) {
+      console.log('Calling initializePlayer from useEffect');
       initializePlayer();
+    } else {
+      console.log('Not calling initializePlayer:', { open, streamUrl });
     }
+    
     return () => {
       if (initializationTimeoutRef.current) {
         clearTimeout(initializationTimeoutRef.current);
@@ -973,6 +989,7 @@ const EnhancedVideoPlayer = ({
       }}
       aria-labelledby="video-player-title"
       aria-describedby="video-player-description"
+      data-testid="video-player-dialog"
     >
       <DialogTitle sx={{ color: 'white', borderBottom: '1px solid #333', p: 2 }} id="video-player-title">
         <Box display="flex" justifyContent="space-between" alignItems="center">
@@ -993,6 +1010,7 @@ const EnhancedVideoPlayer = ({
                 onClick={handleClose} 
                 sx={{ color: 'white' }}
                 aria-label="Close video player"
+                data-testid="close-video-player"
               >
                 <CloseIcon />
               </IconButton>
@@ -1258,6 +1276,7 @@ const EnhancedVideoPlayer = ({
                         }}
                         size="large"
                         aria-label={`${isPlaying ? 'Pause' : 'Play'} video`}
+                        data-testid="play-pause-button"
                       >
                         {isPlaying ? <PauseIcon /> : <PlayIcon />}
                       </IconButton>
@@ -1271,6 +1290,7 @@ const EnhancedVideoPlayer = ({
                           '&:hover': { bgcolor: 'rgba(255,255,255,0.1)' }
                         }}
                         aria-label={`${isMuted ? 'Unmute' : 'Mute'} audio`}
+                        data-testid="mute-toggle-button"
                       >
                         {isMuted ? <VolumeOffIcon /> : <VolumeUpIcon />}
                       </IconButton>
@@ -1296,6 +1316,7 @@ const EnhancedVideoPlayer = ({
                           '&:hover': { bgcolor: 'rgba(255,255,255,0.1)' }
                         }}
                         aria-label="Refresh stream"
+                        data-testid="refresh-stream-button"
                       >
                         <RefreshIcon />
                       </IconButton>

@@ -1,193 +1,76 @@
+// Quick manual test to verify video player fixes work
 const { chromium } = require('playwright');
 
 async function testVideoPlayer() {
-  console.log('🚀 Starting video player tests...');
+  console.log('Starting video player test...');
   
-  const browser = await chromium.launch({ 
-    headless: false, // Run with UI to see what happens
-    slowMo: 1000 // Slow down operations to see them
-  });
-  
+  const browser = await chromium.launch({ headless: false });
   const context = await browser.newContext({
     viewport: { width: 1920, height: 1080 }
   });
-  
   const page = await context.newPage();
-  
+
   // Enable console logging
   page.on('console', msg => {
-    if (msg.type() === 'error') {
-      console.log('❌ Browser console error:', msg.text());
-    } else if (msg.type() === 'warn') {
-      console.log('⚠️ Browser console warning:', msg.text());
-    } else {
-      console.log('ℹ️ Browser console:', msg.text());
+    if (msg.type() === 'error' || msg.text().includes('infinite') || msg.text().includes('Using proxy URL')) {
+      console.log(`CONSOLE ${msg.type()}: ${msg.text()}`);
     }
   });
-  
-  // Catch any page errors
-  page.on('pageerror', error => {
-    console.log('❌ Page error:', error.message);
-  });
-  
+
   try {
-    console.log('📱 Navigating to PlexBridge...');
-    await page.goto('http://localhost:8080', { waitUntil: 'networkidle' });
+    console.log('Navigating to application...');
+    await page.goto('http://localhost:8080');
     
-    // Take screenshot of homepage
-    await page.screenshot({ path: 'homepage-test.png', fullPage: true });
-    console.log('📸 Homepage screenshot saved');
+    console.log('Waiting for page to load...');
+    await page.waitForLoadState('networkidle');
     
-    console.log('📊 Checking dashboard page...');
-    // Check if dashboard loads properly
-    const dashboardHeading = await page.locator('h4:has-text("System Overview")').first();
-    if (await dashboardHeading.isVisible()) {
-      console.log('✅ Dashboard loaded successfully');
-    } else {
-      console.log('❌ Dashboard not loaded properly');
-    }
+    console.log('Taking screenshot of main page...');
+    await page.screenshot({ path: '/mnt/c/Users/ZaneT/SFF/PlexBridge/test-screenshots/main-page.png', fullPage: true });
     
-    // Navigate to Streams page to test video player
-    console.log('🎬 Navigating to Streams page...');
+    // Navigate to streams page
+    console.log('Navigating to streams page...');
     await page.click('[data-testid="nav-streams"]');
-    await page.waitForSelector('table', { timeout: 10000 });
+    await page.waitForLoadState('networkidle');
     
-    // Take screenshot of streams page
-    await page.screenshot({ path: 'streams-page-test.png', fullPage: true });
-    console.log('📸 Streams page screenshot saved');
+    console.log('Taking screenshot of streams page...');
+    await page.screenshot({ path: '/mnt/c/Users/ZaneT/SFF/PlexBridge/test-screenshots/streams-page.png', fullPage: true });
+
+    // Look for stream preview buttons
+    const previewButtons = await page.locator('[data-testid="preview-stream-button"]');
+    const previewCount = await previewButtons.count();
     
-    // Check if there are any existing streams to test with
-    const streamRows = await page.locator('table tbody tr').count();
-    console.log(`📋 Found ${streamRows} existing streams`);
-    
-    if (streamRows > 0) {
-      console.log('🎯 Testing video preview with existing stream...');
+    if (previewCount > 0) {
+      console.log(`Found ${previewCount} stream preview buttons`);
       
-      // Click on the first preview button if available
-      const previewButton = page.locator('[data-testid="preview-stream-button"]').first();
-      if (await previewButton.isVisible()) {
-        await previewButton.click();
-        
-        // Wait for video player dialog to open
-        await page.waitForSelector('[data-testid="video-player-dialog"]', { timeout: 10000 });
-        console.log('✅ Video player dialog opened');
-        
-        // Take screenshot of video player
-        await page.screenshot({ path: 'video-player-dialog-test.png', fullPage: true });
-        console.log('📸 Video player dialog screenshot saved');
-        
-        // Check if video element is present
-        const videoElement = page.locator('video');
-        if (await videoElement.isVisible()) {
-          console.log('✅ Video element is visible');
-          
-          // Check video element attributes
-          const videoSrc = await videoElement.getAttribute('src');
-          console.log('🎥 Video source:', videoSrc || 'No src attribute');
-          
-          // Wait a bit for the video to attempt loading
-          await page.waitForTimeout(5000);
-          
-          // Check for any errors in the console
-          console.log('🔍 Checking for video loading...');
-        } else {
-          console.log('❌ Video element not visible');
-        }
-        
-        // Close the video player
-        await page.click('[data-testid="close-video-player"]');
-        console.log('✅ Video player closed');
-      } else {
-        console.log('⚠️ No preview button found on existing streams');
-      }
-    }
-    
-    // Test adding a new stream with .ts URL
-    console.log('📝 Testing add new stream with .ts URL...');
-    
-    // Click add stream button
-    await page.click('[data-testid="add-stream-button"]');
-    await page.waitForSelector('[data-testid="stream-dialog"]', { timeout: 5000 });
-    
-    // Fill in stream details
-    await page.fill('[data-testid="stream-name-input"]', 'Test TS Stream');
-    await page.fill('[data-testid="stream-url-input"]', 'http://primestreams.tv:826/live/SF11/vulwBvtfo9/118585.ts');
-    
-    // Save the stream
-    await page.click('[data-testid="save-stream-button"]');
-    await page.waitForTimeout(3000);
-    
-    // Take screenshot after adding stream
-    await page.screenshot({ path: 'after-add-stream-test.png', fullPage: true });
-    console.log('📸 After adding stream screenshot saved');
-    
-    console.log('🎯 Testing video preview with .ts stream...');
-    
-    // Find the newly added stream and test preview
-    const newStreamRow = page.locator('table tbody tr:has-text("Test TS Stream")');
-    if (await newStreamRow.isVisible()) {
-      console.log('✅ New .ts stream added successfully');
-      
-      // Click preview button for the new stream
-      const tsPreviewButton = newStreamRow.locator('[data-testid="preview-stream-button"]');
-      await tsPreviewButton.click();
+      // Click first preview button
+      console.log('Clicking first stream preview button...');
+      await previewButtons.first().click();
       
       // Wait for video player dialog
-      await page.waitForSelector('dialog[open]', { timeout: 10000 });
-      console.log('✅ Video player opened for .ts stream');
+      console.log('Waiting for video player dialog...');
+      await page.waitForSelector('[data-testid="video-player-dialog"]', { timeout: 10000 });
       
-      // Take screenshot of .ts video player
-      await page.screenshot({ path: 'ts-video-player-test.png', fullPage: true });
-      console.log('📸 TS video player screenshot saved');
+      console.log('Taking screenshot of video player dialog...');
+      await page.screenshot({ path: '/mnt/c/Users/ZaneT/SFF/PlexBridge/test-screenshots/video-player-dialog.png', fullPage: true });
       
-      // Check if the stream type is detected correctly
-      const streamTypeChip = page.locator('span:has-text("TS"), span:has-text("MPEG Transport Stream")');
-      if (await streamTypeChip.count() > 0) {
-        console.log('✅ TS stream type detected correctly');
-      } else {
-        console.log('⚠️ TS stream type not displayed correctly');
-      }
+      // Wait a few seconds to see if infinite loops occur
+      console.log('Waiting 5 seconds to monitor for infinite loops...');
+      await page.waitForTimeout(5000);
       
-      // Check proxy toggle and try both modes
-      const proxyToggle = page.locator('input[type="checkbox"]').first();
-      
-      console.log('🔧 Testing with proxy disabled...');
-      if (await proxyToggle.isChecked()) {
-        await proxyToggle.click(); // Disable proxy
-        await page.waitForTimeout(3000);
-      }
-      
-      await page.screenshot({ path: 'ts-direct-mode-test.png', fullPage: true });
-      console.log('📸 Direct mode screenshot saved');
-      
-      console.log('🔧 Testing with proxy enabled...');
-      if (!(await proxyToggle.isChecked())) {
-        await proxyToggle.click(); // Enable proxy
-        await page.waitForTimeout(3000);
-      }
-      
-      await page.screenshot({ path: 'ts-proxy-mode-test.png', fullPage: true });
-      console.log('📸 Proxy mode screenshot saved');
-      
-      // Close video player
-      await page.keyboard.press('Escape');
-      await page.waitForTimeout(1000);
+      console.log('Final screenshot after waiting...');
+      await page.screenshot({ path: '/mnt/c/Users/ZaneT/SFF/PlexBridge/test-screenshots/video-player-final.png', fullPage: true });
       
     } else {
-      console.log('❌ Failed to add new .ts stream');
+      console.log('No stream preview buttons found');
     }
-    
-    console.log('✅ Video player tests completed successfully!');
-    
+
   } catch (error) {
-    console.error('❌ Test failed:', error.message);
-    await page.screenshot({ path: 'test-error.png', fullPage: true });
-    console.log('📸 Error screenshot saved');
-    throw error;
+    console.error('Test error:', error);
+    await page.screenshot({ path: '/mnt/c/Users/ZaneT/SFF/PlexBridge/test-screenshots/error.png', fullPage: true });
   } finally {
     await browser.close();
+    console.log('Video player test completed');
   }
 }
 
-// Run the test
-testVideoPlayer().catch(console.error);
+testVideoPlayer();

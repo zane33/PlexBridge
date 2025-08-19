@@ -723,7 +723,7 @@ router.get('/epg/channels', async (req, res) => {
     }
 
     // Get all EPG channels with display names from all sources
-    // FIXED: Use correct mapping through channels table to get program counts
+    // FIXED: Correct mapping between EPG channels and programs via epg_id
     const availableChannels = await database.all(`
       SELECT 
         ec.epg_id,
@@ -736,12 +736,11 @@ router.get('/epg/channels', async (req, res) => {
       LEFT JOIN epg_sources es ON ec.source_id = es.id
       LEFT JOIN (
         SELECT 
-          c.epg_id,
+          ep.channel_id as epg_id,
           COUNT(ep.id) as program_count
-        FROM channels c
-        LEFT JOIN epg_programs ep ON c.id = ep.channel_id
-        WHERE c.epg_id IS NOT NULL
-        GROUP BY c.epg_id
+        FROM epg_programs ep
+        WHERE ep.channel_id IS NOT NULL
+        GROUP BY ep.channel_id
       ) program_counts ON ec.epg_id = program_counts.epg_id
       WHERE es.enabled = 1
       ORDER BY ec.display_name
@@ -778,7 +777,7 @@ router.get('/epg/channels', async (req, res) => {
 router.get('/epg/sources/:id/channels', async (req, res) => {
   try {
     // Get EPG channels with display names from the source
-    // FIXED: Use correct mapping through channels table to get program counts
+    // FIXED: Correct mapping between EPG channels and programs via epg_id
     const availableChannels = await database.all(`
       SELECT 
         ec.epg_id,
@@ -788,12 +787,11 @@ router.get('/epg/sources/:id/channels', async (req, res) => {
       FROM epg_channels ec
       LEFT JOIN (
         SELECT 
-          c.epg_id,
+          ep.channel_id as epg_id,
           COUNT(ep.id) as program_count
-        FROM channels c
-        LEFT JOIN epg_programs ep ON c.id = ep.channel_id
-        WHERE c.epg_id IS NOT NULL
-        GROUP BY c.epg_id
+        FROM epg_programs ep
+        WHERE ep.channel_id IS NOT NULL
+        GROUP BY ep.channel_id
       ) program_counts ON ec.epg_id = program_counts.epg_id
       WHERE ec.source_id = ?
       ORDER BY ec.display_name
@@ -1041,17 +1039,28 @@ router.get('/debug/epg', async (req, res) => {
     `);
 
     // Get channel mapping status
+    // FIXED: Correct mapping between channels and EPG programs via epg_id
     const channelMapping = await database.all(`
       SELECT 
         c.id,
         c.name,
         c.number,
         c.epg_id,
-        COUNT(p.id) as program_count
+        COALESCE(COUNT(p.id), 0) as program_count
       FROM channels c
-      LEFT JOIN epg_programs p ON c.id = p.channel_id
+      LEFT JOIN epg_programs p ON c.epg_id = p.channel_id
+      WHERE c.epg_id IS NOT NULL
       GROUP BY c.id
-      ORDER BY c.number
+      UNION ALL
+      SELECT 
+        c.id,
+        c.name,
+        c.number,
+        c.epg_id,
+        0 as program_count
+      FROM channels c
+      WHERE c.epg_id IS NULL OR c.epg_id = ''
+      ORDER BY number
     `);
 
     // Get EPG sources
