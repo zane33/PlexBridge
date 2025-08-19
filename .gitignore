@@ -76,3 +76,5 @@ test-reports/
 /tests/e2e
 /playwright-report
 /playwright-report
+/transcoding-test-results
+/transcoding-final-test
