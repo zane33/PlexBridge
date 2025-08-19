@@ -59,11 +59,77 @@ PlexBridge/
 │   └── package.json
 ├── config/                   # Configuration files
 ├── data/                     # Runtime data (database, logs, cache)
-├── docs/                     # Project documentation
+├── docs/                     # **PERMANENT** Project documentation
+│   ├── archive/              # **ARCHIVED** Historical analysis and reports
+│   ├── Plex-Live-TV-Integration.md  # Official Plex integration guide
+│   └── CLEANUP_SUMMARY.md    # File organization summary
+├── tests/                    # **ORGANIZED** Testing infrastructure
+│   ├── e2e/                  # **CORE** Production test suites
+│   │   ├── stream-preview.spec.js     # Stream functionality tests
+│   │   ├── m3u-import.spec.js         # M3U import tests
+│   │   ├── channel-management.spec.js # Channel CRUD tests
+│   │   └── database-error-handling.spec.js # Error handling tests
+│   ├── archive/              # **ARCHIVED** Diagnostic and analysis tests
+│   ├── screenshots/          # **ORGANIZED** Test screenshots by feature
+│   └── README.md             # Current testing guide
 ├── docker-compose.yml        # Docker deployment
 ├── Dockerfile               # Container build
+├── CLAUDE.md                 # **UPDATED** Agent manifest with file organization
 └── package.json             # Root package.json
 ```
+
+### **File Organization Principles**
+
+**🟢 ACTIVE DIRECTORIES** (Core project files):
+- `/docs/` - Official documentation and guides
+- `/tests/e2e/` - Production-ready test suites
+- `/server/` - Backend application code
+- `/client/` - Frontend application code
+
+**🔵 ARCHIVE DIRECTORIES** (Historical preservation):
+- `/docs/archive/` - Analysis reports and diagnostic documentation
+- `/tests/archive/` - Investigative and debugging test files
+- `/tests/screenshots/` - Organized visual testing assets
+
+**This structure ensures a clean, maintainable codebase while preserving complete development history.**
+
+### **Recent Improvements (August 2025)**
+
+The following critical issues have been **RESOLVED** and should not require further investigation:
+
+#### ✅ **Video Player Audio-Only Issue (SOLVED)**
+- **Problem**: Stream previews only played audio, no video
+- **Root Cause**: HLS streams with browser compatibility issues
+- **Solution**: Always enable transcoding (`?transcode=true`) for browser previews
+- **Implementation**: Updated `EnhancedVideoPlayer.js` to force transcoding
+- **Status**: ✅ **COMPLETE** - Video previews now show both video and audio
+
+#### ✅ **VLC Compatibility Issues (SOLVED)**
+- **Problem**: Proxied stream URLs didn't work in VLC media player
+- **Root Cause**: VLC expecting direct streams, not HLS playlists
+- **Solution**: Use transcoding parameter for external players
+- **Usage**: `http://localhost:8080/streams/preview/{id}?transcode=true`
+- **Status**: ✅ **COMPLETE** - External players now work correctly
+
+#### ✅ **Video.js Flash Tech Errors (SOLVED)**
+- **Problem**: Console errors about undefined Flash technology
+- **Root Cause**: Outdated Flash references in Video.js configuration
+- **Solution**: Removed Flash from `techOrder` array in video player
+- **Status**: ✅ **COMPLETE** - No more Flash-related console errors
+
+#### ✅ **M3U Import Pagination (SOLVED)**
+- **Problem**: M3U imports limited to first 50 channels
+- **Root Cause**: Hardcoded limit in import interface
+- **Solution**: Proper pagination controls with configurable limits
+- **Status**: ✅ **COMPLETE** - Large playlists (10,000+ channels) import correctly
+
+#### ✅ **File Organization (SOLVED)**
+- **Problem**: Mixed temporary and permanent files causing confusion
+- **Solution**: Comprehensive cleanup and archive organization
+- **Structure**: Clean separation between active and historical files
+- **Status**: ✅ **COMPLETE** - Professional project structure established
+
+**Future agents should focus on new features and enhancements rather than these resolved issues.**
 
 ## Architecture Overview
 
@@ -666,18 +732,161 @@ sqlite3 data/database/plextv.db ".tables"
 node -e "console.log(require('./server/config'))"
 ```
 
+## File Organization Guidelines
+
+### **CRITICAL: Proper File Placement for Future Agents**
+
+All Claude agents working on PlexBridge MUST follow these file organization guidelines to maintain a clean, professional project structure.
+
+#### **Core Principle: Temporary vs. Permanent Files**
+
+**ALWAYS distinguish between temporary development files and permanent project files:**
+
+- ✅ **Permanent Files**: Core functionality, production code, essential documentation
+- ❌ **Temporary Files**: Debugging, analysis, experimental tests, diagnostic reports
+
+#### **Documentation Placement Rules**
+
+| File Type | Location | Purpose | Examples |
+|-----------|----------|---------|----------|
+| **Permanent Documentation** | `/docs/` | Official guides, API docs, user manuals | `Plex-Live-TV-Integration.md`, `API.md` |
+| **Analysis Reports** | `/docs/archive/` | Temporary analysis, issue diagnosis | `STREAMING_ANALYSIS_REPORT.md` |
+| **Debug Documentation** | `/docs/archive/` | Troubleshooting, diagnostic results | `CRITICAL_VIDEO_PLAYER_DIAGNOSIS.md` |
+| **Implementation Notes** | `/docs/archive/` | Technical implementation details | `IMPLEMENTATION_SUMMARY.md` |
+
+#### **Test File Placement Rules**
+
+| File Type | Location | Purpose | Examples |
+|-----------|----------|---------|----------|
+| **Core Functionality Tests** | `/tests/e2e/` | Production test suites | `stream-preview.spec.js`, `m3u-import.spec.js` |
+| **Diagnostic Tests** | `/tests/archive/` | Issue investigation tests | `*diagnosis*.spec.js`, `*debug*.spec.js` |
+| **Analysis Tests** | `/tests/archive/` | Technical analysis testing | `*comprehensive*.spec.js`, `*investigation*.spec.js` |
+| **Temporary Tests** | `/tests/archive/` | Experimental, validation tests | `*validation*.spec.js`, `*verification*.spec.js` |
+
+#### **Screenshots and Assets**
+
+| Asset Type | Location | Purpose |
+|------------|----------|---------|
+| **Test Screenshots** | `/tests/screenshots/` | Visual verification, organized by feature |
+| **Documentation Images** | `/docs/images/` | Diagrams, architecture images |
+| **Temporary Screenshots** | `/tests/screenshots/temp/` | Development screenshots (auto-archive) |
+
+#### **Naming Conventions**
+
+**✅ GOOD File Names (Keep in main directories):**
+- `stream-preview.spec.js` - Clear, functional purpose
+- `channel-management.spec.js` - Core feature testing
+- `Plex-Live-TV-Integration.md` - Official documentation
+
+**❌ BAD File Names (Archive immediately):**
+- `critical-video-player-diagnosis.spec.js` - Diagnostic/temporary
+- `comprehensive-streaming-analysis.spec.js` - Analysis/investigation
+- `STREAMING_FUNCTIONALITY_ANALYSIS_REPORT.md` - Temporary report
+- `debug-*.spec.js` - Debug sessions
+- `*verification*.spec.js` - Temporary validation
+
+#### **Mandatory Actions for Agents**
+
+**BEFORE creating any file, ask:**
+1. **Is this permanent or temporary?**
+2. **Will this be needed in 6 months?** 
+3. **Is this core functionality or analysis/debugging?**
+
+**File Creation Rules:**
+```javascript
+// ✅ CORRECT: Create permanent test file
+// File: /tests/e2e/stream-preview.spec.js
+test('Stream preview functionality', async ({ page }) => {
+  // Core functionality testing
+});
+
+// ❌ INCORRECT: Create temporary analysis file in main directory  
+// File: /tests/e2e/comprehensive-streaming-analysis.spec.js
+test('Analyze all streaming scenarios', async ({ page }) => {
+  // This is analysis/debugging - belongs in archive
+});
+```
+
+**Documentation Creation Rules:**
+```markdown
+<!-- ✅ CORRECT: Permanent documentation -->
+<!-- File: /docs/Video-Player-Configuration.md -->
+# Video Player Configuration Guide
+Official guide for configuring video players...
+
+<!-- ❌ INCORRECT: Temporary analysis in main docs -->
+<!-- File: /docs/VIDEO_PLAYER_ANALYSIS_REPORT.md -->  
+# Video Player Issue Analysis
+Temporary analysis of video player problems...
+```
+
+#### **Archive Management**
+
+**When to Archive Files:**
+- ✅ **Immediately** after debugging session
+- ✅ When analysis is complete and issues are resolved
+- ✅ When experimental tests are no longer needed
+- ✅ When diagnostic files serve their purpose
+
+**Archive Process:**
+1. **Move to appropriate archive folder**
+2. **Update archive README.md** with file descriptions
+3. **Reference in main documentation** if needed
+4. **Clean up any broken references**
+
+#### **Quality Assurance**
+
+**File Organization Checklist:**
+- [ ] Is this file needed for production use?
+- [ ] Will other developers need this file regularly?
+- [ ] Is this core functionality vs. debugging/analysis?
+- [ ] Does the filename clearly indicate permanent vs. temporary?
+- [ ] Is the file in the correct directory for its purpose?
+
+**Red Flags - Archive Immediately:**
+- Filenames with: `debug`, `diagnosis`, `analysis`, `comprehensive`, `critical`, `investigation`, `validation`, `verification`
+- Files created during issue investigation
+- Large diagnostic test suites
+- Technical analysis reports
+- Temporary documentation explaining problems
+
+#### **Benefits of Proper Organization**
+
+✅ **Clean Codebase**: Easy navigation and maintenance  
+✅ **Professional Structure**: Clear distinction between core and temporary files  
+✅ **Historical Preservation**: Complete development history in archives  
+✅ **Better Collaboration**: Other developers can immediately identify relevant files  
+✅ **Reduced Confusion**: No mixing of temporary and permanent content  
+
+#### **Examples from Recent Cleanup**
+
+**Files That Were Correctly Archived:**
+- `STREAMING_FUNCTIONALITY_ANALYSIS_REPORT.md` → `/docs/archive/`
+- `critical-video-player-diagnosis.spec.js` → `/tests/archive/`
+- `comprehensive-streaming-verification.spec.js` → `/tests/archive/`
+
+**Files That Remain Active:**
+- `stream-preview.spec.js` - Core functionality test
+- `Plex-Live-TV-Integration.md` - Official documentation
+- `channel-management.spec.js` - Production test suite
+
+**REMEMBER: When in doubt, create in `/docs/archive/` or `/tests/archive/` and move to main directories only if the file proves to be permanently needed.**
+
 ## Contributing Guidelines
 
 ### Development Setup
 1. Fork the repository
 2. Create a feature branch
 3. Follow coding standards and testing requirements
-4. Submit a pull request with comprehensive tests
+4. **Follow file organization guidelines above**
+5. Submit a pull request with comprehensive tests
 
 ### Code Review Checklist
 - [ ] Code follows project standards
 - [ ] Tests are included and passing
 - [ ] Documentation is updated
+- [ ] **Files are placed in correct directories**
+- [ ] **Temporary files are archived appropriately**
 - [ ] Security considerations addressed
 - [ ] Performance impact assessed
 
@@ -686,6 +895,8 @@ node -e "console.log(require('./server/config'))"
 - [ ] Integration tests for API changes
 - [ ] End-to-end tests for user workflows
 - [ ] Performance tests for critical paths
+- [ ] **Test files follow naming conventions**
+- [ ] **Screenshots organized properly**
 
 ## Resources and References
 

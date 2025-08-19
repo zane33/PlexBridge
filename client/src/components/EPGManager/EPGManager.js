@@ -112,6 +112,7 @@ function EPGManager() {
   const [epgPrograms, setEpgPrograms] = useState([]);
   const [loading, setLoading] = useState(true);
   const [programsLoading, setProgramsLoading] = useState(false);
+  const [selectedChannelId, setSelectedChannelId] = useState('all');
   const [dialogOpen, setDialogOpen] = useState(false);
   const [editingSource, setEditingSource] = useState(null);
   const [saving, setSaving] = useState(false);
@@ -225,10 +226,23 @@ function EPGManager() {
     }
   };
 
-  const fetchEpgPrograms = async () => {
+  const fetchEpgPrograms = async (epgChannelId = null) => {
     setProgramsLoading(true);
     try {
-      const response = await api.get('/api/epg');
+      const params = {};
+      
+      // If we have a specific EPG channel ID, use it
+      if (epgChannelId && epgChannelId !== 'all') {
+        params.channel_id = epgChannelId;
+      } else if (selectedChannelId && selectedChannelId !== 'all') {
+        // If no EPG channel ID provided but we have a selected channel, get its EPG ID
+        const selectedChannel = channels.find(c => c.id === selectedChannelId);
+        if (selectedChannel?.epg_id) {
+          params.channel_id = selectedChannel.epg_id;
+        }
+      }
+      
+      const response = await api.get('/api/epg', { params });
       setEpgPrograms(response.data.programs || []);
     } catch (error) {
       enqueueSnackbar('Failed to fetch EPG programs', { variant: 'error' });
@@ -400,6 +414,19 @@ function EPGManager() {
   const handleEpgIdCancel = () => {
     setEditingChannelEpg(null);
     setTempEpgId('');
+  };
+
+  const handleChannelSelectionChange = async (channelId) => {
+    setSelectedChannelId(channelId);
+    
+    // If a specific channel is selected, get its EPG ID
+    if (channelId && channelId !== 'all') {
+      const selectedChannel = channels.find(c => c.id === channelId);
+      const epgChannelId = selectedChannel?.epg_id;
+      await fetchEpgPrograms(epgChannelId);
+    } else {
+      await fetchEpgPrograms('all');
+    }
   };
 
   const handleAutoMapping = async () => {
@@ -716,15 +743,51 @@ function EPGManager() {
     <Box>
       <Box display="flex" justifyContent="space-between" alignItems="center" mb={3}>
         <Typography variant="h6">Program Guide</Typography>
-        <Button
-          variant="outlined"
-          startIcon={<RefreshIcon />}
-          onClick={fetchEpgPrograms}
-          disabled={programsLoading}
-        >
-          {programsLoading ? <CircularProgress size={20} /> : 'Refresh'}
-        </Button>
+        <Box display="flex" gap={2} alignItems="center">
+          <FormControl variant="outlined" size="small" sx={{ minWidth: 200 }}>
+            <InputLabel>Channel</InputLabel>
+            <Select
+              value={selectedChannelId}
+              onChange={(e) => handleChannelSelectionChange(e.target.value)}
+              label="Channel"
+              disabled={programsLoading}
+            >
+              <MenuItem value="all">
+                <em>All Channels</em>
+              </MenuItem>
+              {channels
+                .filter(channel => channel.epg_id) // Only show channels with EPG IDs
+                .map((channel) => (
+                  <MenuItem key={channel.id} value={channel.id}>
+                    {channel.number} - {channel.name}
+                  </MenuItem>
+                ))
+              }
+            </Select>
+          </FormControl>
+          <Button
+            variant="outlined"
+            startIcon={<RefreshIcon />}
+            onClick={() => fetchEpgPrograms()}
+            disabled={programsLoading}
+          >
+            {programsLoading ? <CircularProgress size={20} /> : 'Refresh'}
+          </Button>
+        </Box>
       </Box>
+
+      {selectedChannelId !== 'all' && (
+        <Alert severity="info" sx={{ mb: 2 }}>
+          <Typography variant="body2">
+            📺 Showing program guide for: <strong>
+              {channels.find(c => c.id === selectedChannelId)?.number} - {channels.find(c => c.id === selectedChannelId)?.name}
+            </strong>
+            {channels.find(c => c.id === selectedChannelId)?.epg_id && (
+              <span> (EPG ID: {channels.find(c => c.id === selectedChannelId)?.epg_id})</span>
+            )}
+          </Typography>
+        </Alert>
+      )}
 
       <Card>
         <CardContent>
@@ -748,9 +811,11 @@ function EPGManager() {
                           <Typography variant="subtitle1" fontWeight="bold">
                             {program.title}
                           </Typography>
-                          <Typography variant="body2" color="text.secondary">
-                            {program.channel_name} ({program.channel_number})
-                          </Typography>
+                          {selectedChannelId === 'all' && (
+                            <Typography variant="body2" color="text.secondary">
+                              {program.channel_name} ({program.channel_number})
+                            </Typography>
+                          )}
                         </Box>
                       }
                       secondary={
@@ -777,10 +842,13 @@ function EPGManager() {
                 <Box display="flex" flexDirection="column" alignItems="center" gap={2} py={4}>
                   <ScheduleIcon sx={{ fontSize: 64, color: 'text.disabled' }} />
                   <Typography variant="h6" color="text.secondary">
-                    No program data available
+                    {selectedChannelId === 'all' ? 'No program data available' : 'No program data for selected channel'}
                   </Typography>
                   <Typography variant="body2" color="text.disabled">
-                    Add EPG sources and ensure channels have EPG IDs mapped
+                    {selectedChannelId === 'all' 
+                      ? 'Add EPG sources and ensure channels have EPG IDs mapped'
+                      : 'Check that this channel has a valid EPG ID and EPG data has been refreshed'
+                    }
                   </Typography>
                 </Box>
               )}
