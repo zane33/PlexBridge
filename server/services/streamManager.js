@@ -58,11 +58,12 @@ class StreamManager {
         return { type: 'srt', protocol: 'srt' };
       }
 
-      // Try HTTP head request for content detection
+      // Try HTTP head request for content detection with redirect following
       if (urlLower.startsWith('http://') || urlLower.startsWith('https://')) {
         try {
           const response = await axios.head(url, {
             timeout: 5000,
+            maxRedirects: 5,  // Follow up to 5 redirects
             headers: {
               'User-Agent': config.protocols.http.userAgent
             }
@@ -86,11 +87,12 @@ class StreamManager {
           logger.stream('HTTP head request failed, trying content analysis', { url, error: error.message });
         }
 
-        // Try content analysis
+        // Try content analysis with redirect following
         try {
           const response = await axios.get(url, {
             timeout: 10000,
             responseType: 'text',
+            maxRedirects: 5,  // Follow up to 5 redirects
             headers: {
               'User-Agent': config.protocols.http.userAgent,
               'Range': 'bytes=0-1023' // Get first 1KB
