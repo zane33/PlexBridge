@@ -62,6 +62,7 @@ function Dashboard() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [showAdditionalUrls, setShowAdditionalUrls] = useState(false);
+  const [currentSettings, setCurrentSettings] = useState(null);
   const theme = useTheme();
   const isMobile = useMediaQuery(theme.breakpoints.down('md'));
   const { enqueueSnackbar } = useSnackbar();
@@ -99,6 +100,7 @@ function Dashboard() {
     fetchMetrics();
     fetchActiveStreams();
     fetchServerInfo();
+    fetchCurrentSettings();
     
     // Set up real-time updates via Socket.IO
     const unsubscribeMetrics = socketService.on('metrics:update', (data) => {
@@ -225,6 +227,15 @@ function Dashboard() {
     }
   };
 
+  const fetchCurrentSettings = async () => {
+    try {
+      const response = await api.get('/api/settings');
+      setCurrentSettings(response.data);
+    } catch (error) {
+      console.error('Failed to fetch current settings:', error);
+    }
+  };
+
   const formatBytes = (bytes) => {
     if (bytes === 0) return '0 Bytes';
     const k = 1024;
@@ -266,6 +277,40 @@ function Dashboard() {
       return `${minutes}m ${seconds}s`;
     } else {
       return `${seconds}s`;
+    }
+  };
+
+  // Format timestamp according to current locale settings
+  const formatTimestamp = (timestamp) => {
+    if (!timestamp) return 'N/A';
+    
+    const date = new Date(timestamp);
+    const locale = currentSettings?.plexlive?.localization?.locale || 'en-US';
+    const timeFormat = currentSettings?.plexlive?.localization?.timeFormat || '24h';
+    
+    // Create formatting options based on settings
+    let options = {
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+    };
+    
+    if (timeFormat === '12h') {
+      options = { ...options, hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: true };
+    } else {
+      options = { ...options, hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false };
+    }
+    
+    // Apply timezone if available
+    if (currentSettings?.plexlive?.localization?.timezone) {
+      options.timeZone = currentSettings.plexlive.localization.timezone;
+    }
+    
+    try {
+      return new Intl.DateTimeFormat(locale, options).format(date);
+    } catch (error) {
+      console.warn('Failed to format timestamp with locale settings:', error);
+      return format(date, 'yyyy-MM-dd HH:mm:ss');
     }
   };
 
@@ -1012,10 +1057,10 @@ function Dashboard() {
                       </TableCell>
                       <TableCell>
                         <Typography variant="body2">
-                          {format(new Date(stream.startTime), 'HH:mm:ss')}
+                          {formatTimestamp(stream.startTime)}
                         </Typography>
                         <Typography variant="caption" color="text.secondary">
-                          {format(new Date(stream.startTime), 'MMM dd')}
+                          Started {formatDuration(Date.now() - new Date(stream.startTime).getTime())} ago
                         </Typography>
                       </TableCell>
                     </TableRow>
@@ -1029,7 +1074,7 @@ function Dashboard() {
 
       {/* System Information */}
       <Grid container spacing={3} sx={{ mt: 3 }}>
-        <Grid item xs={12} md={6}>
+        <Grid item xs={12} md={4}>
           <Card>
             <CardContent>
               <Typography variant="h6" gutterBottom>
@@ -1053,7 +1098,37 @@ function Dashboard() {
           </Card>
         </Grid>
 
-        <Grid item xs={12} md={6}>
+        <Grid item xs={12} md={4}>
+          <Card>
+            <CardContent>
+              <Typography variant="h6" gutterBottom>
+                Current Settings
+              </Typography>
+              <Box>
+                <Typography variant="body2">
+                  <strong>Locale:</strong> {currentSettings?.plexlive?.localization?.locale || 'en-US'}
+                </Typography>
+                <Typography variant="body2">
+                  <strong>Timezone:</strong> {currentSettings?.plexlive?.localization?.timezone || 'UTC'}
+                </Typography>
+                <Typography variant="body2">
+                  <strong>Time Format:</strong> {currentSettings?.plexlive?.localization?.timeFormat || '24h'}
+                </Typography>
+                <Typography variant="body2">
+                  <strong>Date Format:</strong> {currentSettings?.plexlive?.localization?.dateFormat || 'YYYY-MM-DD'}
+                </Typography>
+                <Typography variant="body2">
+                  <strong>Max Concurrent Streams:</strong> {currentSettings?.plexlive?.streaming?.maxConcurrentStreams || 10}
+                </Typography>
+                <Typography variant="body2">
+                  <strong>Stream Timeout:</strong> {currentSettings?.plexlive?.streaming?.streamTimeout || 30000}ms
+                </Typography>
+              </Box>
+            </CardContent>
+          </Card>
+        </Grid>
+
+        <Grid item xs={12} md={4}>
           <Card>
             <CardContent>
               <Typography variant="h6" gutterBottom>

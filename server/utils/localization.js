@@ -33,12 +33,17 @@ class LocalizationService {
   
   /**
    * Update localization settings
-   * @param {Object} settings - Localization settings object
+   * @param {Object} settings - Localization settings object (can be direct localization or nested)
    */
   updateSettings(settings) {
-    if (settings && settings.localization) {
-      this.settings = { ...this.settings, ...settings.localization };
-      logger.info('Localization settings updated:', this.settings);
+    if (settings) {
+      // Handle both direct localization settings and nested settings structures
+      const localizationSettings = settings.localization || settings;
+      
+      if (localizationSettings.timezone || localizationSettings.locale || localizationSettings.dateFormat || localizationSettings.timeFormat || localizationSettings.firstDayOfWeek !== undefined) {
+        this.settings = { ...this.settings, ...localizationSettings };
+        logger.info('Localization settings updated:', this.settings);
+      }
     }
   }
   

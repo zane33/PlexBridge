@@ -28,6 +28,17 @@ class DatabaseService {
     } catch (error) {
       logger.error('Database initialization failed:', error.message);
       
+      // Try to recover from corruption by recreating the database
+      if (error.message.includes('SQLITE_CORRUPT') || error.message.includes('SQLITE_MISUSE') || error.message.includes('Database is closed')) {
+        logger.warn('Database appears corrupted, attempting recovery...');
+        try {
+          await this.recoverDatabase();
+          return this.db;
+        } catch (recoveryError) {
+          logger.error('Database recovery failed:', recoveryError.message);
+        }
+      }
+      
       // Don't fall back to mock mode - throw the error instead
       this.isInitialized = false;
       this.db = null;
@@ -37,9 +48,9 @@ class DatabaseService {
 
   async initializeWithTimeout() {
     try {
-      // Ensure database directory exists with proper permissions
-      const dbDir = path.dirname(config.database.path);
-      const dbFile = config.database.path;
+      // Force use of environment variable DB_PATH if available
+      const dbFile = process.env.DB_PATH || config.database.path;
+      const dbDir = path.dirname(dbFile);
       
       logger.info(`Initializing database at: ${dbFile}`);
       
@@ -359,28 +370,55 @@ class DatabaseService {
     }
   }
 
+  async recoverDatabase() {
+    logger.warn('Attempting database recovery...');
+    
+    try {
+      // Close any existing connection
+      if (this.db) {
+        await new Promise((resolve) => {
+          this.db.close(() => resolve());
+        });
+      }
+      
+      const dbFile = process.env.DB_PATH || config.database.path;
+      const backupFile = `${dbFile}.corrupt.${Date.now()}`;
+      
+      // Move corrupted database file
+      if (fs.existsSync(dbFile)) {
+        fs.renameSync(dbFile, backupFile);
+        logger.info(`Moved corrupted database to: ${backupFile}`);
+      }
+      
+      // Reinitialize the database
+      this.isInitialized = false;
+      this.db = null;
+      
+      await this.initializeWithTimeout();
+      logger.info('Database recovery completed successfully');
+      
+    } catch (error) {
+      logger.error('Database recovery failed:', error);
+      throw error;
+    }
+  }
+
   async close() {
     if (this.db && this.isInitialized) {
       return new Promise((resolve) => {
-        // First, perform a WAL checkpoint to ensure all data is written
-        this.db.run('PRAGMA wal_checkpoint(TRUNCATE)', (checkpointErr) => {
-          if (checkpointErr) {
-            logger.warn('WAL checkpoint warning during close:', checkpointErr.message);
+        // **WSL2 FIX**: Skip WAL checkpoint in WSL2 environment due to file locking issues
+        logger.info('Closing database without WAL checkpoint (WSL2 compatibility)');
+        
+        // Close the database directly without WAL checkpoint
+        this.db.close((err) => {
+          if (err) {
+            logger.error('Database close error:', err);
           } else {
-            logger.info('WAL checkpoint completed before database close');
+            logger.info('Database connection closed successfully');
           }
-          
-          // Now close the database
-          this.db.close((err) => {
-            if (err) {
-              logger.error('Database close error:', err);
-            } else {
-              logger.info('Database connection closed successfully');
-            }
-            this.isInitialized = false;
-            this.db = null;
-            resolve();
-          });
+          this.isInitialized = false;
+          this.db = null;
+          resolve();
         });
       });
     } else {

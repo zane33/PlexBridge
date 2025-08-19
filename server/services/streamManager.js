@@ -1612,6 +1612,35 @@ class StreamManager {
     return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
   }
 
+  // Update streaming settings dynamically
+  updateSettings(streamingSettings) {
+    try {
+      if (streamingSettings.maxConcurrentStreams) {
+        this.maxConcurrentStreams = parseInt(streamingSettings.maxConcurrentStreams);
+        logger.info('Stream manager max concurrent streams updated', { 
+          newValue: this.maxConcurrentStreams 
+        });
+      }
+      
+      if (streamingSettings.streamTimeout) {
+        this.streamTimeout = parseInt(streamingSettings.streamTimeout);
+        logger.info('Stream manager timeout updated', { 
+          newValue: this.streamTimeout 
+        });
+      }
+      
+      if (streamingSettings.bufferSize) {
+        this.bufferSize = parseInt(streamingSettings.bufferSize);
+        logger.info('Stream manager buffer size updated', { 
+          newValue: this.bufferSize 
+        });
+      }
+      
+    } catch (error) {
+      logger.error('Failed to update stream manager settings:', error);
+    }
+  }
+
   async cleanup() {
     logger.info('Cleaning up all active streams');
     const sessionIds = Array.from(this.activeStreams.keys());

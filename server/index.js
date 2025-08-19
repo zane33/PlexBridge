@@ -13,17 +13,11 @@ const logger = require('./utils/logger');
 const config = require('./config');
 const database = require('./services/database');
 const settingsService = require('./services/settingsService');
-const epgService = require('./services/epgService');
+// Note: epgService will be loaded after database initialization
 // const cacheService = require('./services/cacheService');
 // const ssdpService = require('./services/ssdpService');
 
-// Import routes
-const apiRoutes = require('./routes/api');
-const streamRoutes = require('./routes/streams');
-const epgRoutes = require('./routes/epg');
-const ssdpRoutes = require('./routes/ssdp');
-const m3uRoutes = require('./routes/m3u');
-const m3uImportRoutes = require('./routes/m3uImport');
+// Note: Routes will be imported after database initialization
 
 const app = express();
 const server = http.createServer(app);
@@ -70,13 +64,7 @@ app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 // Make io accessible to routes
 app.set('io', io);
 
-// API Routes - MUST BE BEFORE STATIC FILES
-app.use('/api/streams/parse/m3u', m3uRoutes);
-app.use('/api/streams/import/m3u', m3uImportRoutes);
-app.use('/api', apiRoutes);
-app.use('/epg', epgRoutes);
-app.use('/', ssdpRoutes);
-app.use('/', streamRoutes);
+// API Routes will be registered after database initialization
 
 // Serve static files - MUST BE AFTER API ROUTES
 app.use('/logos', express.static(path.join(__dirname, '../data/logos')));
@@ -93,10 +81,7 @@ app.get('/health', (req, res) => {
   });
 });
 
-// Serve React app for all other routes
-app.get('*', (req, res) => {
-  res.sendFile(path.join(__dirname, '../client/build/index.html'));
-});
+// NOTE: React catch-all route moved to initializeApp() after API routes are registered
 
 // Make socket.io instance available globally for services
 global.io = io;
@@ -264,7 +249,10 @@ const initializeApp = async () => {
     }
 
     // Initialize EPG service after database is ready
+    let epgService;
     try {
+      logger.info('Loading EPG service...');
+      epgService = require('./services/epgService');
       logger.info('Initializing EPG service...');
       await epgService.initialize();
       logger.info('✅ EPG service initialized successfully');
@@ -272,6 +260,36 @@ const initializeApp = async () => {
       logger.error('❌ EPG service initialization failed:', epgError.message);
       logger.warn('EPG functionality will be limited until service is manually initialized');
     }
+
+    // Register API routes after database initialization
+    try {
+      logger.info('Registering API routes...');
+      const apiRoutes = require('./routes/api');
+      const streamRoutes = require('./routes/streams');
+      const epgRoutes = require('./routes/epg');
+      const ssdpRoutes = require('./routes/ssdp');
+      const m3uRoutes = require('./routes/m3u');
+      const m3uImportRoutes = require('./routes/m3uImport');
+
+      // API Routes - MUST BE BEFORE STATIC FILES
+      app.use('/api/streams/parse/m3u', m3uRoutes);
+      app.use('/api/streams/import/m3u', m3uImportRoutes);
+      app.use('/api', apiRoutes);
+      app.use('/epg', epgRoutes);
+      app.use('/', ssdpRoutes);
+      app.use('/', streamRoutes);
+      
+      logger.info('✅ API routes registered successfully');
+    } catch (routeError) {
+      logger.error('❌ Failed to register API routes:', routeError.message);
+      throw routeError;
+    }
+
+    // Register React catch-all route AFTER all API routes
+    app.get('*', (req, res) => {
+      res.sendFile(path.join(__dirname, '../client/build/index.html'));
+    });
+    logger.info('✅ React catch-all route registered (after API routes)');
 
     // Start HTTP server
     const PORT = config.server.port;

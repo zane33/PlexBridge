@@ -117,19 +117,45 @@ class StreamPreviewService {
         });
       }
 
-      // Detect stream format if not specified
+      // Detect stream format and codecs if not specified
       let streamFormat = stream.type;
+      let codecInfo = null;
+      
       if (!streamFormat || streamFormat === 'unknown') {
         const detection = await streamManager.detectStreamFormat(stream.url);
         streamFormat = detection.type;
         logger.stream('Stream format detected', { streamId, detectedFormat: streamFormat });
       }
+      
+      // For HLS streams, analyze codec compatibility
+      if (streamFormat === 'hls' || stream.url.includes('.m3u8')) {
+        codecInfo = await this.detectHLSCodecs(stream.url);
+        logger.stream('HLS codec analysis results', {
+          streamId,
+          codecInfo,
+          needsTranscoding: codecInfo.needsTranscoding
+        });
+      }
 
       // Check if this is a .ts file that needs conversion for browser compatibility
       const needsHLSConversion = this.needsHLSConversion(stream.url, streamFormat);
       
-      // Determine if transcoding is needed (regular transcoding or .ts conversion)
-      const needsTranscoding = this.shouldTranscode(streamFormat, transcode === 'true') || needsHLSConversion;
+      // Determine if transcoding is needed based on codec analysis
+      let needsTranscoding;
+      
+      if (codecInfo && codecInfo.needsTranscoding) {
+        // HLS codec analysis indicates transcoding needed
+        needsTranscoding = true;
+        logger.stream('Transcoding required based on codec analysis', {
+          streamId,
+          reason: 'codec_compatibility',
+          videoCodecs: codecInfo.video,
+          audioCodecs: codecInfo.audio
+        });
+      } else {
+        // Use existing logic for non-HLS streams or forced transcoding
+        needsTranscoding = this.shouldTranscode(streamFormat, transcode === 'true') || needsHLSConversion;
+      }
       
       if (needsTranscoding) {
         if (needsHLSConversion) {
@@ -170,6 +196,155 @@ class StreamPreviewService {
     return needsTranscodingFormats.includes(streamFormat);
   }
 
+  // Enhanced HLS codec detection and compatibility checking
+  async detectHLSCodecs(streamUrl) {
+    try {
+      // Fetch HLS manifest to analyze codecs
+      const response = await fetch(streamUrl, {
+        headers: {
+          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+          'Accept': 'application/vnd.apple.mpegurl, application/x-mpegURL, */*'
+        },
+        signal: AbortSignal.timeout(10000) // 10 second timeout
+      });
+      
+      if (!response.ok) {
+        throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+      }
+      
+      const manifestText = await response.text();
+      
+      // Parse codec information from HLS manifest
+      const codecMatches = manifestText.match(/CODECS="([^"]+)"/g) || [];
+      const codecs = codecMatches.map(match => match.match(/CODECS="([^"]+)"/)[1]);
+      
+      // Analyze supported codecs
+      const supportedCodecs = {
+        video: [],
+        audio: [],
+        needsTranscoding: false,
+        browserCompatible: true
+      };
+      
+      for (const codecString of codecs) {
+        const [videoCodec, audioCodec] = codecString.split(',').map(c => c.trim());
+        
+        // Video codec analysis
+        if (videoCodec) {
+          if (videoCodec.startsWith('avc1.')) {
+            // H.264 codec - extract profile and level
+            const profile = this.parseH264Profile(videoCodec);
+            supportedCodecs.video.push({
+              codec: 'H.264',
+              profile: profile.name,
+              level: profile.level,
+              browserSupported: profile.browserSupported,
+              original: videoCodec
+            });
+            
+            if (!profile.browserSupported) {
+              supportedCodecs.needsTranscoding = true;
+            }
+          } else if (videoCodec.startsWith('hev1.') || videoCodec.startsWith('hvc1.')) {
+            // H.265/HEVC codec - needs transcoding for browser compatibility
+            supportedCodecs.video.push({
+              codec: 'H.265/HEVC',
+              profile: 'Unknown',
+              level: 'Unknown',
+              browserSupported: false,
+              original: videoCodec
+            });
+            supportedCodecs.needsTranscoding = true;
+            supportedCodecs.browserCompatible = false;
+          }
+        }
+        
+        // Audio codec analysis
+        if (audioCodec) {
+          if (audioCodec.startsWith('mp4a.40.2')) {
+            // AAC-LC - widely supported
+            supportedCodecs.audio.push({
+              codec: 'AAC-LC',
+              profile: 'Low Complexity',
+              browserSupported: true,
+              original: audioCodec
+            });
+          } else if (audioCodec.startsWith('mp4a.40.')) {
+            // Other AAC variants
+            supportedCodecs.audio.push({
+              codec: 'AAC',
+              profile: audioCodec,
+              browserSupported: true,
+              original: audioCodec
+            });
+          } else {
+            // Unknown audio codec - may need transcoding
+            supportedCodecs.audio.push({
+              codec: 'Unknown',
+              profile: audioCodec,
+              browserSupported: false,
+              original: audioCodec
+            });
+            supportedCodecs.needsTranscoding = true;
+          }
+        }
+      }
+      
+      logger.stream('HLS codec analysis completed', {
+        url: streamUrl,
+        codecs: supportedCodecs,
+        manifestCodecs: codecs
+      });
+      
+      return supportedCodecs;
+      
+    } catch (error) {
+      logger.warn('Failed to analyze HLS codecs, assuming transcoding needed', {
+        url: streamUrl,
+        error: error.message
+      });
+      
+      return {
+        video: [{ codec: 'Unknown', browserSupported: false }],
+        audio: [{ codec: 'Unknown', browserSupported: false }],
+        needsTranscoding: true,
+        browserCompatible: false
+      };
+    }
+  }
+  
+  // Parse H.264 profile and level information
+  parseH264Profile(codecString) {
+    // Format: avc1.PPCCLL where PP=profile, CC=constraints, LL=level
+    const profileMap = {
+      '42': { name: 'Baseline', browserSupported: true },
+      '4D': { name: 'Main', browserSupported: true },
+      '58': { name: 'Extended', browserSupported: false },
+      '64': { name: 'High', browserSupported: true },
+      '6E': { name: 'High 10', browserSupported: false },
+      '7A': { name: 'High 4:2:2', browserSupported: false },
+      'F4': { name: 'High 4:4:4', browserSupported: false }
+    };
+    
+    const parts = codecString.split('.');
+    if (parts.length >= 2 && parts[1].length >= 6) {
+      const profileHex = parts[1].substring(0, 2);
+      const levelHex = parts[1].substring(4, 6);
+      
+      const profile = profileMap[profileHex] || { name: 'Unknown', browserSupported: false };
+      const level = parseInt(levelHex, 16) / 10; // Convert hex to decimal level
+      
+      return {
+        ...profile,
+        level: level.toString(),
+        profileHex,
+        levelHex
+      };
+    }
+    
+    return { name: 'Unknown', level: 'Unknown', browserSupported: false };
+  }
+  
   // Check if stream needs HLS/MP4 conversion for web browser compatibility
   needsHLSConversion(streamUrl, streamFormat) {
     // Check for .ts file extension or MPEG-TS format
@@ -482,15 +657,24 @@ class StreamPreviewService {
 
       this.concurrencyCounter++;
 
-      // Set response headers for HLS streaming
+      // Set response headers for HLS streaming with proper CORS and caching
       res.setHeader('Content-Type', 'application/vnd.apple.mpegurl');
       res.setHeader('Access-Control-Allow-Origin', '*');
-      res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Range');
-      res.setHeader('Access-Control-Expose-Headers', 'Content-Length, Content-Range');
+      res.setHeader('Access-Control-Allow-Methods', 'GET, HEAD, OPTIONS');
+      res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Range, User-Agent');
+      res.setHeader('Access-Control-Expose-Headers', 'Content-Length, Content-Range, Content-Type');
       res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
       res.setHeader('Pragma', 'no-cache');
       res.setHeader('Expires', '0');
       res.setHeader('Connection', 'keep-alive');
+      res.setHeader('Transfer-Encoding', 'chunked');
+      
+      logger.stream('Set HLS streaming headers for H.264 High Profile transcoding', {
+        sessionId,
+        contentType: 'application/vnd.apple.mpegurl',
+        cors: 'enabled',
+        caching: 'disabled'
+      });
 
       // Set up timeout
       const timeoutId = setTimeout(() => {
@@ -612,60 +796,96 @@ class StreamPreviewService {
         return null; // Signal that transcoding is not available
       }
       
-      // Enhanced FFmpeg arguments for HLS streaming compatibility
-      // CRITICAL FIX: Output HLS instead of fragmented MP4 for better browser compatibility
+      // Enhanced FFmpeg arguments for HLS streaming compatibility with H.264 High Profile support
+      // CRITICAL FIX: Support H.264 High Profile (avc1.4D4028, avc1.4D401F) and AAC-LC (mp4a.40.2)
       const args = [
+        '-fflags', '+genpts+discardcorrupt',  // Generate timestamps and handle corrupted packets
         '-re',                                // Read input at native frame rate
+        '-user_agent', 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36', // User agent for HLS servers
+        '-headers', 'Connection: keep-alive\r\nAccept: */*\r\n', // HTTP headers
         '-i', stream.url,
+        
+        // Input stream mapping with fallback options
         '-map', '0:v:0',                      // Map first video stream
         '-map', '0:a:0?',                     // Map first audio stream if exists (optional)
+        
+        // Video codec configuration for H.264 High Profile compatibility
         '-c:v', 'libx264',                    // H.264 video codec
-        '-preset', 'veryfast',                // Fast encoding for real-time
-        '-tune', 'zerolatency',               // Optimize for low latency
-        '-profile:v', 'baseline',             // Compatible H.264 profile
-        '-level', '3.0',                      // H.264 level for broad compatibility
-        '-pix_fmt', 'yuv420p',                // Pixel format for compatibility
+        '-preset', 'fast',                    // Balanced speed/quality for real-time
+        '-tune', 'zerolatency',               // Optimize for low latency streaming
+        '-profile:v', 'high',                 // High Profile for better compression (supports avc1.4D4028, avc1.4D401F)
+        '-level', '4.0',                      // H.264 level 4.0 for 1080p support
+        '-pix_fmt', 'yuv420p',                // 4:2:0 chroma subsampling for web compatibility
+        
+        // Video quality and bitrate settings
         '-s', qualityProfile.resolution,      // Video resolution
         '-b:v', qualityProfile.bitrate,       // Video bitrate
-        '-maxrate', qualityProfile.bitrate,   // Max bitrate
-        '-bufsize', `${parseInt(qualityProfile.bitrate) * 2}k`, // Buffer size
-        '-g', '30',                           // GOP size (keyframe interval)
-        '-keyint_min', '30',                  // Minimum GOP size
+        '-maxrate', qualityProfile.bitrate,   // Max bitrate (same as target)
+        '-bufsize', `${parseInt(qualityProfile.bitrate) * 2}k`, // Buffer size (2x bitrate)
+        '-crf', '23',                         // Constant Rate Factor for quality
+        
+        // GOP and keyframe settings for HLS compatibility
+        '-g', '50',                           // GOP size (2 seconds at 25fps)
+        '-keyint_min', '25',                  // Minimum keyframe interval
         '-sc_threshold', '0',                 // Disable scene change detection
+        '-force_key_frames', 'expr:gte(t,n_forced*2)', // Force keyframes every 2 seconds
+        
+        // Audio codec configuration for AAC-LC (mp4a.40.2) compatibility
         '-c:a', 'aac',                        // AAC audio codec
+        '-profile:a', 'aac_low',              // AAC-LC profile (mp4a.40.2)
         '-b:a', '128k',                       // Audio bitrate
-        '-ar', '44100',                       // Audio sample rate
+        '-ar', '48000',                       // 48kHz sample rate (standard for broadcast)
         '-ac', '2',                           // Stereo audio
-        // HLS-specific options for browser compatibility
-        '-hls_time', '2',                     // 2-second segments
-        '-hls_list_size', '6',                // Keep 6 segments in playlist
+        
+        // HLS-specific options optimized for browser compatibility
+        '-hls_time', '2',                     // 2-second segments (matches GOP)
+        '-hls_list_size', '6',                // Keep 6 segments in playlist (12 seconds buffer)
         '-hls_delete_threshold', '1',         // Delete old segments
-        '-hls_flags', 'delete_segments+omit_endlist', // Live streaming flags
+        '-hls_flags', 'delete_segments+omit_endlist+independent_segments', // Live streaming flags
+        '-hls_segment_type', 'mpegts',        // Use MPEG-TS segments for better compatibility
         '-f', 'hls',                          // HLS output format
-        '-method', 'PUT',                     // Use PUT for segment upload
-        '-fflags', '+genpts',                 // Generate timestamps
+        
+        // Stream handling and error recovery
         '-avoid_negative_ts', 'make_zero',    // Handle timestamp issues
-        '-max_muxing_queue_size', '9999',     // Large queue to prevent drops
-        '-threads', '0',                      // Auto-select thread count
-        '-loglevel', 'warning',               // Show warnings
+        '-vsync', 'cfr',                      // Constant frame rate
+        '-async', '1',                        // Audio sync
+        '-max_muxing_queue_size', '9999',     // Large queue to prevent packet drops
+        '-max_interleave_delta', '0',         // Interleave packets immediately
+        
+        // Performance and logging
+        '-threads', '0',                      // Auto-select optimal thread count
+        '-loglevel', 'info',                  // Show info level logs for debugging
+        '-progress', 'pipe:2',                // Send progress to stderr
+        
         'pipe:1'                              // Output to stdout
       ];
 
-      // Additional input options for specific stream types
+      // Additional input options for HLS streams with codec compatibility
       if (stream.type === 'hls' || stream.url.includes('.m3u8')) {
-        // For HLS streams, add specific input options
-        args.splice(2, 0, 
-          '-protocol_whitelist', 'file,http,https,tcp,tls,crypto',
-          '-reconnect', '1',
-          '-reconnect_streamed', '1',
-          '-reconnect_delay_max', '5'
-          '-ac', '2'                          // Stereo audio (2 channels)
-        );
-        logger.stream('Configured FFmpeg for HLS stream with audio', { 
+        // Insert HLS-specific input options after the input URL
+        const inputIndex = args.findIndex(arg => arg === stream.url);
+        if (inputIndex !== -1) {
+          args.splice(inputIndex - 1, 0, 
+            '-protocol_whitelist', 'file,http,https,tcp,tls,crypto', // Allow all needed protocols
+            '-reconnect', '1',                // Auto-reconnect on connection loss
+            '-reconnect_streamed', '1',       // Reconnect for live streams
+            '-reconnect_delay_max', '5',      // Max 5 second reconnect delay
+            '-reconnect_at_eof', '1',         // Reconnect at end of file
+            '-multiple_requests', '1',        // Use multiple HTTP requests for segments
+            '-seekable', '0',                 // Treat as non-seekable live stream
+            '-analyzeduration', '5000000',    // 5 seconds to analyze stream
+            '-probesize', '10M'               // 10MB probe size for codec detection
+          );
+        }
+        
+        logger.stream('Configured FFmpeg for HLS stream with H.264 High Profile support', { 
           streamId: stream.id,
-          audioCodec: 'aac',
+          videoCodec: 'H.264 High Profile (avc1.4D4028, avc1.4D401F)',
+          audioCodec: 'AAC-LC (mp4a.40.2)',
           sampleRate: '48000Hz',
-          channels: 'stereo'
+          channels: 'stereo',
+          profile: 'high',
+          level: '4.0'
         });
       } else {
         // For other streams, try to copy audio if present, skip if not

@@ -18,6 +18,12 @@ class EPGService {
   constructor() {
     this.isInitialized = false;
     this.refreshJobs = new Map();
+    this.localizationSettings = {
+      timezone: 'UTC',
+      locale: 'en-US',
+      dateFormat: 'YYYY-MM-DD',
+      timeFormat: '24h'
+    };
     this.parser = new xml2js.Parser({
       explicitArray: false,
       ignoreAttrs: false,
@@ -826,6 +832,39 @@ class EPGService {
         return new Date(lastRefresh.getTime() + interval.value * 60 * 1000);
       default:
         return new Date(lastRefresh.getTime() + 4 * 60 * 60 * 1000); // 4 hours default
+    }
+  }
+
+  // Update localization settings for EPG output
+  updateLocalizationSettings(settings) {
+    try {
+      if (settings) {
+        this.localizationSettings = { ...this.localizationSettings, ...settings };
+        logger.info('EPG service localization settings updated', this.localizationSettings);
+        
+        // Clear XML cache to regenerate with new settings
+        cacheService.del('epg:xml:combined').catch(err => 
+          logger.warn('Failed to clear EPG XML cache:', err)
+        );
+      }
+    } catch (error) {
+      logger.error('Failed to update EPG localization settings:', error);
+    }
+  }
+
+  // Format timestamp according to localization settings for XML output
+  formatXMLTimestamp(timestamp) {
+    try {
+      if (!timestamp) return timestamp;
+      
+      const moment = require('moment-timezone');
+      const date = moment(timestamp).tz(this.localizationSettings.timezone);
+      
+      // XMLTV format expects: YYYYMMDDHHMMSS +ZZZZ
+      return date.format('YYYYMMDDHHmmss ZZ');
+    } catch (error) {
+      logger.warn('Failed to format XML timestamp:', error);
+      return timestamp;
     }
   }
 

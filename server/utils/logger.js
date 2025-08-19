@@ -315,7 +315,7 @@ class DatabaseLogger {
         }
         
         await this.db.run(
-          'INSERT INTO logs (level, message, meta) VALUES (?, ?, ?)',
+          'INSERT INTO logs (level, message, metadata) VALUES (?, ?, ?)',
           [safeLevel, safeMessage, safeMeta]
         );
       }
@@ -356,12 +356,12 @@ class DatabaseLogger {
       }
 
       if (category) {
-        query += ' AND (meta LIKE ? OR message LIKE ?)';
+        query += ' AND (metadata LIKE ? OR message LIKE ?)';
         params.push(`%"category":"${category}"%`, `%${category}%`);
       }
 
       if (search) {
-        query += ' AND (message LIKE ? OR meta LIKE ?)';
+        query += ' AND (message LIKE ? OR metadata LIKE ?)';
         params.push(`%${search}%`, `%${search}%`);
       }
 

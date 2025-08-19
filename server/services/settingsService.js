@@ -85,12 +85,10 @@ class SettingsService {
       // Start with config defaults as base
       const configDefaults = config.plexlive || this.getDefaultSettings();
       
-      // Apply database settings directly to override defaults
-      // First apply nested structure, then ensure flat structure takes precedence
-      const nestedSettings = this.deepMerge(configDefaults, settingsObj.plexlive || {});
+      // Create the final nested settings structure starting with defaults
+      const finalNestedSettings = JSON.parse(JSON.stringify(configDefaults));
       
-      // Create flat settings from database that override everything
-      const flatSettings = {};
+      // Apply database settings to override defaults
       if (Array.isArray(dbSettings)) {
         dbSettings.forEach(setting => {
           let value = setting.value;
@@ -108,29 +106,27 @@ class SettingsService {
             value = setting.value;
           }
           
-          flatSettings[setting.key] = value;
-          
-          // Also update the nested structure to ensure consistency
+          // Apply database setting to nested structure
           if (setting.key.startsWith('plexlive.')) {
             const nestedKey = setting.key.replace('plexlive.', '');
-            this.setNestedValue(nestedSettings, nestedKey, value);
+            this.setNestedValue(finalNestedSettings, nestedKey, value);
           }
         });
       }
       
-      // Return combined nested and flat structure, with flat taking precedence
-      const finalSettings = Object.assign({}, nestedSettings, flatSettings);
+      // Return properly structured settings with plexlive wrapper
+      const finalSettings = { plexlive: finalNestedSettings };
 
-      // Update cache with flat settings
+      // Update cache with properly structured settings
       this.updateCache(finalSettings);
       
       logger.info('Settings loaded successfully from database', { 
         dbSettingsCount: dbSettings.length,
-        maxConcurrentStreams: finalSettings['plexlive.streaming.maxConcurrentStreams'],
-        nestedMaxConcurrent: finalSettings.streaming?.maxConcurrentStreams,
-        flatSettingsKeys: Object.keys(flatSettings).slice(0, 5),
+        maxConcurrentStreams: finalSettings.plexlive?.streaming?.maxConcurrentStreams,
+        locale: finalSettings.plexlive?.localization?.locale,
+        timezone: finalSettings.plexlive?.localization?.timezone,
         configDefault: configDefaults.streaming?.maxConcurrentStreams,
-        dbValue: dbSettings.find(s => s.key === 'plexlive.streaming.maxConcurrentStreams')?.value
+        dbMaxConcurrentValue: dbSettings.find(s => s.key === 'plexlive.streaming.maxConcurrentStreams')?.value
       });
 
       return finalSettings;
@@ -154,7 +150,7 @@ class SettingsService {
       }
 
       // Flatten nested settings to dot notation for database storage
-      const flatSettings = this.flattenSettings(settings);
+      const flatSettings = this.flattenSettings(settings.plexlive || settings, 'plexlive');
 
       await database.transaction(async (db) => {
         for (const [key, value] of Object.entries(flatSettings)) {
@@ -198,6 +194,9 @@ class SettingsService {
       } catch (cacheError) {
         logger.warn('Failed to clear external caches:', cacheError);
       }
+
+      // Apply settings to runtime services
+      await this.applySettingsToServices(updatedSettings);
 
       // Emit socket event for real-time updates
       this.emitSettingsUpdate(updatedSettings);
@@ -562,6 +561,54 @@ class SettingsService {
    */
   async loadSettings() {
     return await this.getSettings();
+  }
+
+  /**
+   * Apply settings to runtime services
+   */
+  async applySettingsToServices(settings) {
+    try {
+      const plexliveSettings = settings.plexlive || settings;
+      
+      // Apply localization settings to logger
+      if (plexliveSettings.localization) {
+        logger.updateLocalizationSettings(plexliveSettings.localization);
+        logger.info('Applied localization settings to logger', {
+          timezone: plexliveSettings.localization.timezone,
+          locale: plexliveSettings.localization.locale,
+          dateFormat: plexliveSettings.localization.dateFormat,
+          timeFormat: plexliveSettings.localization.timeFormat
+        });
+      }
+      
+      // Apply streaming settings to stream manager
+      if (plexliveSettings.streaming) {
+        const streamManager = require('./streamManager');
+        if (typeof streamManager.updateSettings === 'function') {
+          streamManager.updateSettings(plexliveSettings.streaming);
+          logger.info('Applied streaming settings to stream manager', {
+            maxConcurrentStreams: plexliveSettings.streaming.maxConcurrentStreams,
+            streamTimeout: plexliveSettings.streaming.streamTimeout
+          });
+        }
+      }
+
+      // Apply EPG localization settings
+      if (plexliveSettings.localization) {
+        try {
+          const epgService = require('./epgService');
+          if (typeof epgService.updateLocalizationSettings === 'function') {
+            epgService.updateLocalizationSettings(plexliveSettings.localization);
+            logger.info('Applied localization settings to EPG service');
+          }
+        } catch (epgError) {
+          logger.warn('EPG service not available for settings update:', epgError.message);
+        }
+      }
+      
+    } catch (error) {
+      logger.error('Failed to apply settings to services:', error);
+    }
   }
 
   /**

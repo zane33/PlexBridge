@@ -1818,16 +1818,7 @@ router.put('/settings', async (req, res) => {
       maxConcurrentStreams: settings.plexlive?.streaming?.maxConcurrentStreams
     });
     
-    // Update localization settings globally if they were changed
-    if (updatedSettings.plexlive && updatedSettings.plexlive.localization) {
-      try {
-        const logger = require('../utils/logger');
-        logger.updateLocalizationSettings(updatedSettings);
-        logger.info('Localization settings updated globally via API');
-      } catch (localizationError) {
-        logger.warn('Failed to update global localization settings:', localizationError.message);
-      }
-    }
+    // Settings are automatically applied to services via settingsService.applySettingsToServices
     
     res.json({ 
       message: 'Settings updated successfully',

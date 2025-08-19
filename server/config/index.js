@@ -32,6 +32,7 @@ const defaultConfig = {
   },
   database: {
     // Ensure database path always uses the resolved data directory
+    // Environment variable DB_PATH takes absolute precedence
     path: process.env.DB_PATH || path.join(dataDir, 'database', 'plextv.db'),
     options: {
       busyTimeout: 30000,
@@ -234,6 +235,10 @@ function loadCustomConfig() {
       host: process.env.HOST_IP || process.env.BIND_ADDRESS || mergedConfig.server.host,
       environment: process.env.NODE_ENV || mergedConfig.server.environment
     },
+    database: {
+      ...mergedConfig.database,
+      path: process.env.DB_PATH || mergedConfig.database.path
+    },
     plexlive: {
       ...mergedConfig.plexlive,
       network: {
@@ -271,23 +276,28 @@ function deepMerge(target, source) {
 
 // Create necessary directories with proper error handling
 function ensureDirectories(config) {
-  // Only create actual directory paths, not file paths
-  const dirs = Object.values(config.paths);
+  // Create specific directories only - avoid file paths
+  const directories = [
+    config.paths.data,
+    config.paths.cache,
+    config.paths.logs,
+    config.paths.database,  // This is the directory, not the file
+    config.paths.logos,
+    path.dirname(config.database.path)  // Extract directory from database file path
+  ];
   
-  // Also ensure the database directory specifically exists (extract directory from file path)
-  const dbDir = path.dirname(config.database.path);
-  if (!dirs.includes(dbDir)) {
-    dirs.push(dbDir);
-  }
+  // Remove duplicates and file paths
+  const uniqueDirs = [...new Set(directories)].filter(dir => {
+    // Skip if this is a file path (has extension)
+    if (path.extname(dir)) {
+      console.warn(`Skipping file path in directory creation: ${dir}`);
+      return false;
+    }
+    return true;
+  });
   
-  dirs.forEach(dir => {
+  uniqueDirs.forEach(dir => {
     try {
-      // Skip if this looks like a file path (contains extension)
-      if (path.extname(dir)) {
-        console.warn(`Skipping file path in directory creation: ${dir}`);
-        return;
-      }
-      
       if (!fs.existsSync(dir)) {
         fs.mkdirSync(dir, { recursive: true, mode: 0o755 });
         console.log(`Created directory: ${dir}`);
@@ -295,23 +305,13 @@ function ensureDirectories(config) {
       
       // Verify directory is writable
       fs.accessSync(dir, fs.constants.W_OK);
+      console.log(`Directory verified writable: ${dir}`);
     } catch (error) {
       console.error(`Failed to create/access directory ${dir}:`, error.message);
       // Don't throw here, let the application try to start
       // Services will handle individual directory failures
     }
   });
-  
-  // Ensure the database directory specifically exists
-  try {
-    if (!fs.existsSync(dbDir)) {
-      fs.mkdirSync(dbDir, { recursive: true, mode: 0o755 });
-      console.log(`Created database directory: ${dbDir}`);
-    }
-    fs.accessSync(dbDir, fs.constants.W_OK);
-  } catch (error) {
-    console.error(`Failed to create/access database directory ${dbDir}:`, error.message);
-  }
 }
 
 // Configuration validation and logging
