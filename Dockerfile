@@ -12,6 +12,11 @@ RUN apk update && apk upgrade && \
     bash \
     tini \
     sqlite \
+    # Build tools for native dependencies
+    make \
+    gcc \
+    g++ \
+    python3 \
     # Media processing (essential)
     ffmpeg \
     # Network tools

@@ -68,6 +68,7 @@ const EnhancedVideoPlayer = ({
   const [streamInfo, setStreamInfo] = useState(null);
   const [useVideoJS, setUseVideoJS] = useState(false);
   // Transcoding is now always enabled for browser compatibility
+  const [useTranscoding, setUseTranscoding] = useState(false);
   const [showControls, setShowControls] = useState(true);
   const [lastUserActivity, setLastUserActivity] = useState(Date.now());
   const [retryCount, setRetryCount] = useState(0);
