@@ -167,10 +167,11 @@ const EnhancedVideoPlayer = ({
     if (urlLower.includes('.ts') || urlLower.includes('.mpegts') || urlLower.includes('.mts') || urlLower.includes('type=ts')) {
       return {
         type: 'ts',
-        useVideoJS: true,
+        useVideoJS: false, // Use native player for transcoded MP4 output
         needsSpecialHandling: true,
-        supportedByBrowser: false, // TS files need special handling in browsers
-        description: 'MPEG Transport Stream'
+        supportedByBrowser: false, // TS files need transcoding for browsers
+        requiresTranscoding: true, // Flag to indicate transcoding is required
+        description: 'MPEG Transport Stream (Transcoded)'
       };
     }
     
@@ -237,13 +238,15 @@ const EnhancedVideoPlayer = ({
         }
         
         // CRITICAL FIX: Handle MPEG Transport Stream content type
+        // When proxied through our backend, .ts files are transcoded to MP4
         if (contentType.includes('video/mp2t') || contentType.includes('video/MP2T')) {
           return {
             type: 'ts',
-            useVideoJS: true,
+            useVideoJS: false, // Use native player for transcoded output
             needsSpecialHandling: true,
-            supportedByBrowser: false,
-            description: 'MPEG Transport Stream (Proxied)'
+            supportedByBrowser: true, // After transcoding, it's browser-compatible
+            requiresTranscoding: true,
+            description: 'MPEG Transport Stream (Transcoded to MP4)'
           };
         }
         
@@ -397,16 +400,25 @@ const EnhancedVideoPlayer = ({
       
       const capabilities = await detectStreamCapabilities(currentUrl);
       setStreamInfo(capabilities);
+      
+      // For .ts streams, automatically enable transcoding if proxy is enabled
+      if (capabilities.requiresTranscoding && proxyEnabled) {
+        setUseTranscoding(true);
+        capabilities.description = 'MPEG Transport Stream (Auto-transcoding enabled)';
+      }
+      
       setUseVideoJS(capabilities.useVideoJS);
 
-      setLoadingStage(capabilities.useVideoJS ? 'Loading Video.js player...' : 'Loading native player...');
+      setLoadingStage(capabilities.useVideoJS ? 'Loading Video.js player...' : 
+                      capabilities.requiresTranscoding ? 'Transcoding .ts stream to MP4...' : 
+                      'Loading native player...');
       setLoadingProgress(50);
 
       // Use Video.js for complex streams (HLS, DASH, RTSP, etc.)
       if (capabilities.useVideoJS || useVideoJS) {
         await initializeVideoJSPlayer(currentUrl, capabilities);
       } else {
-        // Use native HTML5 video for simple formats
+        // Use native HTML5 video for simple formats or transcoded streams
         initializeNativePlayer(currentUrl, capabilities);
       }
 
@@ -660,10 +672,10 @@ const EnhancedVideoPlayer = ({
       case 'mts':
         // CRITICAL FIX: Handle MPEG Transport Stream with proper MIME type
         // For TS files going through proxy/transcoding, they're converted to MP4
-        if (url.includes('/streams/preview/') || url.includes('/stream/')) {
-          return 'video/mp4'; // Transcoded to MP4
+        if (url.includes('/streams/preview/') || url.includes('/stream/') || url.includes('/streams/convert/hls/')) {
+          return 'video/mp4'; // Transcoded to MP4 by backend
         } else {
-          return 'video/mp2t'; // Direct TS file
+          return 'video/mp2t'; // Direct TS file (won't work in browsers)
         }
       case 'streaming':
       case 'rtsp':

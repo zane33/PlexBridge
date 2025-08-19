@@ -119,10 +119,32 @@ class StreamPreviewService {
         logger.stream('Stream format detected', { streamId, detectedFormat: streamFormat });
       }
 
-      // Determine if transcoding is needed
-      const needsTranscoding = this.shouldTranscode(streamFormat, transcode === 'true');
+      // Check if this is a .ts file that needs HLS conversion for browser playback
+      if (this.needsHLSConversion(stream.url, streamFormat)) {
+        logger.stream('Detected .ts stream, converting to HLS for browser compatibility', { 
+          streamId, 
+          format: streamFormat,
+          url: stream.url
+        });
+        
+        // Always convert .ts files to HLS for browser compatibility
+        return await this.handleHLSConversion(stream, req, res);
+      }
+      
+      // Check if this is a .ts file that needs conversion for browser compatibility
+      const needsHLSConversion = this.needsHLSConversion(stream.url, streamFormat);
+      
+      // Determine if transcoding is needed (regular transcoding or .ts conversion)
+      const needsTranscoding = this.shouldTranscode(streamFormat, transcode === 'true') || needsHLSConversion;
       
       if (needsTranscoding) {
+        if (needsHLSConversion) {
+          logger.stream('Triggering .ts to MP4 conversion for web browser compatibility', { 
+            streamId, 
+            url: stream.url,
+            format: streamFormat 
+          });
+        }
         return await this.handleTranscodedPreview(stream, req, res, quality, parseInt(timeout));
       } else {
         return await this.handleDirectPreview(stream, req, res);
@@ -152,6 +174,22 @@ class StreamPreviewService {
     // CRITICAL: .ts files need transcoding for browser compatibility
     const needsTranscodingFormats = ['ts', 'mpegts', 'mts', 'rtsp', 'rtmp', 'udp', 'mms', 'srt'];
     return needsTranscodingFormats.includes(streamFormat);
+  }
+
+  // Check if stream needs HLS/MP4 conversion for web browser compatibility
+  needsHLSConversion(streamUrl, streamFormat) {
+    // Check for .ts file extension or MPEG-TS format
+    const isTsFile = streamUrl.toLowerCase().includes('.ts') || 
+                     streamUrl.toLowerCase().includes('.mts') ||
+                     ['ts', 'mpegts', 'mts'].includes(streamFormat);
+    
+    logger.stream('HLS conversion check', { 
+      url: streamUrl, 
+      format: streamFormat, 
+      needsConversion: isTsFile 
+    });
+    
+    return isTsFile;
   }
 
   // Handle direct stream preview (no transcoding)
@@ -195,6 +233,171 @@ class StreamPreviewService {
         streamId: stream.id, 
         error: error.message 
       });
+      throw error;
+    }
+  }
+
+  // Handle HLS conversion for .ts files
+  async handleHLSConversion(stream, req, res) {
+    const sessionId = `hls_${stream.id}_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+    
+    try {
+      logger.stream('Starting HLS conversion for .ts stream', { 
+        streamId: stream.id,
+        sessionId,
+        url: stream.url
+      });
+
+      // Create FFmpeg process to convert .ts to HLS
+      const ffmpegPath = config.streams?.ffmpegPath || '/usr/bin/ffmpeg';
+      
+      // FFmpeg arguments for .ts to MP4 conversion for browser compatibility
+      const args = [
+        '-i', stream.url,
+        '-c:v', 'libx264',                    // H.264 codec for browser compatibility
+        '-c:a', 'aac',                        // AAC audio codec for browser compatibility
+        '-preset', 'ultrafast',               // Fastest encoding for real-time streaming
+        '-profile:v', 'baseline',             // Baseline profile for maximum compatibility
+        '-level', '3.1',                      // H.264 level for broad compatibility
+        '-b:v', '2500k',                      // Video bitrate (2.5 Mbps)
+        '-maxrate', '2500k',                  // Max bitrate
+        '-bufsize', '5000k',                  // Buffer size (2x bitrate)
+        '-b:a', '128k',                       // Audio bitrate
+        '-ar', '48000',                       // Audio sample rate
+        '-movflags', 'frag_keyframe+empty_moov+faststart', // MP4 streaming optimizations
+        '-f', 'mp4',                          // Output as MP4 for browser compatibility
+        '-fflags', '+genpts',                 // Generate presentation timestamps
+        '-avoid_negative_ts', 'make_zero',    // Handle timestamp issues
+        '-max_muxing_queue_size', '1024',     // Prevent buffer overflow
+        '-threads', '2',                      // Limit CPU usage
+        '-rtbufsize', '100M',                 // Real-time buffer size
+        '-probesize', '10M',                  // Input probing size
+        '-analyzeduration', '5000000',        // Analysis duration (5 seconds)
+        '-loglevel', 'error',                 // Reduce log verbosity
+        '-nostats',                           // Disable statistics output
+        'pipe:1'                              // Output to stdout
+      ];
+
+      // Add authentication if required
+      if (stream.auth_username && stream.auth_password) {
+        const authString = `${stream.auth_username}:${stream.auth_password}`;
+        const authHeader = `Authorization: Basic ${Buffer.from(authString).toString('base64')}`;
+        args.splice(1, 0, '-headers', authHeader);
+      }
+
+      // Add custom headers if specified
+      if (stream.headers && Object.keys(stream.headers).length > 0) {
+        const headersString = Object.entries(stream.headers)
+          .map(([key, value]) => `${key}: ${value}`)
+          .join('\r\n');
+        args.splice(-1, 0, '-headers', headersString);
+      }
+
+      logger.stream('Creating FFmpeg HLS conversion process', { 
+        sessionId,
+        streamId: stream.id,
+        command: `${ffmpegPath} ${args.join(' ')}`
+      });
+
+      const ffmpegProcess = spawn(ffmpegPath, args, {
+        stdio: ['ignore', 'pipe', 'pipe']
+      });
+
+      // Verify process started successfully
+      if (!ffmpegProcess.pid) {
+        throw new Error('Failed to start FFmpeg HLS conversion process');
+      }
+
+      logger.stream('FFmpeg HLS conversion process started', { 
+        sessionId,
+        pid: ffmpegProcess.pid
+      });
+
+      // Track the conversion session
+      this.activeTranscodes.set(sessionId, {
+        process: ffmpegProcess,
+        streamId: stream.id,
+        startTime: Date.now(),
+        clientIP: req.ip,
+        userAgent: req.get('User-Agent'),
+        type: 'hls_conversion'
+      });
+
+      this.concurrencyCounter++;
+
+      // Set response headers for video streaming (MP4 format for browser compatibility)
+      res.setHeader('Content-Type', 'video/mp4');
+      res.setHeader('Access-Control-Allow-Origin', '*');
+      res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Range');
+      res.setHeader('Access-Control-Expose-Headers', 'Content-Range, Content-Length, Accept-Ranges');
+      res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
+      res.setHeader('Pragma', 'no-cache');
+      res.setHeader('Expires', '0');
+      res.setHeader('Accept-Ranges', 'bytes');
+
+      // Pipe FFmpeg output to response
+      ffmpegProcess.stdout.pipe(res);
+
+      // Handle FFmpeg stderr (errors and info)
+      let stderrBuffer = '';
+      ffmpegProcess.stderr.on('data', (data) => {
+        stderrBuffer += data.toString();
+        const errorLines = data.toString().split('\n')
+          .filter(line => line.includes('error') || line.includes('Error') || line.includes('ERROR'))
+          .filter(line => line.trim().length > 0);
+        
+        if (errorLines.length > 0) {
+          logger.error('FFmpeg HLS conversion errors', { sessionId, errors: errorLines });
+        }
+      });
+
+      // Handle process completion
+      ffmpegProcess.on('close', (code) => {
+        logger.stream('HLS conversion process closed', { sessionId, exitCode: code });
+        
+        if (code !== 0) {
+          logger.error('HLS conversion failed', { 
+            sessionId, 
+            exitCode: code,
+            stderr: stderrBuffer.slice(-1000)
+          });
+        }
+        
+        this.cleanupTranscodingSession(sessionId, 'completed');
+      });
+
+      // Handle process errors
+      ffmpegProcess.on('error', (error) => {
+        logger.error('HLS conversion process error', { sessionId, error: error.message });
+        this.cleanupTranscodingSession(sessionId, 'error');
+        
+        if (!res.headersSent) {
+          res.status(500).json({ 
+            error: 'HLS conversion failed',
+            message: 'Failed to convert .ts stream to HLS format'
+          });
+        }
+      });
+
+      // Handle client disconnect
+      req.on('close', () => {
+        logger.stream('Client disconnected from HLS conversion session', { sessionId });
+        this.cleanupTranscodingSession(sessionId, 'client_disconnect');
+      });
+
+      req.on('aborted', () => {
+        logger.stream('Client aborted HLS conversion session', { sessionId });
+        this.cleanupTranscodingSession(sessionId, 'client_abort');
+      });
+
+    } catch (error) {
+      logger.error('HLS conversion setup error', { 
+        streamId: stream.id,
+        sessionId,
+        error: error.message
+      });
+      
+      this.cleanupTranscodingSession(sessionId, 'setup_error');
       throw error;
     }
   }

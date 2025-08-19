@@ -723,6 +723,7 @@ router.get('/epg/channels', async (req, res) => {
     }
 
     // Get all EPG channels with display names from all sources
+    // FIXED: Use correct mapping through channels table to get program counts
     const availableChannels = await database.all(`
       SELECT 
         ec.epg_id,
@@ -735,11 +736,13 @@ router.get('/epg/channels', async (req, res) => {
       LEFT JOIN epg_sources es ON ec.source_id = es.id
       LEFT JOIN (
         SELECT 
-          channel_id,
-          COUNT(*) as program_count
-        FROM epg_programs
-        GROUP BY channel_id
-      ) program_counts ON ec.epg_id = program_counts.channel_id
+          c.epg_id,
+          COUNT(ep.id) as program_count
+        FROM channels c
+        LEFT JOIN epg_programs ep ON c.id = ep.channel_id
+        WHERE c.epg_id IS NOT NULL
+        GROUP BY c.epg_id
+      ) program_counts ON ec.epg_id = program_counts.epg_id
       WHERE es.enabled = 1
       ORDER BY ec.display_name
     `);
@@ -775,6 +778,7 @@ router.get('/epg/channels', async (req, res) => {
 router.get('/epg/sources/:id/channels', async (req, res) => {
   try {
     // Get EPG channels with display names from the source
+    // FIXED: Use correct mapping through channels table to get program counts
     const availableChannels = await database.all(`
       SELECT 
         ec.epg_id,
@@ -784,11 +788,13 @@ router.get('/epg/sources/:id/channels', async (req, res) => {
       FROM epg_channels ec
       LEFT JOIN (
         SELECT 
-          channel_id,
-          COUNT(*) as program_count
-        FROM epg_programs
-        GROUP BY channel_id
-      ) program_counts ON ec.epg_id = program_counts.channel_id
+          c.epg_id,
+          COUNT(ep.id) as program_count
+        FROM channels c
+        LEFT JOIN epg_programs ep ON c.id = ep.channel_id
+        WHERE c.epg_id IS NOT NULL
+        GROUP BY c.epg_id
+      ) program_counts ON ec.epg_id = program_counts.epg_id
       WHERE ec.source_id = ?
       ORDER BY ec.display_name
     `, [req.params.id]);
