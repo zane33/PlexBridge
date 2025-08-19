@@ -617,7 +617,7 @@ class EPGService {
       const programs = await database.all(`
         SELECT p.*, c.name as channel_name, c.number as channel_number
         FROM epg_programs p
-        JOIN channels c ON p.channel_id = c.id
+        JOIN channels c ON c.epg_id = p.channel_id
         WHERE p.start_time <= ? 
         AND p.end_time >= ?
         ORDER BY c.number, p.start_time

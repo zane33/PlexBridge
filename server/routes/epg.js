@@ -75,15 +75,22 @@ router.get('/now/:channelId', async (req, res) => {
     const channelId = req.params.channelId;
     const now = new Date().toISOString();
 
+    // First try to get the EPG ID if channelId is an internal ID
+    let epgChannelId = channelId;
+    const channel = await database.get('SELECT epg_id FROM channels WHERE id = ?', [channelId]);
+    if (channel && channel.epg_id) {
+      epgChannelId = channel.epg_id;
+    }
+
     const program = await database.get(`
       SELECT p.*, c.name as channel_name, c.number as channel_number
       FROM epg_programs p
-      JOIN channels c ON p.channel_id = c.id
+      JOIN channels c ON c.epg_id = p.channel_id
       WHERE p.channel_id = ? 
       AND p.start_time <= ? 
       AND p.end_time > ?
       LIMIT 1
-    `, [channelId, now, now]);
+    `, [epgChannelId, now, now]);
 
     if (!program) {
       return res.status(404).json({ error: 'No current program found' });
@@ -103,15 +110,22 @@ router.get('/next/:channelId', async (req, res) => {
     const channelId = req.params.channelId;
     const now = new Date().toISOString();
 
+    // First try to get the EPG ID if channelId is an internal ID
+    let epgChannelId = channelId;
+    const channel = await database.get('SELECT epg_id FROM channels WHERE id = ?', [channelId]);
+    if (channel && channel.epg_id) {
+      epgChannelId = channel.epg_id;
+    }
+
     const program = await database.get(`
       SELECT p.*, c.name as channel_name, c.number as channel_number
       FROM epg_programs p
-      JOIN channels c ON p.channel_id = c.id
+      JOIN channels c ON c.epg_id = p.channel_id
       WHERE p.channel_id = ? 
       AND p.start_time > ?
       ORDER BY p.start_time ASC
       LIMIT 1
-    `, [channelId, now]);
+    `, [epgChannelId, now]);
 
     if (!program) {
       return res.status(404).json({ error: 'No upcoming program found' });
@@ -137,7 +151,7 @@ router.get('/search', async (req, res) => {
     let query = `
       SELECT p.*, c.name as channel_name, c.number as channel_number
       FROM epg_programs p
-      JOIN channels c ON p.channel_id = c.id
+      JOIN channels c ON c.epg_id = p.channel_id
       WHERE (p.title LIKE ? OR p.description LIKE ?)
     `;
     
@@ -197,7 +211,7 @@ router.get('/grid', async (req, res) => {
     const programs = await database.all(`
       SELECT p.*, c.name as channel_name, c.number as channel_number, c.logo as channel_logo
       FROM epg_programs p
-      JOIN channels c ON p.channel_id = c.id
+      JOIN channels c ON c.epg_id = p.channel_id
       WHERE p.start_time < ? AND p.end_time > ?${channelFilter}
       ORDER BY c.number, p.start_time
     `, params);

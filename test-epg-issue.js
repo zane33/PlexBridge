@@ -64,8 +64,8 @@ async function testEPGManager() {
     console.log('✓ Main page loaded and screenshot captured');
 
     console.log('2. Navigating to EPG Manager...');
-    await page.click('[data-testid="nav-epg"]');
-    await page.waitForSelector('[data-testid="epg-manager"]', { timeout: 10000 });
+    await page.click('text=EPG');
+    await page.waitForSelector('text=EPG Sources', { timeout: 10000 });
     await page.waitForTimeout(2000);
     
     await page.screenshot({ 

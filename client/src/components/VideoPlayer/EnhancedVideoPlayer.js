@@ -94,24 +94,33 @@ const EnhancedVideoPlayer = ({
       return '';
     }
     
-    if (proxyEnabled && streamId) {
-      // Use the backend stream preview endpoint to avoid CORS issues  
+    if (streamId) {
+      // ALWAYS use the backend stream preview endpoint with transcoding enabled
+      // This ensures browser compatibility regardless of proxy setting
       let proxyUrl = `${window.location.origin}/streams/preview/${streamId}`;
       
-      // Always enable transcoding for browser video previews to ensure MP4 compatibility
+      // CRITICAL FIX: Always enable transcoding for browser video previews
       // This fixes the audio-only issue by providing transcoded MP4 instead of HLS
       proxyUrl += '?transcode=true';
-      console.log(`Using transcoded proxy URL for stream ${streamId}: ${proxyUrl}`);
+      console.log(`Using ALWAYS-TRANSCODED proxy URL for stream ${streamId}: ${proxyUrl}`);
       
       return proxyUrl;
     } else if (proxyEnabled && channelId) {
       // Use the channel stream endpoint for channel-based playback
-      const channelUrl = `${window.location.origin}/stream/${channelId}`;
-      console.log(`Using channel URL for channel ${channelId}: ${channelUrl}`);
+      let channelUrl = `${window.location.origin}/stream/${channelId}`;
+      // Also apply transcoding to channel URLs when proxy is enabled
+      channelUrl += '?transcode=true';
+      console.log(`Using transcoded channel URL for channel ${channelId}: ${channelUrl}`);
+      return channelUrl;
+    } else if (channelId) {
+      // For channel URLs without proxy, still try to use transcoding
+      let channelUrl = `${window.location.origin}/stream/${channelId}?transcode=true`;
+      console.log(`Using direct transcoded channel URL for channel ${channelId}: ${channelUrl}`);
       return channelUrl;
     }
     
-    console.log(`Using direct stream URL: ${streamUrl}`);
+    // Only fall back to direct stream URL if no streamId or channelId available
+    console.log(`Using direct stream URL (no transcoding available): ${streamUrl}`);
     return streamUrl;
   }, [streamUrl, proxyEnabled, channelId, streamId]);
 
@@ -1423,29 +1432,27 @@ const EnhancedVideoPlayer = ({
             }
           />
           
-          <Fade in={proxyEnabled} timeout={300}>
-            <FormControlLabel
-              sx={{ ml: isMobile ? 0 : 2 }}
-              control={
-                <Switch
-                  checked={true}
-                  disabled={true}
-                  color="secondary"
-                  inputProps={{ 'aria-describedby': 'transcode-help' }}
-                />
-              }
-              label={
-                <Box>
-                  <Typography color="white" variant={isMobile ? 'body2' : 'body1'}>
-                    Video Transcoding
-                  </Typography>
-                  <Typography color="text.secondary" variant="caption" id="transcode-help">
-                    Always enabled for browser compatibility
-                  </Typography>
-                </Box>
-              }
-            />
-          </Fade>
+          <FormControlLabel
+            sx={{ ml: isMobile ? 0 : 2 }}
+            control={
+              <Switch
+                checked={true}
+                disabled={true}
+                color="secondary"
+                inputProps={{ 'aria-describedby': 'transcode-help' }}
+              />
+            }
+            label={
+              <Box>
+                <Typography color="white" variant={isMobile ? 'body2' : 'body1'}>
+                  Video Transcoding
+                </Typography>
+                <Typography color="text.secondary" variant="caption" id="transcode-help">
+                  Always enabled for browser compatibility
+                </Typography>
+              </Box>
+            }
+          />
           
           <FormControlLabel
             control={
