@@ -79,3 +79,12 @@ test-reports/
 /transcoding-test-results
 /transcoding-final-test
 /screenshots
+investigation-01-homepage.png
+dashboard-initial.png
+investigation-02-settings-page.png
+manual-test-dashboard.png
+manual-test-settings.png
+settings-initial.png
+/tests/screenshots
+verification-01-dashboard.png
+verification-02-settings-initial.png

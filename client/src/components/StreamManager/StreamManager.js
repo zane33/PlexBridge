@@ -170,6 +170,32 @@ function StreamManager() {
     fetchChannels();
   }, []);
 
+  // Refresh data when component becomes visible (user navigates back to streams page)
+  useEffect(() => {
+    const handleVisibilityChange = () => {
+      if (!document.hidden) {
+        // Page became visible - refresh data to sync with database
+        console.log('Streams page became visible - refreshing data');
+        fetchStreams();
+        fetchChannels();
+      }
+    };
+
+    const handleFocus = () => {
+      // Window gained focus - refresh data to ensure sync
+      console.log('Window gained focus - refreshing stream data');
+      fetchStreams();
+    };
+
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+    window.addEventListener('focus', handleFocus);
+
+    return () => {
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
+      window.removeEventListener('focus', handleFocus);
+    };
+  }, []);
+
   // Debounce search query to improve performance with large datasets
   useEffect(() => {
     const timer = setTimeout(() => {
@@ -269,10 +295,19 @@ function StreamManager() {
 
   const fetchStreams = async () => {
     try {
+      console.log('Fetching streams from database...');
       const response = await api.get('/api/streams');
+      console.log(`Loaded ${response.data.length} streams from database`);
       setStreams(response.data);
       setLoading(false);
+      
+      // Log stream IDs for debugging data synchronization
+      if (response.data.length > 0) {
+        const streamIds = response.data.map(s => s.id).slice(0, 5);
+        console.log('Current stream IDs (first 5):', streamIds);
+      }
     } catch (error) {
+      console.error('Failed to fetch streams:', error);
       enqueueSnackbar('Failed to fetch streams', { variant: 'error' });
       setLoading(false);
     }
@@ -831,6 +866,28 @@ function StreamManager() {
   const handlePlayerError = useCallback((error) => {
     console.error('Enhanced player error:', error);
     
+    // Handle "Stream not found" errors by refreshing data and closing player
+    if (error.message.includes('Stream not found') || 
+        error.message.includes('does not exist') ||
+        error.message.includes('404') ||
+        error.message.includes('Not Found')) {
+      console.warn('Stream not found - refreshing stream data and closing player');
+      
+      // Close the video player dialog immediately
+      setEnhancedPlayerOpen(false);
+      setCurrentStream(null);
+      
+      // Refresh data to sync with current database state
+      fetchStreams();
+      fetchChannels();
+      
+      enqueueSnackbar('Stream not found in database. Refreshing stream list...', { 
+        variant: 'warning',
+        autoHideDuration: 4000,
+      });
+      return;
+    }
+    
     // Enhanced error messaging with recovery suggestions
     let errorMessage = `Player error: ${error.message}`;
     let suggestions = [];
@@ -854,7 +911,7 @@ function StreamManager() {
       persist: true,
       anchorOrigin: { vertical: 'top', horizontal: 'center' }
     });
-  }, [enqueueSnackbar]);
+  }, [enqueueSnackbar, fetchStreams]);
 
 
   const renderSkeletonTable = () => (

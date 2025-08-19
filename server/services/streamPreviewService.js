@@ -281,6 +281,7 @@ class StreamPreviewService {
       // FFmpeg arguments for .ts to MP4 conversion with optimized streaming for browser compatibility
       const args = [
         '-i', stream.url,
+        '-map', '0',                          // Map all input streams (video + audio)
         '-c:v', 'libx264',                    // H.264 codec for browser compatibility
         '-c:a', 'aac',                        // AAC audio codec for browser compatibility
         '-preset', 'ultrafast',               // Fastest encoding for real-time streaming
@@ -290,7 +291,8 @@ class StreamPreviewService {
         '-maxrate', '2500k',                  // Max bitrate
         '-bufsize', '5000k',                  // Buffer size (2x bitrate)
         '-b:a', '128k',                       // Audio bitrate
-        '-ar', '48000',                       // Audio sample rate
+        '-ar', '48000',                       // Audio sample rate (48kHz for MPEG AAC compatibility)
+        '-ac', '2',                           // Force stereo output (2 channels)
         '-g', '30',                           // GOP size (keyframe interval)
         '-force_key_frames', 'expr:gte(t,n_forced*2)', // Force keyframes every 2 seconds
         '-movflags', 'frag_keyframe+empty_moov+faststart', // MP4 streaming optimizations
@@ -302,6 +304,7 @@ class StreamPreviewService {
         '-rtbufsize', '100M',                 // Real-time buffer size
         '-probesize', '10M',                  // Input probing size
         '-analyzeduration', '5000000',        // Analysis duration (5 seconds)
+        '-strict', '-2',                      // Allow experimental AAC encoder if needed
         '-loglevel', 'error',                 // Reduce log verbosity
         '-nostats',                           // Disable statistics output
         'pipe:1'                              // Output to stdout
@@ -608,10 +611,11 @@ class StreamPreviewService {
       }
       
       // Enhanced FFmpeg arguments for better compatibility and performance
+      // CRITICAL FIX: Handle streams with/without audio properly
       const args = [
         '-i', stream.url,
+        '-map', '0',                          // Map all input streams
         '-c:v', 'libx264',                    // H.264 video codec
-        '-c:a', 'aac',                        // AAC audio codec  
         '-preset', 'veryfast',                // Fast encoding for real-time
         '-profile:v', 'baseline',             // Compatible H.264 profile
         '-level', '3.1',                      // H.264 level for broad compatibility
@@ -619,8 +623,6 @@ class StreamPreviewService {
         '-b:v', qualityProfile.bitrate,       // Video bitrate
         '-maxrate', qualityProfile.bitrate,   // Max bitrate
         '-bufsize', `${parseInt(qualityProfile.bitrate) * 2}k`, // Buffer size
-        '-b:a', '128k',                       // Audio bitrate
-        '-ar', '48000',                       // Audio sample rate
         '-movflags', 'frag_keyframe+empty_moov+faststart', // Web streaming optimizations
         '-f', 'mp4',                          // MP4 container
         '-fflags', '+genpts',                 // Generate presentation timestamps
@@ -634,6 +636,37 @@ class StreamPreviewService {
         '-nostats',                           // Disable statistics output
         'pipe:1'                              // Output to stdout
       ];
+
+      // CRITICAL FIX: Conditionally handle audio based on stream content
+      // Check if this is an HLS stream that likely has audio
+      if (stream.type === 'hls' || stream.url.includes('.m3u8')) {
+        // For HLS streams, expect audio and configure AAC codec
+        args.splice(-8, 0, 
+          '-c:a', 'aac',                      // AAC audio codec for HLS streams
+          '-b:a', '128k',                     // Audio bitrate
+          '-ar', '48000',                     // Audio sample rate (48kHz for MPEG AAC)
+          '-ac', '2'                          // Stereo audio (2 channels)
+        );
+        logger.stream('Configured FFmpeg for HLS stream with audio', { 
+          streamId: stream.id,
+          audioCodec: 'aac',
+          sampleRate: '48000Hz',
+          channels: 'stereo'
+        });
+      } else {
+        // For other streams, try to copy audio if present, skip if not
+        args.splice(-8, 0,
+          '-c:a', 'aac',                      // Convert any audio to AAC
+          '-b:a', '128k',                     // Audio bitrate
+          '-ar', '48000',                     // Audio sample rate
+          '-ac', '2',                         // Stereo audio
+          '-strict', '-2'                     // Allow experimental AAC encoder if needed
+        );
+        logger.stream('Configured FFmpeg with flexible audio handling', { 
+          streamId: stream.id,
+          audioCodec: 'aac_flexible'
+        });
+      }
 
       // Add authentication if required
       if (stream.auth_username && stream.auth_password) {

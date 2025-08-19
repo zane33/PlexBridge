@@ -491,7 +491,7 @@ function Settings() {
               <Box display="flex" alignItems="center" gap={2}>
                 <Typography variant="h6">Streaming</Typography>
                 <Chip 
-                  label={`${getSetting('plexlive.streaming.maxConcurrentStreams', 10)} max streams`}
+                  label={`${getSetting('plexlive.streaming.maxConcurrentStreams', 5)} max streams`}
                   color="primary"
                   size="small"
                 />
@@ -502,7 +502,7 @@ function Settings() {
                 <Grid item xs={12} md={6}>
                   <Typography gutterBottom>Maximum Concurrent Streams</Typography>
                   <Slider
-                    value={getSetting('plexlive.streaming.maxConcurrentStreams', 10)}
+                    value={getSetting('plexlive.streaming.maxConcurrentStreams', 5)}
                     onChange={(e, value) => updateSetting('plexlive.streaming.maxConcurrentStreams', value)}
                     min={1}
                     max={50}

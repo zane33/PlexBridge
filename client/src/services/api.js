@@ -220,7 +220,7 @@ export const settingsApi = {
         deviceDescription: 'IPTV to Plex Bridge Interface'
       },
       streaming: {
-        maxConcurrentStreams: 10,
+        maxConcurrentStreams: 5,
         streamTimeout: 30000,
         reconnectAttempts: 3,
         bufferSize: 65536,
