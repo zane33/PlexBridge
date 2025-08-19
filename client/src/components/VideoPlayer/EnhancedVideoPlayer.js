@@ -67,7 +67,7 @@ const EnhancedVideoPlayer = ({
   const [proxyEnabled, setProxyEnabled] = useState(useProxy);
   const [streamInfo, setStreamInfo] = useState(null);
   const [useVideoJS, setUseVideoJS] = useState(false);
-  const [useTranscoding, setUseTranscoding] = useState(false);
+  // Transcoding is now always enabled for browser compatibility
   const [showControls, setShowControls] = useState(true);
   const [lastUserActivity, setLastUserActivity] = useState(Date.now());
   const [retryCount, setRetryCount] = useState(0);
@@ -98,13 +98,10 @@ const EnhancedVideoPlayer = ({
       // Use the backend stream preview endpoint to avoid CORS issues  
       let proxyUrl = `${window.location.origin}/streams/preview/${streamId}`;
       
-      // Add transcoding parameter if enabled
-      if (useTranscoding) {
-        proxyUrl += '?transcode=true';
-        console.log(`Using transcoded proxy URL for stream ${streamId}: ${proxyUrl}`);
-      } else {
-        console.log(`Using proxy URL for stream ${streamId}: ${proxyUrl}`);
-      }
+      // Always enable transcoding for browser video previews to ensure MP4 compatibility
+      // This fixes the audio-only issue by providing transcoded MP4 instead of HLS
+      proxyUrl += '?transcode=true';
+      console.log(`Using transcoded proxy URL for stream ${streamId}: ${proxyUrl}`);
       
       return proxyUrl;
     } else if (proxyEnabled && channelId) {
@@ -116,7 +113,7 @@ const EnhancedVideoPlayer = ({
     
     console.log(`Using direct stream URL: ${streamUrl}`);
     return streamUrl;
-  }, [streamUrl, proxyEnabled, channelId, streamId, useTranscoding]);
+  }, [streamUrl, proxyEnabled, channelId, streamId]);
 
   // Detect stream format and capabilities with enhanced proxy URL detection
   const detectStreamCapabilities = useCallback(async (url) => {
@@ -964,7 +961,7 @@ const EnhancedVideoPlayer = ({
       
       return () => clearTimeout(timeoutId);
     }
-  }, [proxyEnabled, useVideoJS, useTranscoding]);
+  }, [proxyEnabled, useVideoJS]);
 
   const handleClose = () => {
     cleanupPlayer();
@@ -1431,8 +1428,8 @@ const EnhancedVideoPlayer = ({
               sx={{ ml: isMobile ? 0 : 2 }}
               control={
                 <Switch
-                  checked={useTranscoding}
-                  onChange={(e) => setUseTranscoding(e.target.checked)}
+                  checked={true}
+                  disabled={true}
                   color="secondary"
                   inputProps={{ 'aria-describedby': 'transcode-help' }}
                 />
@@ -1443,7 +1440,7 @@ const EnhancedVideoPlayer = ({
                     Video Transcoding
                   </Typography>
                   <Typography color="text.secondary" variant="caption" id="transcode-help">
-                    For TS/MPEG-TS streams
+                    Always enabled for browser compatibility
                   </Typography>
                 </Box>
               }
