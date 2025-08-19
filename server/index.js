@@ -233,12 +233,23 @@ const initializeApp = async () => {
     }
     logger.info('Database health check passed');
 
+    // Initialize localization service
+    logger.initLocalizationService();
+    
     // Load and apply settings from database
     try {
       const settings = await settingsService.getSettings();
       logger.info('Settings loaded on startup:', { 
-        maxConcurrentStreams: settings['plexlive.streaming.maxConcurrentStreams']
+        maxConcurrentStreams: settings['plexlive.streaming.maxConcurrentStreams'],
+        timezone: settings['plexlive.localization.timezone'] || 'UTC',
+        locale: settings['plexlive.localization.locale'] || 'en-US'
       });
+      
+      // Apply localization settings to logger and services
+      if (settings.plexlive && settings.plexlive.localization) {
+        logger.updateLocalizationSettings(settings);
+        logger.info('Localization settings applied globally');
+      }
       
       // Apply settings to runtime config if applyToConfig method exists
       if (typeof settingsService.applyToConfig === 'function') {

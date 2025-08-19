@@ -4,9 +4,9 @@ const logger = require('../utils/logger');
 const database = require('../services/database');
 const { v4: uuidv4 } = require('uuid');
 
-// Import selected channels from M3U
+// Import selected channels from M3U with bulk channel numbering
 router.post('/', async (req, res) => {
-  const { url, selectedChannels } = req.body;
+  const { url, selectedChannels, startingChannelNumber = null, channelNumberOverrides = {} } = req.body;
   
   if (!url || !selectedChannels || !Array.isArray(selectedChannels)) {
     return res.status(400).json({ error: 'URL and selectedChannels array are required' });
@@ -25,7 +25,16 @@ router.post('/', async (req, res) => {
       const existingChannels = await database.all('SELECT number FROM channels');
       const existingNumbers = new Set(existingChannels.map(c => c.number));
       
-      let nextChannelNumber = 1;
+      // Determine starting channel number
+      let nextChannelNumber = startingChannelNumber ? parseInt(startingChannelNumber) : 1;
+      
+      // If starting number conflicts, find next available
+      if (startingChannelNumber && existingNumbers.has(nextChannelNumber)) {
+        const maxExisting = Math.max(...Array.from(existingNumbers), 0);
+        nextChannelNumber = maxExisting + 1;
+        logger.info(`Starting channel number ${startingChannelNumber} conflicts, using ${nextChannelNumber} instead`);
+      }
+      
       const findNextAvailableNumber = () => {
         while (existingNumbers.has(nextChannelNumber)) {
           nextChannelNumber++;
@@ -33,11 +42,37 @@ router.post('/', async (req, res) => {
         return nextChannelNumber++;
       };
       
-      for (const channel of selectedChannels) {
+      const conflicts = [];
+      const assignments = [];
+      
+      for (let i = 0; i < selectedChannels.length; i++) {
+        const channel = selectedChannels[i];
         try {
           // Create channel if it doesn't exist
           const channelId = uuidv4();
-          const channelNumber = findNextAvailableNumber();
+          
+          // Check if user provided specific number override for this channel
+          let channelNumber;
+          if (channelNumberOverrides[i] && channelNumberOverrides[i] > 0) {
+            channelNumber = parseInt(channelNumberOverrides[i]);
+            
+            // Check for conflicts with user-specified numbers
+            if (existingNumbers.has(channelNumber)) {
+              conflicts.push({
+                channelName: channel.name,
+                requestedNumber: channelNumber,
+                assignedNumber: null // Will be determined later
+              });
+              channelNumber = findNextAvailableNumber(); // Fall back to next available
+            }
+          } else {
+            channelNumber = findNextAvailableNumber();
+          }
+          
+          assignments.push({
+            channelName: channel.name,
+            assignedNumber: channelNumber
+          });
           
           await database.run(`
             INSERT INTO channels (id, name, number, enabled, logo, epg_id)
@@ -79,14 +114,21 @@ router.post('/', async (req, res) => {
       
       await database.run('COMMIT');
       
-      logger.info(`M3U import completed: ${channelsCreated} channels, ${streamsCreated} streams`);
+      logger.info(`M3U import completed: ${channelsCreated} channels, ${streamsCreated} streams`, {
+        assignments,
+        conflicts: conflicts.length > 0 ? conflicts : undefined
+      });
       
       res.json({
         success: true,
         channelsCreated,
         streamsCreated,
+        assignments,
+        conflicts: conflicts.length > 0 ? conflicts : undefined,
         errors: errors.length > 0 ? errors : undefined,
-        message: `Successfully imported ${channelsCreated} channels and ${streamsCreated} streams`
+        message: conflicts.length > 0 
+          ? `Successfully imported ${channelsCreated} channels and ${streamsCreated} streams (${conflicts.length} channel numbers had conflicts and were auto-assigned)`
+          : `Successfully imported ${channelsCreated} channels and ${streamsCreated} streams`
       });
       
     } catch (error) {

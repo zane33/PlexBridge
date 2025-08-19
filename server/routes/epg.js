@@ -4,8 +4,20 @@ const epgService = require('../services/epgService');
 const database = require('../services/database');
 const logger = require('../utils/logger');
 
-// XMLTV format EPG endpoint
+// XMLTV format EPG endpoint - both with and without .xml extension for Plex compatibility
+// IMPORTANT: The .xml route MUST come before the parameterized route to avoid conflicts
+router.get('/xmltv.xml', async (req, res) => {
+  // Handle .xml extension endpoint by setting params and calling handler
+  req.params = { ...req.params, channelId: undefined };
+  return handleXMLTVRequest(req, res);
+});
+
 router.get('/xmltv/:channelId?', async (req, res) => {
+  return handleXMLTVRequest(req, res);
+});
+
+// Shared XMLTV request handler
+async function handleXMLTVRequest(req, res) {
   try {
     const channelId = req.params.channelId;
     const { days = 3 } = req.query;
@@ -26,6 +38,12 @@ router.get('/xmltv/:channelId?', async (req, res) => {
       channels = await database.all('SELECT * FROM channels WHERE enabled = 1 ORDER BY number');
     }
 
+    // If no programs exist, generate sample EPG data for Plex compatibility
+    if (!programs || programs.length === 0) {
+      logger.info('No EPG programs found, generating sample data for Plex compatibility');
+      programs = generateSampleEPGData(channels);
+    }
+
     // Generate XMLTV format
     const xmltv = generateXMLTV(channels, programs);
     
@@ -36,7 +54,7 @@ router.get('/xmltv/:channelId?', async (req, res) => {
     logger.error('XMLTV EPG error:', error);
     res.status(500).send('<?xml version="1.0"?><error>EPG generation failed</error>');
   }
-});
+}
 
 // JSON EPG endpoint
 router.get('/json/:channelId?', async (req, res) => {
@@ -305,6 +323,46 @@ function generateXMLTV(channels, programs) {
   xml += '</tv>\n';
   
   return xml;
+}
+
+// Generate sample EPG data for Plex compatibility when no EPG sources are configured
+function generateSampleEPGData(channels) {
+  const samplePrograms = [];
+  const now = new Date();
+  
+  channels.forEach(channel => {
+    // Generate 24 hours of sample programming for each channel
+    for (let hour = 0; hour < 24; hour++) {
+      const startTime = new Date(now.getTime() + (hour * 60 * 60 * 1000));
+      const endTime = new Date(startTime.getTime() + (60 * 60 * 1000)); // 1 hour programs
+      
+      const programTypes = [
+        { title: 'News Update', description: 'Latest news and updates' },
+        { title: 'Movie Time', description: 'Featured movie presentation' },
+        { title: 'Sports Center', description: 'Sports highlights and analysis' },
+        { title: 'Documentary', description: 'Educational documentary programming' },
+        { title: 'Talk Show', description: 'Celebrity interviews and discussion' },
+        { title: 'Comedy Hour', description: 'Comedy and entertainment' },
+        { title: 'Drama Series', description: 'Dramatic television series' },
+        { title: 'Reality TV', description: 'Reality television programming' }
+      ];
+      
+      const randomProgram = programTypes[Math.floor(Math.random() * programTypes.length)];
+      
+      samplePrograms.push({
+        channel_id: channel.id, // Use channel.id for Plex compatibility
+        title: `${randomProgram.title} - ${channel.name}`,
+        description: `${randomProgram.description} on ${channel.name}`,
+        start_time: startTime.toISOString(),
+        end_time: endTime.toISOString(),
+        category: 'Entertainment',
+        episode_number: null,
+        season_number: null
+      });
+    }
+  });
+  
+  return samplePrograms;
 }
 
 module.exports = router;

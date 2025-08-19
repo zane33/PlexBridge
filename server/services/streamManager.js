@@ -590,11 +590,16 @@ class StreamManager {
       }
       this.clientSessions.get(clientIdentifier).set(streamId, sessionId);
 
-      // Track stream statistics
+      // Track stream statistics with detailed bandwidth monitoring
       this.streamStats.set(sessionId, {
         bytesTransferred: 0,
         startTime: Date.now(),
-        errors: 0
+        lastUpdateTime: Date.now(),
+        errors: 0,
+        bandwidthSamples: [],
+        currentBitrate: 0,
+        avgBitrate: 0,
+        peakBitrate: 0
       });
 
       // Set enhanced response headers for streaming - fix content type based on stream type
@@ -610,25 +615,85 @@ class StreamManager {
       // Pipe stream to response
       streamProcess.stdout.pipe(res);
 
-      // Handle stream events
+      // Handle stream events with detailed bandwidth tracking
       streamProcess.stdout.on('data', (chunk) => {
         const stats = this.streamStats.get(sessionId);
         if (stats) {
-          stats.bytesTransferred += chunk.length;
+          const now = Date.now();
+          const deltaTime = now - stats.lastUpdateTime;
+          const deltaBytes = chunk.length;
+          
+          // Update basic metrics
+          stats.bytesTransferred += deltaBytes;
+          stats.lastUpdateTime = now;
+          
+          // Calculate current bitrate (bits per second)
+          if (deltaTime > 0) {
+            const currentBps = (deltaBytes * 8) / (deltaTime / 1000); // bits per second
+            stats.currentBitrate = Math.round(currentBps);
+            
+            // Keep bandwidth samples for average calculation (last 30 seconds)
+            stats.bandwidthSamples.push({ time: now, bitrate: currentBps });
+            stats.bandwidthSamples = stats.bandwidthSamples.filter(sample => now - sample.time < 30000);
+            
+            // Calculate average bitrate
+            if (stats.bandwidthSamples.length > 0) {
+              const totalBps = stats.bandwidthSamples.reduce((sum, sample) => sum + sample.bitrate, 0);
+              stats.avgBitrate = Math.round(totalBps / stats.bandwidthSamples.length);
+            }
+            
+            // Track peak bitrate
+            if (currentBps > stats.peakBitrate) {
+              stats.peakBitrate = Math.round(currentBps);
+            }
+          }
         }
       });
 
       streamProcess.stderr.on('data', (data) => {
-        logger.stream('Stream process stderr', { sessionId, data: data.toString() });
+        const errorData = data.toString();
+        const stream = this.activeStreams.get(sessionId);
+        
+        // Update error count
+        const stats = this.streamStats.get(sessionId);
+        if (stats) {
+          stats.errors++;
+        }
+        
+        // Log stream errors with session context
+        logger.error('Stream session error', {
+          sessionId,
+          streamId: stream?.streamId,
+          clientIP: stream?.clientIP,
+          streamUrl: stream?.url,
+          errorData,
+          timestamp: new Date().toISOString()
+        });
+        
+        logger.stream('Stream process stderr', { sessionId, data: errorData });
       });
 
       streamProcess.on('close', (code) => {
-        logger.stream('Stream process closed', { sessionId, code });
+        const stream = this.activeStreams.get(sessionId);
+        logger.stream('Stream process closed', { 
+          sessionId, 
+          code,
+          streamId: stream?.streamId,
+          clientIP: stream?.clientIP 
+        });
         this.cleanupStream(sessionId);
       });
 
       streamProcess.on('error', (error) => {
-        logger.error('Stream process error', { sessionId, error: error.message });
+        const stream = this.activeStreams.get(sessionId);
+        logger.error('Stream process error', { 
+          sessionId, 
+          streamId: stream?.streamId,
+          clientIP: stream?.clientIP,
+          streamUrl: stream?.url,
+          error: error.message,
+          timestamp: new Date().toISOString()
+        });
         this.cleanupStream(sessionId);
         if (!res.headersSent) {
           res.status(500).end();
@@ -660,6 +725,20 @@ class StreamManager {
         userAgent: req.get('User-Agent')
       });
 
+      // Log detailed session start information
+      logger.info('Stream session started', {
+        sessionId,
+        streamId: stream.streamId,
+        clientIP: req.ip,
+        clientIdentifier,
+        userAgent: req.get('User-Agent'),
+        streamUrl: streamData.url,
+        streamType: streamData.type,
+        timestamp: new Date().toISOString(),
+        maxConcurrent,
+        currentActiveStreams: this.activeStreams.size
+      });
+      
       logger.stream('Stream proxy created successfully', { sessionId, streamId });
 
     } catch (error) {
@@ -867,13 +946,55 @@ class StreamManager {
     // Remove from cache
     cacheService.removeStreamSession(sessionId);
     
+    // Log detailed session end information
+    if (stream) {
+      const stats = this.streamStats.get(sessionId);
+      const duration = Date.now() - stream.startTime;
+      
+      logger.info('Stream session ended', {
+        sessionId,
+        streamId: stream.streamId,
+        clientIP: stream.clientIP,
+        clientIdentifier: stream.clientIdentifier,
+        userAgent: stream.userAgent,
+        streamUrl: stream.url,
+        streamType: stream.type,
+        duration,
+        durationFormatted: this.formatDuration(duration),
+        bytesTransferred: stats?.bytesTransferred || 0,
+        avgBitrate: stats?.avgBitrate || 0,
+        peakBitrate: stats?.peakBitrate || 0,
+        reason,
+        timestamp: new Date().toISOString(),
+        remainingActiveStreams: this.activeStreams.size - 1
+      });
+    }
+    
     logger.stream('Stream cleaned up', { sessionId, reason, streamId: stream?.streamId });
   }
 
-  getActiveStreams() {
+  async getActiveStreams() {
     const streams = [];
+    const database = require('./database');
+    
     for (const [sessionId, stream] of this.activeStreams) {
       const stats = this.streamStats.get(sessionId);
+      
+      // Get channel information from database
+      let channelInfo = { name: 'Unknown Channel', number: 'N/A' };
+      try {
+        const channel = await database.get('SELECT name, number FROM channels WHERE id = ?', [stream.streamId]);
+        if (channel) {
+          channelInfo = { name: channel.name, number: channel.number };
+        }
+      } catch (error) {
+        logger.error('Failed to get channel info for stream', { 
+          sessionId, 
+          streamId: stream.streamId, 
+          error: error.message 
+        });
+      }
+      
       streams.push({
         sessionId,
         streamId: stream.streamId,
@@ -885,7 +1006,13 @@ class StreamManager {
         url: stream.url,
         type: stream.type,
         isUnique: stream.isUnique,
-        bytesTransferred: stats?.bytesTransferred || 0
+        bytesTransferred: stats?.bytesTransferred || 0,
+        currentBitrate: stats?.currentBitrate || 0,
+        avgBitrate: stats?.avgBitrate || 0,
+        peakBitrate: stats?.peakBitrate || 0,
+        lastUpdateTime: stats?.lastUpdateTime,
+        channelName: channelInfo.name,
+        channelNumber: channelInfo.number
       });
     }
     return streams;
@@ -970,6 +1097,47 @@ class StreamManager {
     }
   }
 
+  // Enhanced proxy stream method with channel context
+  async proxyStreamWithChannel(streamUrl, channel, stream, req, res) {
+    try {
+      logger.info('Stream request with channel context', {
+        channelId: channel.id,
+        channelName: channel.name,
+        channelNumber: channel.number,
+        streamUrl,
+        clientIP: req.ip,
+        userAgent: req.get('User-Agent'),
+        timestamp: new Date().toISOString()
+      });
+
+      // Detect stream format to determine appropriate handling
+      const detection = await this.detectStreamFormat(streamUrl);
+      logger.stream('Detected stream format', { url: streamUrl, format: detection });
+
+      // For HLS/DASH streams, we can redirect directly or proxy based on CORS
+      if (detection.type === 'hls' || detection.type === 'dash') {
+        return await this.proxyWebCompatibleStreamWithChannel(streamUrl, detection.type, channel, req, res);
+      }
+
+      // For other stream types, use FFmpeg transcoding to web-compatible format
+      return await this.proxyTranscodedStreamWithChannel(streamUrl, detection.type, channel, req, res);
+
+    } catch (error) {
+      logger.error('Stream proxy error with channel context', { 
+        channelId: channel.id,
+        channelName: channel.name,
+        channelNumber: channel.number,
+        url: streamUrl, 
+        clientIP: req.ip,
+        error: error.message,
+        timestamp: new Date().toISOString()
+      });
+      if (!res.headersSent) {
+        res.status(500).json({ error: 'Stream proxy failed', details: error.message });
+      }
+    }
+  }
+
   // Simple proxy stream method for direct stream proxying (used by routes)
   async proxyStream(streamUrl, req, res) {
     try {
@@ -992,6 +1160,70 @@ class StreamManager {
       if (!res.headersSent) {
         res.status(500).json({ error: 'Stream proxy failed', details: error.message });
       }
+    }
+  }
+
+  // Proxy web-compatible streams with channel context  
+  async proxyWebCompatibleStreamWithChannel(streamUrl, streamType, channel, req, res) {
+    const axios = require('axios');
+    
+    try {
+      logger.info('Starting web-compatible stream with channel context', {
+        channelId: channel.id,
+        channelName: channel.name,
+        channelNumber: channel.number,
+        streamType,
+        clientIP: req.ip
+      });
+      
+      // Set appropriate content type for stream type
+      const contentType = streamType === 'hls' ? 'application/vnd.apple.mpegurl' : 'application/dash+xml';
+      
+      // Set streaming headers
+      res.set({
+        'Content-Type': contentType,
+        'Access-Control-Allow-Origin': '*',
+        'Access-Control-Allow-Headers': 'Range, Content-Type, Authorization',
+        'Access-Control-Expose-Headers': 'Content-Range, Content-Length, Accept-Ranges',
+        'Cache-Control': 'no-cache, no-store, must-revalidate',
+        'Accept-Ranges': 'bytes'
+      });
+
+      // For HLS/DASH, we can try direct streaming first
+      const response = await axios.get(streamUrl, {
+        timeout: 30000,
+        responseType: 'stream',
+        headers: {
+          'User-Agent': config.protocols.http.userAgent || 'PlexBridge/1.0'
+        }
+      });
+
+      // Pipe the response directly
+      response.data.pipe(res);
+      
+      response.data.on('error', (error) => {
+        logger.error('Stream pipe error with channel context', { 
+          channelId: channel.id,
+          channelName: channel.name,
+          url: streamUrl, 
+          clientIP: req.ip,
+          error: error.message 
+        });
+        if (!res.headersSent) {
+          res.status(500).end();
+        }
+      });
+
+    } catch (error) {
+      // If direct streaming fails, fall back to transcoding
+      logger.warn('Direct streaming failed, falling back to transcoding', { 
+        channelId: channel.id,
+        channelName: channel.name,
+        url: streamUrl,
+        clientIP: req.ip,
+        error: error.message 
+      });
+      return await this.proxyTranscodedStreamWithChannel(streamUrl, streamType, channel, req, res);
     }
   }
 
@@ -1039,6 +1271,132 @@ class StreamManager {
         error: error.message 
       });
       return await this.proxyTranscodedStream(streamUrl, streamType, req, res);
+    }
+  }
+
+  // Proxy streams that need transcoding with channel context
+  async proxyTranscodedStreamWithChannel(streamUrl, streamType, channel, req, res) {
+    try {
+      logger.info('Starting transcoded stream with channel context', {
+        channelId: channel.id,
+        channelName: channel.name,
+        channelNumber: channel.number,
+        streamType,
+        clientIP: req.ip
+      });
+      
+      // Set appropriate headers for transcoded stream
+      res.set({
+        'Content-Type': 'video/mp4', // MP4 is most compatible
+        'Access-Control-Allow-Origin': '*',
+        'Access-Control-Allow-Headers': 'Range, Content-Type, Authorization',
+        'Access-Control-Expose-Headers': 'Content-Range, Content-Length, Accept-Ranges',
+        'Cache-Control': 'no-cache, no-store, must-revalidate',
+        'Accept-Ranges': 'bytes'
+      });
+
+      // Create FFmpeg process for transcoding to web-compatible format
+      const args = [
+        '-i', streamUrl,
+        '-c:v', 'libx264',                    // H.264 video codec for compatibility
+        '-c:a', 'aac',                        // AAC audio codec
+        '-preset', 'veryfast',                // Fast encoding for real-time
+        '-profile:v', 'baseline',             // Most compatible H.264 profile
+        '-level', '3.1',                      // H.264 level for broad compatibility
+        '-movflags', 'frag_keyframe+empty_moov+faststart', // Streaming optimizations
+        '-f', 'mp4',                          // MP4 container
+        '-fflags', '+genpts',                 // Generate timestamps
+        '-avoid_negative_ts', 'make_zero',    // Handle timestamp issues
+        '-max_muxing_queue_size', '1024',     // Prevent buffer issues
+        '-loglevel', 'error',                 // Reduce log noise
+        '-nostats',                           // No statistics output
+        'pipe:1'                              // Output to stdout
+      ];
+
+      // Add protocol-specific arguments
+      if (streamType === 'rtsp') {
+        args.splice(1, 0, '-rtsp_transport', 'tcp', '-rtsp_flags', 'prefer_tcp');
+      } else if (streamType === 'rtmp') {
+        args.splice(1, 0, '-rtmp_live', 'live');
+      }
+
+      const ffmpegProcess = spawn(config.streams.ffmpegPath, args);
+      
+      if (!ffmpegProcess.pid) {
+        throw new Error('Failed to start FFmpeg transcoding process');
+      }
+
+      logger.info('Started transcoding process with channel context', { 
+        channelId: channel.id,
+        channelName: channel.name,
+        url: streamUrl, 
+        pid: ffmpegProcess.pid,
+        streamType,
+        clientIP: req.ip
+      });
+
+      // Pipe FFmpeg output to response
+      ffmpegProcess.stdout.pipe(res);
+
+      // Handle errors
+      ffmpegProcess.stderr.on('data', (data) => {
+        const errorOutput = data.toString();
+        if (errorOutput.includes('Error') || errorOutput.includes('error')) {
+          logger.error('FFmpeg transcoding error with channel context', { 
+            channelId: channel.id,
+            channelName: channel.name,
+            url: streamUrl, 
+            clientIP: req.ip,
+            error: errorOutput 
+          });
+        }
+      });
+
+      ffmpegProcess.on('error', (error) => {
+        logger.error('FFmpeg process error with channel context', { 
+          channelId: channel.id,
+          channelName: channel.name,
+          url: streamUrl, 
+          clientIP: req.ip,
+          error: error.message 
+        });
+        if (!res.headersSent) {
+          res.status(500).end();
+        }
+      });
+
+      ffmpegProcess.on('close', (code) => {
+        logger.info('FFmpeg process closed with channel context', { 
+          channelId: channel.id,
+          channelName: channel.name,
+          url: streamUrl, 
+          clientIP: req.ip,
+          exitCode: code 
+        });
+      });
+
+      // Cleanup on client disconnect
+      req.on('close', () => {
+        logger.info('Client disconnected, terminating transcoding with channel context', { 
+          channelId: channel.id,
+          channelName: channel.name,
+          url: streamUrl,
+          clientIP: req.ip
+        });
+        ffmpegProcess.kill('SIGTERM');
+      });
+
+    } catch (error) {
+      logger.error('Transcoded streaming error with channel context', { 
+        channelId: channel.id,
+        channelName: channel.name,
+        url: streamUrl, 
+        clientIP: req.ip,
+        error: error.message 
+      });
+      if (!res.headersSent) {
+        res.status(500).json({ error: 'Transcoding failed', details: error.message });
+      }
     }
   }
 
@@ -1125,6 +1483,21 @@ class StreamManager {
       if (!res.headersSent) {
         res.status(500).json({ error: 'Transcoding failed', details: error.message });
       }
+    }
+  }
+
+  // Format duration in human-readable format
+  formatDuration(milliseconds) {
+    const seconds = Math.floor(milliseconds / 1000);
+    const minutes = Math.floor(seconds / 60);
+    const hours = Math.floor(minutes / 60);
+    
+    if (hours > 0) {
+      return `${hours}h ${minutes % 60}m ${seconds % 60}s`;
+    } else if (minutes > 0) {
+      return `${minutes}m ${seconds % 60}s`;
+    } else {
+      return `${seconds}s`;
     }
   }
 

@@ -459,10 +459,11 @@ class StreamPreviewService {
       const ffmpegProcess = await this.createTranscodingProcess(stream, quality, sessionId);
       
       if (!ffmpegProcess) {
-        return res.status(500).json({ 
-          error: 'Transcoding initialization failed',
-          message: 'Unable to start video transcoding process'
+        logger.warn('FFmpeg not available, falling back to direct stream', { 
+          streamId: stream.id,
+          fallbackUrl: stream.url 
         });
+        return await this.handleDirectPreview(stream, req, res);
       }
 
       // Track the transcoding session
@@ -566,8 +567,27 @@ class StreamPreviewService {
       });
       
       this.cleanupTranscodingSession(sessionId, 'setup_error');
+      
+      // If FFmpeg is not available, fallback to direct streaming
+      if (error.message.includes('FFmpeg not found')) {
+        logger.warn('FFmpeg not available, falling back to direct stream', { 
+          streamId: stream.id,
+          fallbackUrl: stream.url 
+        });
+        return await this.handleDirectPreview(stream, req, res);
+      }
+      
       throw error;
     }
+  }
+
+  // Check if FFmpeg is available
+  async checkFFmpegAvailability(ffmpegPath) {
+    return new Promise((resolve) => {
+      const testProcess = spawn(ffmpegPath, ['-version'], { stdio: 'ignore' });
+      testProcess.on('error', () => resolve(false));
+      testProcess.on('close', (code) => resolve(code === 0));
+    });
   }
 
   // Create FFmpeg transcoding process with enhanced configuration
@@ -579,6 +599,13 @@ class StreamPreviewService {
       };
 
       const ffmpegPath = config.streams?.ffmpegPath || '/usr/bin/ffmpeg';
+      
+      // Check if FFmpeg is available before attempting to use it
+      const ffmpegAvailable = await this.checkFFmpegAvailability(ffmpegPath);
+      if (!ffmpegAvailable) {
+        logger.warn(`FFmpeg not found at ${ffmpegPath}. Transcoding not available.`);
+        return null; // Signal that transcoding is not available
+      }
       
       // Enhanced FFmpeg arguments for better compatibility and performance
       const args = [

@@ -201,6 +201,19 @@ const EnhancedVideoPlayer = ({
           signal: AbortSignal.timeout(5000) // 5 second timeout
         });
         
+        // CRITICAL FIX: Check for HTTP error responses (404, etc.)
+        if (!response.ok) {
+          console.error(`Stream endpoint returned ${response.status}: ${response.statusText}`);
+          
+          if (response.status === 404) {
+            throw new Error(`Stream not found: The stream may have been deleted or disabled`);
+          } else if (response.status >= 500) {
+            throw new Error(`Server error (${response.status}): The streaming service is currently unavailable`);
+          } else {
+            throw new Error(`Stream access error (${response.status}): ${response.statusText}`);
+          }
+        }
+        
         const contentType = response.headers.get('content-type') || '';
         console.log(`Proxy stream content-type: ${contentType}`);
         
@@ -269,14 +282,24 @@ const EnhancedVideoPlayer = ({
         }
         
       } catch (error) {
-        console.warn('Failed to detect proxy stream type:', error);
-        // Fall back to assuming HLS for proxy URLs
+        console.error('Failed to detect proxy stream type:', error);
+        
+        // CRITICAL FIX: Don't fall back for serious errors like 404
+        // Re-throw the error so the player can handle it properly
+        if (error.message.includes('Stream not found') || 
+            error.message.includes('Server error') || 
+            error.message.includes('Stream access error')) {
+          throw error; // Re-throw HTTP errors so they show proper error messages
+        }
+        
+        // Only fall back to HLS for network/timeout errors
+        console.warn('Network/timeout error detecting stream type, falling back to HLS');
         return {
           type: 'hls',
           useVideoJS: true,
           needsSpecialHandling: true,
           supportedByBrowser: false,
-          description: 'Live Stream (Proxied, assumed HLS)'
+          description: 'Live Stream (Proxied, format detection failed - assuming HLS)'
         };
       }
     }
@@ -372,9 +395,17 @@ const EnhancedVideoPlayer = ({
     
     // Wait for DOM element to be available
     if (!videoRef.current) {
-      // Only retry if dialog is still open
-      if (open) {
-        initializationTimeoutRef.current = setTimeout(() => initializePlayer(), 100);
+      // Only retry if dialog is still open and not cleaning up
+      if (open && !isCleaningUp.current) {
+        console.log('Video element not ready, retrying in 100ms...');
+        initializationTimeoutRef.current = setTimeout(() => {
+          // Check again if we should still initialize
+          if (open && !isCleaningUp.current) {
+            initializePlayer();
+          }
+        }, 100);
+      } else {
+        console.log('Skipping video element retry - dialog closed or cleaning up');
       }
       return;
     }
@@ -922,7 +953,36 @@ const EnhancedVideoPlayer = ({
     
     if (open && streamUrl) {
       console.log('Calling initializePlayer from useEffect');
-      initializePlayer();
+      
+      // CRITICAL FIX: Wait for cleanup to complete before initializing
+      // This fixes the race condition where isCleaningUp.current is true
+      const waitForCleanupAndInitialize = async () => {
+        // Wait for cleanup to complete if it's running
+        let attempts = 0;
+        const maxAttempts = 50; // 50 * 50ms = 2.5 seconds max wait
+        
+        while (isCleaningUp.current && attempts < maxAttempts) {
+          console.log(`Waiting for cleanup to complete... attempt ${attempts + 1}`);
+          await new Promise(resolve => setTimeout(resolve, 50));
+          attempts++;
+        }
+        
+        // If cleanup is still running after max attempts, force reset
+        if (isCleaningUp.current) {
+          console.warn('Cleanup taking too long, forcing reset of isCleaningUp flag');
+          isCleaningUp.current = false;
+        }
+        
+        // Only proceed if dialog is still open and we have a stream URL
+        if (open && streamUrl) {
+          console.log('Cleanup complete, now initializing player');
+          initializePlayer();
+        } else {
+          console.log('Dialog closed or stream URL changed during cleanup wait, skipping initialization');
+        }
+      };
+      
+      waitForCleanupAndInitialize();
     } else {
       console.log('Not calling initializePlayer:', { open, streamUrl });
     }

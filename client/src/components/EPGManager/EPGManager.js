@@ -740,7 +740,7 @@ function EPGManager() {
   );
 
   const renderProgramsTab = () => (
-    <Box>
+    <Box data-testid="epg-program-guide">
       <Box display="flex" justifyContent="space-between" alignItems="center" mb={3}>
         <Typography variant="h6">Program Guide</Typography>
         <Box display="flex" gap={2} alignItems="center">
@@ -751,6 +751,7 @@ function EPGManager() {
               onChange={(e) => handleChannelSelectionChange(e.target.value)}
               label="Channel"
               disabled={programsLoading}
+              data-testid="channel-selector"
             >
               <MenuItem value="all">
                 <em>All Channels</em>

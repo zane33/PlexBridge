@@ -47,7 +47,8 @@ function Settings() {
     caching: false,
     device: false,
     network: false,
-    compatibility: false
+    compatibility: false,
+    localization: false
   });
 
   useEffect(() => {
@@ -1183,6 +1184,173 @@ function Settings() {
                   <Typography variant="caption" display="block" color="textSecondary">
                     Use fallback logos when channel logos are missing
                   </Typography>
+                </Grid>
+              </Grid>
+            </AccordionDetails>
+          </Accordion>
+        </Grid>
+
+        {/* Localization Settings */}
+        <Grid item xs={12}>
+          <Accordion 
+            expanded={expandedSections.localization} 
+            onChange={handleAccordionChange('localization')}
+            sx={{
+              background: 'linear-gradient(135deg, rgba(156, 163, 175, 0.05) 0%, rgba(107, 114, 128, 0.05) 100%)',
+              border: '1px solid rgba(156, 163, 175, 0.15)',
+              borderRadius: '12px !important',
+              '&:before': { display: 'none' },
+              boxShadow: 'none',
+              mb: 2,
+            }}
+          >
+            <AccordionSummary expandIcon={<ExpandMoreIcon />}>
+              <Box display="flex" alignItems="center" gap={2}>
+                <Typography variant="h6">Localization</Typography>
+                <Chip 
+                  label={`${getSetting('plexlive.localization.timezone', 'UTC')} - ${getSetting('plexlive.localization.locale', 'en-US')}`}
+                  color="default"
+                  size="small"
+                />
+              </Box>
+            </AccordionSummary>
+            <AccordionDetails>
+              <Grid container spacing={3}>
+                <Grid item xs={12}>
+                  <Typography variant="subtitle2" gutterBottom sx={{ mb: 2 }}>
+                    Configure timezone and date/time formatting preferences that will affect all displays throughout the application
+                  </Typography>
+                </Grid>
+                
+                <Grid item xs={12} md={6}>
+                  <FormControl fullWidth>
+                    <InputLabel>Timezone</InputLabel>
+                    <Select
+                      value={getSetting('plexlive.localization.timezone', 'UTC')}
+                      onChange={(e) => updateSetting('plexlive.localization.timezone', e.target.value)}
+                      label="Timezone"
+                    >
+                      <MenuItem value="UTC">UTC</MenuItem>
+                      <MenuItem value="America/New_York">Eastern Time (New York)</MenuItem>
+                      <MenuItem value="America/Chicago">Central Time (Chicago)</MenuItem>
+                      <MenuItem value="America/Denver">Mountain Time (Denver)</MenuItem>
+                      <MenuItem value="America/Los_Angeles">Pacific Time (Los Angeles)</MenuItem>
+                      <MenuItem value="America/Toronto">Eastern Time (Toronto)</MenuItem>
+                      <MenuItem value="America/Vancouver">Pacific Time (Vancouver)</MenuItem>
+                      <MenuItem value="Europe/London">GMT (London)</MenuItem>
+                      <MenuItem value="Europe/Paris">CET (Paris)</MenuItem>
+                      <MenuItem value="Europe/Berlin">CET (Berlin)</MenuItem>
+                      <MenuItem value="Europe/Rome">CET (Rome)</MenuItem>
+                      <MenuItem value="Europe/Madrid">CET (Madrid)</MenuItem>
+                      <MenuItem value="Europe/Amsterdam">CET (Amsterdam)</MenuItem>
+                      <MenuItem value="Europe/Stockholm">CET (Stockholm)</MenuItem>
+                      <MenuItem value="Europe/Moscow">MSK (Moscow)</MenuItem>
+                      <MenuItem value="Asia/Tokyo">JST (Tokyo)</MenuItem>
+                      <MenuItem value="Asia/Shanghai">CST (Shanghai)</MenuItem>
+                      <MenuItem value="Asia/Seoul">KST (Seoul)</MenuItem>
+                      <MenuItem value="Asia/Singapore">SGT (Singapore)</MenuItem>
+                      <MenuItem value="Asia/Mumbai">IST (Mumbai)</MenuItem>
+                      <MenuItem value="Asia/Dubai">GST (Dubai)</MenuItem>
+                      <MenuItem value="Australia/Sydney">AEDT (Sydney)</MenuItem>
+                      <MenuItem value="Australia/Melbourne">AEDT (Melbourne)</MenuItem>
+                      <MenuItem value="Australia/Perth">AWST (Perth)</MenuItem>
+                    </Select>
+                  </FormControl>
+                </Grid>
+                
+                <Grid item xs={12} md={6}>
+                  <FormControl fullWidth>
+                    <InputLabel>Language/Locale</InputLabel>
+                    <Select
+                      value={getSetting('plexlive.localization.locale', 'en-US')}
+                      onChange={(e) => updateSetting('plexlive.localization.locale', e.target.value)}
+                      label="Language/Locale"
+                    >
+                      <MenuItem value="en-US">English (United States)</MenuItem>
+                      <MenuItem value="en-GB">English (United Kingdom)</MenuItem>
+                      <MenuItem value="en-CA">English (Canada)</MenuItem>
+                      <MenuItem value="en-AU">English (Australia)</MenuItem>
+                      <MenuItem value="es-ES">Español (España)</MenuItem>
+                      <MenuItem value="es-MX">Español (México)</MenuItem>
+                      <MenuItem value="fr-FR">Français (France)</MenuItem>
+                      <MenuItem value="fr-CA">Français (Canada)</MenuItem>
+                      <MenuItem value="de-DE">Deutsch (Deutschland)</MenuItem>
+                      <MenuItem value="it-IT">Italiano (Italia)</MenuItem>
+                      <MenuItem value="pt-BR">Português (Brasil)</MenuItem>
+                      <MenuItem value="pt-PT">Português (Portugal)</MenuItem>
+                      <MenuItem value="ru-RU">Русский (Россия)</MenuItem>
+                      <MenuItem value="ja-JP">日本語 (日本)</MenuItem>
+                      <MenuItem value="ko-KR">한국어 (대한민국)</MenuItem>
+                      <MenuItem value="zh-CN">中文 (中国)</MenuItem>
+                      <MenuItem value="zh-TW">中文 (台湾)</MenuItem>
+                      <MenuItem value="ar-SA">العربية (السعودية)</MenuItem>
+                      <MenuItem value="hi-IN">हिन्दी (भारत)</MenuItem>
+                      <MenuItem value="nl-NL">Nederlands (Nederland)</MenuItem>
+                      <MenuItem value="sv-SE">Svenska (Sverige)</MenuItem>
+                      <MenuItem value="no-NO">Norsk (Norge)</MenuItem>
+                      <MenuItem value="da-DK">Dansk (Danmark)</MenuItem>
+                      <MenuItem value="fi-FI">Suomi (Suomi)</MenuItem>
+                    </Select>
+                  </FormControl>
+                </Grid>
+                
+                <Grid item xs={12} md={6}>
+                  <FormControl fullWidth>
+                    <InputLabel>Date Format</InputLabel>
+                    <Select
+                      value={getSetting('plexlive.localization.dateFormat', 'YYYY-MM-DD')}
+                      onChange={(e) => updateSetting('plexlive.localization.dateFormat', e.target.value)}
+                      label="Date Format"
+                    >
+                      <MenuItem value="YYYY-MM-DD">YYYY-MM-DD (2024-08-19)</MenuItem>
+                      <MenuItem value="MM/DD/YYYY">MM/DD/YYYY (08/19/2024)</MenuItem>
+                      <MenuItem value="DD/MM/YYYY">DD/MM/YYYY (19/08/2024)</MenuItem>
+                      <MenuItem value="DD.MM.YYYY">DD.MM.YYYY (19.08.2024)</MenuItem>
+                    </Select>
+                  </FormControl>
+                </Grid>
+                
+                <Grid item xs={12} md={6}>
+                  <FormControl fullWidth>
+                    <InputLabel>Time Format</InputLabel>
+                    <Select
+                      value={getSetting('plexlive.localization.timeFormat', '24h')}
+                      onChange={(e) => updateSetting('plexlive.localization.timeFormat', e.target.value)}
+                      label="Time Format"
+                    >
+                      <MenuItem value="24h">24-hour (13:30:00)</MenuItem>
+                      <MenuItem value="12h">12-hour (1:30:00 PM)</MenuItem>
+                    </Select>
+                  </FormControl>
+                </Grid>
+                
+                <Grid item xs={12} md={6}>
+                  <FormControl fullWidth>
+                    <InputLabel>First Day of Week</InputLabel>
+                    <Select
+                      value={getSetting('plexlive.localization.firstDayOfWeek', 1)}
+                      onChange={(e) => updateSetting('plexlive.localization.firstDayOfWeek', parseInt(e.target.value))}
+                      label="First Day of Week"
+                    >
+                      <MenuItem value={0}>Sunday</MenuItem>
+                      <MenuItem value={1}>Monday</MenuItem>
+                    </Select>
+                  </FormControl>
+                </Grid>
+                
+                <Grid item xs={12}>
+                  <Alert severity="info" sx={{ mt: 2 }}>
+                    <Typography variant="body2">
+                      <strong>Note:</strong> Changing timezone and locale settings will affect:
+                    </Typography>
+                    <ul style={{ marginTop: 8, marginBottom: 0, paddingLeft: 24 }}>
+                      <li>All date and time displays throughout the application</li>
+                      <li>Log timestamps and entries</li>
+                      <li>EPG program schedules and times</li>
+                      <li>System metrics and monitoring timestamps</li>
+                      <li>Channel guide and program information</li>
+                    </ul>
+                  </Alert>
                 </Grid>
               </Grid>
             </AccordionDetails>

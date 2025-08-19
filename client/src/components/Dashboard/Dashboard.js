@@ -66,6 +66,35 @@ function Dashboard() {
   const isMobile = useMediaQuery(theme.breakpoints.down('md'));
   const { enqueueSnackbar } = useSnackbar();
 
+  // Add pulse animation styles
+  const pulseKeyframes = `
+    @keyframes pulse {
+      0% {
+        transform: scale(1);
+        opacity: 1;
+      }
+      50% {
+        transform: scale(1.2);
+        opacity: 0.7;
+      }
+      100% {
+        transform: scale(1);
+        opacity: 1;
+      }
+    }
+  `;
+
+  // Inject styles
+  if (typeof document !== 'undefined') {
+    let styleSheet = document.getElementById('dashboard-styles');
+    if (!styleSheet) {
+      styleSheet = document.createElement('style');
+      styleSheet.id = 'dashboard-styles';
+      styleSheet.innerHTML = pulseKeyframes;
+      document.head.appendChild(styleSheet);
+    }
+  }
+
   useEffect(() => {
     fetchMetrics();
     fetchActiveStreams();
@@ -186,6 +215,35 @@ function Dashboard() {
     const hours = Math.floor((seconds % 86400) / 3600);
     const minutes = Math.floor((seconds % 3600) / 60);
     return `${days}d ${hours}h ${minutes}m`;
+  };
+
+  const formatBitrate = (bps) => {
+    if (!bps || bps === 0) return '0 bps';
+    const kbps = bps / 1000;
+    const mbps = bps / 1000000;
+    
+    if (mbps >= 1) {
+      return `${mbps.toFixed(1)} Mbps`;
+    } else if (kbps >= 1) {
+      return `${kbps.toFixed(0)} kbps`;
+    } else {
+      return `${bps} bps`;
+    }
+  };
+
+  const formatDuration = (milliseconds) => {
+    const totalSeconds = Math.floor(milliseconds / 1000);
+    const hours = Math.floor(totalSeconds / 3600);
+    const minutes = Math.floor((totalSeconds % 3600) / 60);
+    const seconds = totalSeconds % 60;
+    
+    if (hours > 0) {
+      return `${hours}h ${minutes}m ${seconds}s`;
+    } else if (minutes > 0) {
+      return `${minutes}m ${seconds}s`;
+    } else {
+      return `${seconds}s`;
+    }
   };
 
   const copyToClipboard = async (text, label) => {
@@ -344,7 +402,7 @@ function Dashboard() {
       </Typography>
 
       {/* Key Metrics Cards */}
-      <Grid container spacing={isMobile ? 2 : 3} sx={{ mb: 3 }}>
+      <Grid container spacing={isMobile ? 2 : 3} sx={{ mb: 3 }} data-testid="system-metrics">
         <Grid item xs={12} sm={6} md={3}>
           <Card 
             sx={{ 
@@ -856,30 +914,86 @@ function Dashboard() {
               No active streams
             </Typography>
           ) : (
-            <TableContainer component={Paper} sx={{ mt: 2 }}>
+            <TableContainer component={Paper} sx={{ mt: 2 }} data-testid="active-streams">
               <Table>
                 <TableHead>
                   <TableRow>
-                    <TableCell>Stream ID</TableCell>
+                    <TableCell>Channel</TableCell>
                     <TableCell>Client IP</TableCell>
-                    <TableCell>Started</TableCell>
+                    <TableCell>Current Bitrate</TableCell>
+                    <TableCell>Avg Bitrate</TableCell>
+                    <TableCell>Peak Bitrate</TableCell>
                     <TableCell>Duration</TableCell>
                     <TableCell>Data Transferred</TableCell>
+                    <TableCell>Started</TableCell>
                   </TableRow>
                 </TableHead>
                 <TableBody>
                   {activeStreams.map((stream) => (
                     <TableRow key={stream.sessionId}>
-                      <TableCell>{stream.streamId}</TableCell>
-                      <TableCell>{stream.clientIP}</TableCell>
                       <TableCell>
-                        {format(new Date(stream.startTime), 'HH:mm:ss')}
+                        <Box sx={{ display: 'flex', alignItems: 'center' }}>
+                          <TvIcon sx={{ mr: 1, color: 'primary.main' }} />
+                          <Box>
+                            <Typography variant="body2" fontWeight="bold">
+                              Ch {stream.channelNumber || 'N/A'} - {stream.channelName || 'Unknown Channel'}
+                            </Typography>
+                            <Typography variant="caption" color="text.secondary">
+                              {stream.streamId}
+                            </Typography>
+                          </Box>
+                        </Box>
                       </TableCell>
                       <TableCell>
-                        {Math.floor(stream.duration / 1000)}s
+                        <Typography variant="body2">{stream.clientIP}</Typography>
+                        <Typography variant="caption" color="text.secondary">
+                          {stream.userAgent ? stream.userAgent.split(' ')[0] : 'Unknown'}
+                        </Typography>
                       </TableCell>
                       <TableCell>
-                        {formatBytes(stream.bytesTransferred)}
+                        <Box sx={{ display: 'flex', alignItems: 'center' }}>
+                          <Box
+                            sx={{
+                              width: 8,
+                              height: 8,
+                              borderRadius: '50%',
+                              bgcolor: stream.currentBitrate > 0 ? 'success.main' : 'grey.400',
+                              mr: 1,
+                              animation: stream.currentBitrate > 0 ? 'pulse 2s infinite' : 'none'
+                            }}
+                          />
+                          <Typography variant="body2" fontWeight="bold">
+                            {formatBitrate(stream.currentBitrate)}
+                          </Typography>
+                        </Box>
+                      </TableCell>
+                      <TableCell>
+                        <Typography variant="body2">
+                          {formatBitrate(stream.avgBitrate)}
+                        </Typography>
+                      </TableCell>
+                      <TableCell>
+                        <Typography variant="body2" color="primary.main" fontWeight="bold">
+                          {formatBitrate(stream.peakBitrate)}
+                        </Typography>
+                      </TableCell>
+                      <TableCell>
+                        <Typography variant="body2">
+                          {formatDuration(stream.duration)}
+                        </Typography>
+                      </TableCell>
+                      <TableCell>
+                        <Typography variant="body2">
+                          {formatBytes(stream.bytesTransferred)}
+                        </Typography>
+                      </TableCell>
+                      <TableCell>
+                        <Typography variant="body2">
+                          {format(new Date(stream.startTime), 'HH:mm:ss')}
+                        </Typography>
+                        <Typography variant="caption" color="text.secondary">
+                          {format(new Date(stream.startTime), 'MMM dd')}
+                        </Typography>
                       </TableCell>
                     </TableRow>
                   ))}

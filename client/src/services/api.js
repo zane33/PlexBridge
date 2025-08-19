@@ -185,6 +185,22 @@ export const settingsApi = {
           errors.push('Grace period must be between 1000ms and 60000ms');
         }
       }
+      
+      // Localization validation
+      if (plexlive.localization) {
+        if (plexlive.localization.locale && !/^[a-z]{2}(-[A-Z]{2})?$/.test(plexlive.localization.locale)) {
+          errors.push('Locale must be in BCP 47 format (e.g., "en-US", "fr-FR")');
+        }
+        if (plexlive.localization.dateFormat && !['YYYY-MM-DD', 'MM/DD/YYYY', 'DD/MM/YYYY', 'DD.MM.YYYY'].includes(plexlive.localization.dateFormat)) {
+          errors.push('Date format must be one of: YYYY-MM-DD, MM/DD/YYYY, DD/MM/YYYY, DD.MM.YYYY');
+        }
+        if (plexlive.localization.timeFormat && !['12h', '24h'].includes(plexlive.localization.timeFormat)) {
+          errors.push('Time format must be either "12h" or "24h"');
+        }
+        if (plexlive.localization.firstDayOfWeek !== undefined && (plexlive.localization.firstDayOfWeek < 0 || plexlive.localization.firstDayOfWeek > 6)) {
+          errors.push('First day of week must be between 0 (Sunday) and 6 (Saturday)');
+        }
+      }
     }
     
     return {
@@ -253,6 +269,13 @@ export const settingsApi = {
         plexPassRequired: false,
         gracePeriod: 10000,
         channelLogoFallback: true
+      },
+      localization: {
+        timezone: 'UTC',
+        locale: 'en-US',
+        dateFormat: 'YYYY-MM-DD',
+        timeFormat: '24h',
+        firstDayOfWeek: 1
       }
     }
   })
@@ -700,9 +723,13 @@ export const m3uApi = {
     }
   },
   
-  // Import selected channels
-  importChannels: (url, selectedChannels) => 
-    api.post('/api/streams/import/m3u', { url, selectedChannels }),
+  // Import selected channels with optional starting channel number
+  importChannels: (url, selectedChannels, startingChannelNumber = null) => 
+    api.post('/api/streams/import/m3u', { 
+      url, 
+      selectedChannels, 
+      ...(startingChannelNumber && { startingChannelNumber }) 
+    }),
   
   // Validate M3U URL
   validateUrl: (url) => api.post('/api/streams/validate/m3u', { url }),

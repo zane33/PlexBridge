@@ -9,22 +9,32 @@ const logger = require('../utils/logger');
 router.get('/stream/:channelId', async (req, res) => {
   try {
     const { channelId } = req.params;
-    logger.info(`Stream request for channel: ${channelId}`);
+    logger.info(`Stream request for channel: ${channelId}`, { 
+      clientIP: req.ip,
+      userAgent: req.get('User-Agent')
+    });
     
     // Get channel info from database
     const channel = await database.get('SELECT * FROM channels WHERE id = ?', [channelId]);
     if (!channel) {
+      logger.warn('Channel not found for stream request', { channelId, clientIP: req.ip });
       return res.status(404).send('Channel not found');
     }
     
     // Get stream info for channel
     const stream = await database.get('SELECT * FROM streams WHERE channel_id = ?', [channelId]);
     if (!stream) {
+      logger.warn('Stream not found for channel', { 
+        channelId, 
+        channelName: channel.name,
+        channelNumber: channel.number,
+        clientIP: req.ip 
+      });
       return res.status(404).send('Stream not found for channel');
     }
     
-    // Proxy the stream
-    await streamManager.proxyStream(stream.url, req, res);
+    // Proxy the stream with channel context
+    await streamManager.proxyStreamWithChannel(stream.url, channel, stream, req, res);
     
   } catch (error) {
     logger.error('Stream proxy error:', error);

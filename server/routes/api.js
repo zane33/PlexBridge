@@ -109,6 +109,13 @@ const plexliveSettingsSchema = Joi.object({
     plexPassRequired: Joi.boolean().default(false),
     gracePeriod: Joi.number().integer().min(1000).max(60000).default(10000),
     channelLogoFallback: Joi.boolean().default(true)
+  }).default(),
+  localization: Joi.object({
+    timezone: Joi.string().default('UTC'),
+    locale: Joi.string().pattern(/^[a-z]{2}(-[A-Z]{2})?$/).default('en-US'),
+    dateFormat: Joi.string().valid('YYYY-MM-DD', 'MM/DD/YYYY', 'DD/MM/YYYY', 'DD.MM.YYYY').default('YYYY-MM-DD'),
+    timeFormat: Joi.string().valid('12h', '24h').default('24h'),
+    firstDayOfWeek: Joi.number().integer().min(0).max(6).default(1)
   }).default()
 }).default();
 
@@ -1259,7 +1266,7 @@ router.get('/server/info', (req, res) => {
 // STREAM MANAGEMENT API
 router.get('/streams/active', async (req, res) => {
   try {
-    const activeStreams = streamManager.getActiveStreams();
+    const activeStreams = await streamManager.getActiveStreams();
     const streamsByChannel = streamManager.getStreamsByChannel();
     const concurrencyMetrics = streamManager.getConcurrencyMetrics();
     
@@ -1810,6 +1817,17 @@ router.put('/settings', async (req, res) => {
       keys: Object.keys(settings),
       maxConcurrentStreams: settings.plexlive?.streaming?.maxConcurrentStreams
     });
+    
+    // Update localization settings globally if they were changed
+    if (updatedSettings.plexlive && updatedSettings.plexlive.localization) {
+      try {
+        const logger = require('../utils/logger');
+        logger.updateLocalizationSettings(updatedSettings);
+        logger.info('Localization settings updated globally via API');
+      } catch (localizationError) {
+        logger.warn('Failed to update global localization settings:', localizationError.message);
+      }
+    }
     
     res.json({ 
       message: 'Settings updated successfully',

@@ -4,6 +4,9 @@ const path = require('path');
 const fs = require('fs');
 const config = require('../config');
 
+// Import localization service (will be loaded after logger is initialized to avoid circular dependency)
+let localizationService = null;
+
 // Define log levels
 const levels = {
   error: 0,
@@ -28,12 +31,17 @@ winston.addColors(colors);
 // Database logger instance (will be initialized later)
 let dbLogger = null;
 
-// Create custom format
+// Create custom format with timezone-aware timestamps
 const customFormat = winston.format.combine(
-  winston.format.timestamp({ format: 'YYYY-MM-DD HH:mm:ss' }),
+  winston.format.timestamp(),
   winston.format.errors({ stack: true }),
   winston.format.printf(({ timestamp, level, message, stack, ...meta }) => {
-    let log = `${timestamp} [${level.toUpperCase()}]: ${message}`;
+    // Use localization service for timestamp if available, otherwise fallback to default
+    const formattedTimestamp = localizationService 
+      ? localizationService.formatLogTimestamp(timestamp)
+      : new Date(timestamp).toISOString().replace('T', ' ').substring(0, 19);
+    
+    let log = `${formattedTimestamp} [${level.toUpperCase()}]: ${message}`;
     
     // Add stack trace for errors
     if (stack) {
@@ -355,6 +363,24 @@ class DatabaseLogger {
     }
   }
 }
+
+// Initialize localization service for timestamp formatting
+logger.initLocalizationService = function() {
+  try {
+    localizationService = require('./localization');
+    logger.info('Localization service initialized for logger timestamps');
+  } catch (error) {
+    logger.warn('Failed to initialize localization service for logger:', error.message);
+  }
+};
+
+// Update localization settings
+logger.updateLocalizationSettings = function(settings) {
+  if (localizationService) {
+    localizationService.updateSettings(settings);
+    logger.info('Logger localization settings updated');
+  }
+};
 
 // Export logger and database logger class
 module.exports = logger;

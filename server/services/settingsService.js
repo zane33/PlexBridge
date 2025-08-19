@@ -343,6 +343,13 @@ class SettingsService {
         plexPassRequired: false,
         gracePeriod: 10000,
         channelLogoFallback: true
+      },
+      localization: {
+        timezone: 'UTC',
+        locale: 'en-US',
+        dateFormat: 'YYYY-MM-DD',
+        timeFormat: '24h',
+        firstDayOfWeek: 1 // 1 = Monday, 0 = Sunday
       }
     };
   }
@@ -472,6 +479,36 @@ class SettingsService {
         const { device } = plexlive;
         if (device.tunerCount && (device.tunerCount < 1 || device.tunerCount > 32)) {
           errors.push('Tuner count must be between 1 and 32');
+        }
+      }
+      
+      // Validate localization settings
+      if (plexlive.localization) {
+        const { localization } = plexlive;
+        
+        // Validate timezone (basic check for IANA timezone format)
+        if (localization.timezone && typeof localization.timezone !== 'string') {
+          errors.push('Timezone must be a valid IANA timezone string (e.g., "America/New_York", "UTC")');
+        }
+        
+        // Validate locale (basic check for BCP 47 format)
+        if (localization.locale && !/^[a-z]{2}(-[A-Z]{2})?$/.test(localization.locale)) {
+          errors.push('Locale must be in BCP 47 format (e.g., "en-US", "fr-FR", "de")');
+        }
+        
+        // Validate date format
+        if (localization.dateFormat && !['YYYY-MM-DD', 'MM/DD/YYYY', 'DD/MM/YYYY', 'DD.MM.YYYY'].includes(localization.dateFormat)) {
+          errors.push('Date format must be one of: YYYY-MM-DD, MM/DD/YYYY, DD/MM/YYYY, DD.MM.YYYY');
+        }
+        
+        // Validate time format
+        if (localization.timeFormat && !['12h', '24h'].includes(localization.timeFormat)) {
+          errors.push('Time format must be either "12h" or "24h"');
+        }
+        
+        // Validate first day of week
+        if (localization.firstDayOfWeek !== undefined && (localization.firstDayOfWeek < 0 || localization.firstDayOfWeek > 6)) {
+          errors.push('First day of week must be between 0 (Sunday) and 6 (Saturday)');
         }
       }
       

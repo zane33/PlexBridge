@@ -115,6 +115,7 @@ function StreamManager() {
     auth_password: '',
     auto_create_channels: true, // Default to true for M3U imports
     isM3UMode: false, // Track if this is an M3U import
+    startingChannelNumber: '', // Starting channel number for bulk import
   });
   const [enhancedPlayerOpen, setEnhancedPlayerOpen] = useState(false);
   const [currentStream, setCurrentStream] = useState(null);
@@ -719,15 +720,52 @@ function StreamManager() {
       // Filter to only selected channels
       const channelsToImport = parsedChannels.filter((_, index) => selectedChannels.includes(index));
       
-      const response = await m3uApi.importChannels(importFormData.url, channelsToImport);
+      // Prepare import parameters with starting channel number if provided
+      const importParams = {
+        url: importFormData.url,
+        selectedChannels: channelsToImport,
+        ...(importFormData.startingChannelNumber && {
+          startingChannelNumber: parseInt(importFormData.startingChannelNumber)
+        })
+      };
+      
+      const response = await m3uApi.importChannels(importParams.url, importParams.selectedChannels, importParams.startingChannelNumber);
 
-      const channelsCreated = response.data.channelsCreated || selectedChannels.length;
-      const streamsCreated = response.data.streamsCreated || selectedChannels.length;
+      const { channelsCreated, streamsCreated, conflicts, assignments } = response.data;
+      
+      // Create detailed success message
+      let message = `Successfully imported ${channelsCreated || selectedChannels.length} channels and ${streamsCreated || selectedChannels.length} streams! 🎉`;
+      
+      if (conflicts && conflicts.length > 0) {
+        message += ` (${conflicts.length} channel numbers had conflicts and were auto-assigned)`;
+      }
+      
+      if (importParams.startingChannelNumber && assignments) {
+        const startNum = assignments[0]?.assignedNumber;
+        const endNum = assignments[assignments.length - 1]?.assignedNumber;
+        if (startNum && endNum && startNum !== endNum) {
+          message += ` Channels assigned numbers ${startNum}-${endNum}.`;
+        } else if (startNum) {
+          message += ` Channel assigned number ${startNum}.`;
+        }
+      }
 
-      enqueueSnackbar(
-        `Successfully imported ${channelsCreated} channels and ${streamsCreated} streams! 🎉`,
-        { variant: 'success' }
-      );
+      enqueueSnackbar(message, { 
+        variant: 'success',
+        autoHideDuration: conflicts && conflicts.length > 0 ? 6000 : 4000,
+      });
+      
+      // Show detailed conflict information if any
+      if (conflicts && conflicts.length > 0) {
+        const conflictDetails = conflicts.map(c => 
+          `${c.channelName}: requested #${c.requestedNumber} → auto-assigned`
+        ).join(', ');
+        
+        enqueueSnackbar(`Channel number conflicts: ${conflictDetails}`, {
+          variant: 'info',
+          autoHideDuration: 8000,
+        });
+      }
       
       handleImportDialogClose();
       fetchStreams();
@@ -753,6 +791,7 @@ function StreamManager() {
       auth_password: '',
       auto_create_channels: true,
       isM3UMode: false,
+      startingChannelNumber: '',
     });
   };
 
@@ -1495,6 +1534,24 @@ function StreamManager() {
                 }
               />
             </Grid>
+
+            {/* Starting Channel Number - only show for M3U imports with auto-create enabled */}
+            {importFormData.isM3UMode && importFormData.auto_create_channels && (
+              <Grid item xs={12} sm={6}>
+                <TextField
+                  label="Starting Channel Number"
+                  type="number"
+                  fullWidth
+                  variant="outlined"
+                  value={importFormData.startingChannelNumber}
+                  onChange={(e) => handleImportInputChange('startingChannelNumber', e.target.value)}
+                  disabled={importing}
+                  inputProps={{ min: 1, max: 9999 }}
+                  helperText="Optional - Channel numbers will start from this value (auto-detects conflicts)"
+                  data-testid="import-starting-channel-input"
+                />
+              </Grid>
+            )}
 
             {/* Progress Bar */}
             {parsingProgress.show && (

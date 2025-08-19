@@ -267,7 +267,7 @@ function ChannelManager() {
     });
   };
 
-  // Handle drag end for reordering
+  // Handle drag end for reordering with automatic channel numbering
   const handleDragEnd = async (event) => {
     const { active, over } = event;
     
@@ -280,32 +280,47 @@ function ChannelManager() {
     const newIndex = sortedChannels.findIndex((channel) => channel.id === over.id);
 
     if (oldIndex !== newIndex) {
+      const draggedChannel = sortedChannels.find(ch => ch.id === active.id);
       const reorderedChannels = arrayMove(sortedChannels, oldIndex, newIndex);
       
-      // Optimistically update the UI
-      const newChannels = [...channels];
-      const draggedChannel = newChannels.find(ch => ch.id === active.id);
+      // Calculate new channel numbers based on the new order
+      // Start with the lowest existing channel number to maintain continuity
+      const sortedByNumber = [...sortedChannels].sort((a, b) => a.number - b.number);
+      const startingNumber = sortedByNumber[0]?.number || 1;
       
-      // Reassign channel numbers based on new order
+      // Reassign channel numbers sequentially based on new drag order
       const updatedChannels = reorderedChannels.map((channel, index) => ({
         ...channel,
-        number: index + 1
+        number: startingNumber + index
       }));
       
-      setChannels(updatedChannels);
+      // Update UI optimistically
+      const newChannelsState = channels.map(channel => {
+        const updated = updatedChannels.find(uc => uc.id === channel.id);
+        return updated || channel;
+      });
+      
+      setChannels(newChannelsState);
       setIsDragReordering(true);
       
       try {
-        // Send bulk update to backend
+        // Send bulk update to backend with only the changed numbers
         await handleBulkReorder(updatedChannels);
-        enqueueSnackbar(`Channel "${draggedChannel.name}" moved successfully! 🎉`, { 
-          variant: 'success',
-          autoHideDuration: 3000,
-        });
+        
+        const oldNumber = draggedChannel.number;
+        const newNumber = updatedChannels.find(ch => ch.id === active.id).number;
+        
+        enqueueSnackbar(
+          `Channel "${draggedChannel.name}" moved from #${oldNumber} to #${newNumber}! All channels renumbered automatically. 🎉`, 
+          { 
+            variant: 'success',
+            autoHideDuration: 4000,
+          }
+        );
       } catch (error) {
         // Revert optimistic update on error
         fetchChannels();
-        enqueueSnackbar('Failed to reorder channels', { 
+        enqueueSnackbar('Failed to reorder channels. Changes reverted.', { 
           variant: 'error',
           autoHideDuration: 5000,
         });
