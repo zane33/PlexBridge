@@ -1,4 +1,4 @@
-const sqlite3 = require('sqlite3').verbose();
+const Database = require('better-sqlite3');
 const path = require('path');
 const fs = require('fs');
 const logger = require('../utils/logger');
@@ -87,18 +87,9 @@ class DatabaseService {
         }
       }
 
-      // Create database connection with promise wrapper
-      this.db = await new Promise((resolve, reject) => {
-        const db = new sqlite3.Database(dbFile, (err) => {
-          if (err) {
-            logger.error('Database connection error:', err);
-            reject(new Error(`Database connection failed: ${err.message}`));
-          } else {
-            logger.info(`Connected to SQLite database: ${dbFile}`);
-            resolve(db);
-          }
-        });
-      });
+      // Create database connection with better-sqlite3
+      this.db = new Database(dbFile, { verbose: logger.debug });
+      logger.info(`Connected to SQLite database: ${dbFile}`);
 
       // Configure database
       await this.configureDatabase();
@@ -294,44 +285,38 @@ class DatabaseService {
     logger.info('Database tables, indexes, and triggers created successfully');
   }
 
-  // Promisify database operations
+  // Database operations with better-sqlite3
   run(sql, params = []) {
-    return new Promise((resolve, reject) => {
-      this.db.run(sql, params, function(err) {
-        if (err) {
-          logger.error('Database run error:', { sql, params, error: err.message });
-          reject(err);
-        } else {
-          resolve({ lastID: this.lastID, changes: this.changes });
-        }
-      });
-    });
+    try {
+      const stmt = this.db.prepare(sql);
+      const result = stmt.run(params);
+      return Promise.resolve({ lastID: result.lastInsertRowid, changes: result.changes });
+    } catch (err) {
+      logger.error('Database run error:', { sql, params, error: err.message });
+      return Promise.reject(err);
+    }
   }
 
   get(sql, params = []) {
-    return new Promise((resolve, reject) => {
-      this.db.get(sql, params, (err, row) => {
-        if (err) {
-          logger.error('Database get error:', { sql, params, error: err.message });
-          reject(err);
-        } else {
-          resolve(row);
-        }
-      });
-    });
+    try {
+      const stmt = this.db.prepare(sql);
+      const row = stmt.get(params);
+      return Promise.resolve(row);
+    } catch (err) {
+      logger.error('Database get error:', { sql, params, error: err.message });
+      return Promise.reject(err);
+    }
   }
 
   all(sql, params = []) {
-    return new Promise((resolve, reject) => {
-      this.db.all(sql, params, (err, rows) => {
-        if (err) {
-          logger.error('Database all error:', { sql, params, error: err.message });
-          reject(err);
-        } else {
-          resolve(rows);
-        }
-      });
-    });
+    try {
+      const stmt = this.db.prepare(sql);
+      const rows = stmt.all(params);
+      return Promise.resolve(rows);
+    } catch (err) {
+      logger.error('Database all error:', { sql, params, error: err.message });
+      return Promise.reject(err);
+    }
   }
 
   // Transaction support
@@ -376,9 +361,7 @@ class DatabaseService {
     try {
       // Close any existing connection
       if (this.db) {
-        await new Promise((resolve) => {
-          this.db.close(() => resolve());
-        });
+        this.db.close();
       }
       
       const dbFile = process.env.DB_PATH || config.database.path;
@@ -405,27 +388,24 @@ class DatabaseService {
 
   async close() {
     if (this.db && this.isInitialized) {
-      return new Promise((resolve) => {
+      try {
         // **WSL2 FIX**: Skip WAL checkpoint in WSL2 environment due to file locking issues
         logger.info('Closing database without WAL checkpoint (WSL2 compatibility)');
         
         // Close the database directly without WAL checkpoint
-        this.db.close((err) => {
-          if (err) {
-            logger.error('Database close error:', err);
-          } else {
-            logger.info('Database connection closed successfully');
-          }
-          this.isInitialized = false;
-          this.db = null;
-          resolve();
-        });
-      });
+        this.db.close();
+        logger.info('Database connection closed successfully');
+      } catch (err) {
+        logger.error('Database close error:', err);
+      } finally {
+        this.isInitialized = false;
+        this.db = null;
+      }
     } else {
       this.isInitialized = false;
       this.db = null;
-      return Promise.resolve();
     }
+    return Promise.resolve();
   }
 
   // Initialize default settings

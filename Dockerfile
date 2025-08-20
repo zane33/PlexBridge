@@ -14,8 +14,6 @@ RUN apk update && apk add --no-cache \
     gcc \
     g++ \
     python3 \
-    ffmpeg \
-    redis \
     supervisor
 
 # Create non-root user
@@ -30,9 +28,10 @@ RUN mkdir -p /data/database /data/cache /data/logs /data/logos /var/lib/redis &&
 # Copy package files
 COPY package*.json ./
 
-# Install dependencies with npm configuration
+# Install dependencies with npm configuration and rebuild native modules
 RUN npm config set registry https://registry.npmjs.org/ && \
-    npm ci --only=production --ignore-scripts && \
+    npm ci --only=production && \
+    npm rebuild sqlite3 && \
     npm cache clean --force
 
 # Copy application code
@@ -40,11 +39,8 @@ COPY server/ ./server/
 COPY config/ ./config/
 
 # Copy and build client
-COPY client/ ./client/
-RUN cd client && \
-    npm install --ignore-scripts && \
-    npm run build && \
-    rm -rf node_modules src public
+# Copy pre-built client
+COPY client/build/ ./client/build/
 
 # Copy configuration files
 COPY supervisord.conf /etc/supervisord.conf
