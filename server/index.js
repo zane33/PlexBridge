@@ -301,6 +301,7 @@ const initializeApp = async () => {
       logger.info('✅ EPG service initialized successfully');
     } catch (epgError) {
       logger.warn('Failed to initialize EPG service, continuing without EPG:', epgError.message);
+      logger.error('EPG service error details:', epgError);
     }
 
     // Register API routes after database initialization
@@ -357,6 +358,9 @@ const initializeApp = async () => {
     logger.info(`🔍 Health check: http://localhost:${PORT}/health`);
     logger.info(`📺 Plex discovery: http://localhost:${PORT}/discover.json`);
     logger.info('🚀 Application initialization completed successfully');
+    
+    // Keep the process alive
+    logger.info('Application is now running and ready to serve requests');
 
   } catch (error) {
     logger.error('❌ Failed to initialize application:', error);

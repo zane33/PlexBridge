@@ -10,6 +10,20 @@ class SSDPService {
     this.socketIO = null;
   }
 
+  async initialize() {
+    try {
+      logger.info('Initializing SSDP service...');
+      
+      // SSDP service doesn't need to start immediately
+      // It will be started when the HTTP server is ready
+      logger.info('SSDP service initialized successfully');
+      return true;
+    } catch (error) {
+      logger.error('Failed to initialize SSDP service:', error);
+      throw error;
+    }
+  }
+
   start(io) {
     if (this.isRunning) {
       logger.warn('SSDP service is already running');
@@ -108,6 +122,12 @@ class SSDPService {
     } catch (error) {
       logger.error('Error stopping SSDP service:', error);
     }
+  }
+
+  async shutdown() {
+    logger.info('Shutting down SSDP service...');
+    this.stop();
+    logger.info('SSDP service shutdown completed');
   }
 
   // Generate HDHomeRun-compatible device description

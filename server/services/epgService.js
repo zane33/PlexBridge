@@ -169,7 +169,11 @@ class EPGService {
         return;
       }
 
-      logger.epg('Starting EPG refresh', { sourceId, url: source.url });
+      logger.epg('Starting EPG refresh', { 
+        sourceId, 
+        sourceName: source.name,
+        url: source.url 
+      });
 
       // Update last refresh time
       await database.run(
@@ -177,34 +181,75 @@ class EPGService {
         [sourceId]
       );
 
-      // Download EPG data
-      const epgData = await this.downloadEPG(source);
+      // Download EPG data with error handling
+      let epgData;
+      try {
+        epgData = await this.downloadEPG(source);
+      } catch (downloadError) {
+        logger.error('EPG download failed for source', {
+          sourceId,
+          sourceName: source.name,
+          url: source.url,
+          error: downloadError.message
+        });
+        
+        // Update database with error status
+        await database.run(
+          'UPDATE epg_sources SET last_error = ? WHERE id = ?',
+          [downloadError.message, sourceId]
+        );
+        
+        throw downloadError;
+      }
       
       // Parse EPG XML (now includes storing channel information)
-      const programs = await this.parseEPG(epgData, sourceId);
+      let programs;
+      try {
+        programs = await this.parseEPG(epgData, sourceId);
+      } catch (parseError) {
+        logger.error('EPG parsing failed for source', {
+          sourceId,
+          sourceName: source.name,
+          error: parseError.message,
+          dataPreview: epgData.substring(0, 500)
+        });
+        
+        // Update database with error status
+        await database.run(
+          'UPDATE epg_sources SET last_error = ? WHERE id = ?',
+          ['Parse error: ' + parseError.message, sourceId]
+        );
+        
+        throw parseError;
+      }
       
       if (programs.length === 0) {
         logger.warn('No programs parsed from EPG source', { 
           sourceId, 
+          sourceName: source.name,
           url: source.url,
           dataLength: epgData.length 
         });
+        
+        // This might be okay - some sources might have channels but no current programs
+        // Don't throw an error, just log it
       }
       
       // Store programs in database
       await this.storePrograms(programs);
       
-      // Update success timestamp
+      // Update success timestamp and clear any previous errors
       await database.run(
-        'UPDATE epg_sources SET last_success = CURRENT_TIMESTAMP WHERE id = ?',
+        'UPDATE epg_sources SET last_success = CURRENT_TIMESTAMP, last_error = NULL WHERE id = ?',
         [sourceId]
       );
 
       // Clear EPG cache
       await this.clearEPGCache();
 
-      logger.epg('EPG refresh completed', { 
-        sourceId, 
+      logger.epg('EPG refresh completed successfully', { 
+        sourceId,
+        sourceName: source.name,
         programCount: programs.length,
         url: source.url 
       });
@@ -212,46 +257,127 @@ class EPGService {
     } catch (error) {
       logger.error('EPG refresh failed', { 
         sourceId, 
+        sourceName: source?.name,
         url: source?.url,
-        error: error.message 
+        error: error.message,
+        stack: error.stack
       });
+      
+      // Re-throw to maintain existing behavior
+      throw error;
     }
   }
 
   async downloadEPG(source) {
     try {
+      logger.info('Starting EPG download', { 
+        url: source.url,
+        sourceId: source.id,
+        sourceName: source.name
+      });
+
       const response = await axios.get(source.url, {
-        timeout: config.epg.timeout,
-        maxContentLength: config.epg.maxFileSize,
+        timeout: config.epg.timeout || 60000, // Default 60 seconds
+        maxContentLength: config.epg.maxFileSize || 50 * 1024 * 1024, // Default 50MB
         responseType: 'arraybuffer',
         headers: {
-          'User-Agent': 'PlexTV EPG Fetcher/1.0',
-          'Accept-Encoding': 'gzip, deflate'
+          'User-Agent': 'PlexBridge/1.0 (compatible; EPG Fetcher)',
+          'Accept': 'application/xml, text/xml, */*',
+          'Accept-Encoding': 'gzip, deflate, br'
+        },
+        // Follow redirects
+        maxRedirects: 5,
+        validateStatus: function (status) {
+          return status >= 200 && status < 300; // Accept only 2xx status codes
         }
+      });
+
+      logger.info('EPG download response received', {
+        status: response.status,
+        contentType: response.headers['content-type'],
+        contentEncoding: response.headers['content-encoding'],
+        contentLength: response.headers['content-length'],
+        dataSize: response.data.length
       });
 
       let data = response.data;
 
-      // Handle gzipped content
-      if (response.headers['content-encoding'] === 'gzip') {
+      // Handle various compression formats
+      const encoding = response.headers['content-encoding'];
+      if (encoding) {
+        if (encoding.includes('gzip')) {
+          logger.debug('Decompressing gzipped EPG data');
+          data = await gunzipAsync(data);
+        } else if (encoding.includes('deflate')) {
+          logger.debug('Decompressing deflated EPG data');
+          const inflate = promisify(require('zlib').inflate);
+          data = await inflate(data);
+        } else if (encoding.includes('br')) {
+          logger.debug('Decompressing brotli EPG data');
+          const brotliDecompress = promisify(require('zlib').brotliDecompress);
+          data = await brotliDecompress(data);
+        }
+      }
+
+      // Also check if data starts with gzip magic number even without encoding header
+      if (data[0] === 0x1f && data[1] === 0x8b) {
+        logger.debug('Detected gzip magic number, decompressing');
         data = await gunzipAsync(data);
       }
 
       // Convert to string
       const xmlData = data.toString('utf8');
       
-      // Basic validation
-      if (!xmlData.includes('<tv') && !xmlData.includes('<programme')) {
-        throw new Error('Invalid EPG XML format');
+      logger.debug('EPG data converted to string', {
+        dataLength: xmlData.length,
+        firstChars: xmlData.substring(0, 100)
+      });
+      
+      // More comprehensive validation
+      if (!xmlData || xmlData.trim().length === 0) {
+        throw new Error('Empty EPG data received');
       }
+      
+      // Check for valid XML structure
+      if (!xmlData.includes('<?xml') && !xmlData.includes('<tv')) {
+        logger.warn('EPG data may not be valid XML', {
+          first500Chars: xmlData.substring(0, 500)
+        });
+      }
+      
+      // Basic XMLTV validation
+      if (!xmlData.includes('<tv') && !xmlData.includes('<programme')) {
+        throw new Error('Invalid EPG XML format - missing required XMLTV elements');
+      }
+
+      logger.info('EPG download successful', {
+        sourceId: source.id,
+        dataSize: xmlData.length
+      });
 
       return xmlData;
 
     } catch (error) {
+      logger.error('EPG download failed', {
+        sourceId: source.id,
+        url: source.url,
+        error: error.message,
+        code: error.code,
+        response: error.response ? {
+          status: error.response.status,
+          statusText: error.response.statusText,
+          headers: error.response.headers
+        } : null
+      });
+
       if (error.response) {
         throw new Error(`HTTP ${error.response.status}: ${error.response.statusText}`);
       } else if (error.code === 'ECONNABORTED') {
-        throw new Error('Download timeout');
+        throw new Error('Download timeout - EPG source may be slow or unresponsive');
+      } else if (error.code === 'ENOTFOUND') {
+        throw new Error('EPG source URL could not be resolved - check the URL');
+      } else if (error.code === 'ECONNREFUSED') {
+        throw new Error('Connection refused - EPG source may be down');
       } else {
         throw error;
       }

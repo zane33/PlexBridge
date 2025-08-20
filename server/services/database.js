@@ -164,11 +164,20 @@ class DatabaseService {
           url TEXT NOT NULL,
           refresh_interval TEXT DEFAULT '4h',
           enabled INTEGER DEFAULT 1,
+          last_refresh DATETIME,
           created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
           updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
         )
       `);
       createEpgSourcesTable.run();
+      
+      // Add last_refresh column if it doesn't exist
+      try {
+        this.db.prepare('ALTER TABLE epg_sources ADD COLUMN last_refresh DATETIME').run();
+      } catch (error) {
+        // Column already exists, ignore error
+        logger.info('last_refresh column already exists in epg_sources table');
+      }
 
       // Create epg_channels table
       const createEpgChannelsTable = this.db.prepare(`

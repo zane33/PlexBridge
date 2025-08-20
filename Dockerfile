@@ -14,7 +14,8 @@ RUN apk update && apk add --no-cache \
     gcc \
     g++ \
     python3 \
-    supervisor
+    supervisor \
+    ffmpeg
 
 # Create non-root user
 RUN addgroup -g 1001 -S plextv && \

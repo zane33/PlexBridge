@@ -143,7 +143,15 @@ class StreamPreviewService {
       // Determine if transcoding is needed based on codec analysis
       let needsTranscoding;
       
-      if (codecInfo && codecInfo.needsTranscoding) {
+      // If transcode=true is explicitly requested, always transcode
+      if (transcode === 'true') {
+        needsTranscoding = true;
+        logger.stream('Transcoding required based on explicit request', {
+          streamId,
+          reason: 'explicit_transcode_request',
+          streamFormat
+        });
+      } else if (codecInfo && codecInfo.needsTranscoding) {
         // HLS codec analysis indicates transcoding needed
         needsTranscoding = true;
         logger.stream('Transcoding required based on codec analysis', {
@@ -153,8 +161,8 @@ class StreamPreviewService {
           audioCodecs: codecInfo.audio
         });
       } else {
-        // Use existing logic for non-HLS streams or forced transcoding
-        needsTranscoding = this.shouldTranscode(streamFormat, transcode === 'true') || needsHLSConversion;
+        // Use existing logic for non-HLS streams
+        needsTranscoding = this.shouldTranscode(streamFormat, false) || needsHLSConversion;
       }
       
       if (needsTranscoding) {
@@ -193,26 +201,33 @@ class StreamPreviewService {
     // Formats that typically need transcoding for web playback
     // CRITICAL: .ts files need transcoding for browser compatibility
     const needsTranscodingFormats = ['ts', 'mpegts', 'mts', 'rtsp', 'rtmp', 'udp', 'mms', 'srt'];
+    
+    // If forceTranscode is true, also transcode HLS streams for browser compatibility
+    if (forceTranscode && streamFormat === 'hls') {
+      return true;
+    }
+    
     return needsTranscodingFormats.includes(streamFormat);
   }
 
   // Enhanced HLS codec detection and compatibility checking
   async detectHLSCodecs(streamUrl) {
     try {
-      // Fetch HLS manifest to analyze codecs
-      const response = await fetch(streamUrl, {
+      // Fetch HLS manifest to analyze codecs using axios
+      const axios = require('axios');
+      const response = await axios.get(streamUrl, {
         headers: {
           'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
           'Accept': 'application/vnd.apple.mpegurl, application/x-mpegURL, */*'
         },
-        signal: AbortSignal.timeout(10000) // 10 second timeout
+        timeout: 10000 // 10 second timeout
       });
       
-      if (!response.ok) {
+      if (response.status !== 200) {
         throw new Error(`HTTP ${response.status}: ${response.statusText}`);
       }
       
-      const manifestText = await response.text();
+      const manifestText = response.data;
       
       // Parse codec information from HLS manifest
       const codecMatches = manifestText.match(/CODECS="([^"]+)"/g) || [];
@@ -662,8 +677,8 @@ class StreamPreviewService {
 
       this.concurrencyCounter++;
 
-      // Set response headers for HLS streaming with proper CORS and caching
-      res.setHeader('Content-Type', 'application/vnd.apple.mpegurl');
+      // Set response headers for MP4 streaming with proper CORS and caching
+      res.setHeader('Content-Type', 'video/mp4');
       res.setHeader('Access-Control-Allow-Origin', '*');
       res.setHeader('Access-Control-Allow-Methods', 'GET, HEAD, OPTIONS');
       res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Range, User-Agent');
@@ -674,9 +689,9 @@ class StreamPreviewService {
       res.setHeader('Connection', 'keep-alive');
       res.setHeader('Transfer-Encoding', 'chunked');
       
-      logger.stream('Set HLS streaming headers for H.264 High Profile transcoding', {
+      logger.stream('Set MP4 streaming headers for H.264 High Profile transcoding', {
         sessionId,
-        contentType: 'application/vnd.apple.mpegurl',
+        contentType: 'video/mp4',
         cors: 'enabled',
         caching: 'disabled'
       });
@@ -842,13 +857,9 @@ class StreamPreviewService {
         '-ar', '48000',                       // 48kHz sample rate (standard for broadcast)
         '-ac', '2',                           // Stereo audio
         
-        // HLS-specific options optimized for browser compatibility
-        '-hls_time', '2',                     // 2-second segments (matches GOP)
-        '-hls_list_size', '6',                // Keep 6 segments in playlist (12 seconds buffer)
-        '-hls_delete_threshold', '1',         // Delete old segments
-        '-hls_flags', 'delete_segments+omit_endlist+independent_segments', // Live streaming flags
-        '-hls_segment_type', 'mpegts',        // Use MPEG-TS segments for better compatibility
-        '-f', 'hls',                          // HLS output format
+        // MP4 output format for browser compatibility when transcoding is requested
+        '-f', 'mp4',                          // MP4 output format for browser compatibility
+        '-movflags', 'frag_keyframe+empty_moov+faststart', // MP4 streaming optimizations
         
         // Stream handling and error recovery
         '-avoid_negative_ts', 'make_zero',    // Handle timestamp issues

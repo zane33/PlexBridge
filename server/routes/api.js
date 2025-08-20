@@ -927,6 +927,29 @@ router.get('/epg/sources/:id/channels', async (req, res) => {
   }
 });
 
+// Refresh a specific EPG source
+router.post('/epg/sources/:id/refresh', async (req, res) => {
+  try {
+    const sourceId = req.params.id;
+    
+    logger.info('Manual EPG refresh requested', { sourceId });
+    
+    // Trigger refresh in background
+    epgService.forceRefresh(sourceId).catch(err => {
+      logger.error('Background EPG refresh failed:', err);
+    });
+    
+    res.json({ 
+      message: 'EPG refresh initiated',
+      sourceId,
+      note: 'Refresh is running in background. Check status endpoint for progress.'
+    });
+  } catch (error) {
+    logger.error('EPG refresh initiation error:', error);
+    res.status(500).json({ error: 'Failed to initiate EPG refresh' });
+  }
+});
+
 router.delete('/epg/sources/:id', async (req, res) => {
   try {
     await epgService.removeSource(req.params.id);
