@@ -248,6 +248,17 @@ class EPGService {
       }
       
       // Store programs in database
+      logger.info('About to store programs', {
+        sourceId,
+        programCount: programs.length,
+        samplePrograms: programs.slice(0, 2).map(p => ({
+          id: p.id,
+          channel_id: p.channel_id,
+          title: p.title,
+          start_time: p.start_time
+        }))
+      });
+      
       await this.storePrograms(programs);
       
       // Update success timestamp and clear any previous errors
@@ -407,9 +418,17 @@ class EPGService {
       const channels = this.normalizeArray(result.tv.channel || []);
       const programmes = this.normalizeArray(result.tv.programme || []);
 
-      logger.epg('EPG parsing completed', { 
+      logger.info('EPG parsing completed', { 
+        sourceId,
         channelCount: channels.length,
-        programmeCount: programmes.length 
+        programmeCount: programmes.length,
+        xmlSize: xmlData.length,
+        sampleProgrammes: programmes.slice(0, 3).map(p => ({
+          channel: p.channel,
+          title: this.extractText(p.title),
+          start: p.start,
+          stop: p.stop
+        }))
       });
 
       // Process and store channel information first
@@ -444,16 +463,35 @@ class EPGService {
 
       // Process programmes
       const programs = [];
+      let successfulParsed = 0;
+      let failedParsed = 0;
+      
       for (const programme of programmes) {
         try {
-          const program = await this.parseProgram(programme, channelMap);
+          const program = this.parseProgram(programme, channelMap);
           if (program) {
             programs.push(program);
+            successfulParsed++;
+          } else {
+            failedParsed++;
           }
         } catch (error) {
-          logger.debug('Failed to parse program', { error: error.message });
+          failedParsed++;
+          logger.debug('Failed to parse program', { 
+            programme: programme.channel,
+            title: this.extractText(programme.title),
+            error: error.message 
+          });
         }
       }
+
+      logger.info('EPG programme processing results', {
+        sourceId,
+        totalProgrammes: programmes.length,
+        successfullyParsed: successfulParsed,
+        failedToParse: failedParsed,
+        finalProgramCount: programs.length
+      });
 
       return programs;
 
@@ -463,26 +501,54 @@ class EPGService {
     }
   }
 
-  async parseProgram(programme, channelMap) {
+  parseProgram(programme, channelMap) {
+    // **CRITICAL FIX**: xml2js merges attributes into the main object when mergeAttrs: true
+    // So programme.channel, programme.start, programme.stop should be the attribute values
     if (!programme.channel || !programme.start || !programme.stop) {
+      logger.debug('Programme missing required fields', {
+        hasChannel: !!programme.channel,
+        hasStart: !!programme.start,
+        hasStop: !!programme.stop,
+        channel: programme.channel,
+        rawProgramme: JSON.stringify(programme, null, 2)
+      });
       return null;
     }
 
-    // **CRITICAL FIX**: Use EPG channel ID directly, don't try to map to internal channel
-    // This allows programs to be stored even without channel mapping
-    const program = {
-      id: `${programme.channel}_${programme.start}`,
-      channel_id: programme.channel, // Use EPG channel ID directly
-      title: this.extractText(programme.title) || 'Unknown',
-      description: this.extractText(programme.desc) || null,
-      start_time: this.parseXMLTVTime(programme.start),
-      end_time: this.parseXMLTVTime(programme.stop),
-      category: this.extractText(programme.category) || null,
-      episode_number: programme['episode-num'] ? this.parseEpisodeNumber(programme['episode-num']) : null,
-      season_number: programme['episode-num'] ? this.parseSeasonNumber(programme['episode-num']) : null
-    };
+    try {
+      // **CRITICAL FIX**: Use EPG channel ID directly, don't try to map to internal channel
+      // This allows programs to be stored even without channel mapping
+      const program = {
+        id: `${programme.channel}_${programme.start}`,
+        channel_id: programme.channel, // Use EPG channel ID directly
+        title: this.extractText(programme.title) || 'Unknown',
+        description: this.extractText(programme.desc) || null,
+        start_time: this.parseXMLTVTime(programme.start),
+        end_time: this.parseXMLTVTime(programme.stop),
+        category: this.extractText(programme.category) || null,
+        episode_number: programme['episode-num'] ? this.parseEpisodeNumber(programme['episode-num']) : null,
+        season_number: programme['episode-num'] ? this.parseSeasonNumber(programme['episode-num']) : null
+      };
 
-    return program;
+      logger.debug('Successfully parsed programme', {
+        id: program.id,
+        channel_id: program.channel_id,
+        title: program.title,
+        start_time: program.start_time,
+        end_time: program.end_time
+      });
+
+      return program;
+    } catch (error) {
+      logger.warn('Failed to parse programme', {
+        channel: programme.channel,
+        start: programme.start,
+        stop: programme.stop,
+        title: this.extractText(programme.title),
+        error: error.message
+      });
+      return null;
+    }
   }
 
   async findChannelByEpgId(epgId) {
@@ -669,7 +735,7 @@ class EPGService {
           
           for (const program of batch) {
             try {
-              insertStmt.run(
+              const result = insertStmt.run(
                 program.id,
                 program.channel_id,
                 program.title,
@@ -684,13 +750,26 @@ class EPGService {
               
               // Count programs per channel for reporting
               channelCounts[program.channel_id] = (channelCounts[program.channel_id] || 0) + 1;
+              
+              // Log first few successful inserts for debugging
+              if (insertedCount <= 3) {
+                logger.info('Successfully inserted program', {
+                  programId: program.id,
+                  channelId: program.channel_id,
+                  title: program.title,
+                  changes: result.changes
+                });
+              }
             } catch (error) {
               errorCount++;
-              logger.debug('Failed to insert program', { 
+              logger.error('Failed to insert program', { 
                 programId: program.id,
                 channelId: program.channel_id,
                 title: program.title,
-                error: error.message 
+                start_time: program.start_time,
+                end_time: program.end_time,
+                error: error.message,
+                stack: error.stack
               });
             }
           }

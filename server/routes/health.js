@@ -3,6 +3,7 @@ const router = express.Router();
 const database = require('../services/database');
 const logger = require('../utils/logger');
 const os = require('os');
+const path = require('path');
 
 // Comprehensive health check endpoint
 router.get('/health', async (req, res) => {
@@ -108,9 +109,9 @@ router.get('/health', async (req, res) => {
     // Check SSDP service
     try {
       const ssdpService = require('../services/ssdpService');
-      if (ssdpService && ssdpService.isRunning) {
+      if (ssdpService && typeof ssdpService.isRunning !== 'undefined') {
         health.services.ssdp = {
-          status: ssdpService.isRunning() ? 'healthy' : 'stopped',
+          status: ssdpService.isRunning ? 'healthy' : 'stopped',
           timestamp: new Date().toISOString()
         };
       } else {
@@ -131,11 +132,12 @@ router.get('/health', async (req, res) => {
     try {
       const epgService = require('../services/epgService');
       if (epgService && epgService.getStatus) {
-        const epgStatus = epgService.getStatus();
+        const epgStatus = await epgService.getStatus();
         health.services.epg = {
-          status: epgStatus.isRunning ? 'healthy' : 'stopped',
+          status: epgStatus.isInitialized ? 'healthy' : 'stopped',
           lastRefresh: epgStatus.lastRefresh,
           nextRefresh: epgStatus.nextRefresh,
+          sources: epgStatus.sources ? epgStatus.sources.length : 0,
           timestamp: new Date().toISOString()
         };
       } else {
@@ -236,6 +238,11 @@ router.get('/health/ready', async (req, res) => {
       timestamp: new Date().toISOString() 
     });
   }
+});
+
+// Serve favicon for health page
+router.get('/favicon.svg', (req, res) => {
+  res.sendFile(path.join(__dirname, '../../client/build/favicon.svg'));
 });
 
 module.exports = router;

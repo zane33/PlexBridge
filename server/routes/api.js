@@ -927,6 +927,48 @@ router.get('/epg/sources/:id/channels', async (req, res) => {
   }
 });
 
+// Debug EPG parsing endpoint
+router.post('/epg/debug-parse/:id', async (req, res) => {
+  try {
+    const sourceId = req.params.id;
+    const source = await database.get('SELECT * FROM epg_sources WHERE id = ? AND enabled = 1', [sourceId]);
+    
+    if (!source) {
+      return res.status(404).json({ error: 'EPG source not found' });
+    }
+
+    // Download and parse EPG data manually for debugging
+    const epgService = require('../services/epgService');
+    const epgData = await epgService.downloadEPG(source);
+    const programs = await epgService.parseEPG(epgData, sourceId);
+    
+    res.json({
+      source: {
+        id: source.id,
+        name: source.name,
+        url: source.url
+      },
+      parsing_results: {
+        xmlSize: epgData.length,
+        totalProgramsParsed: programs.length,
+        samplePrograms: programs.slice(0, 5).map(p => ({
+          id: p.id,
+          channel_id: p.channel_id,
+          title: p.title,
+          start_time: p.start_time,
+          end_time: p.end_time
+        }))
+      }
+    });
+  } catch (error) {
+    logger.error('EPG debug parse error:', error);
+    res.status(500).json({ 
+      error: 'EPG debug parse failed',
+      details: error.message
+    });
+  }
+});
+
 // Refresh a specific EPG source
 router.post('/epg/sources/:id/refresh', async (req, res) => {
   try {
@@ -934,16 +976,52 @@ router.post('/epg/sources/:id/refresh', async (req, res) => {
     
     logger.info('Manual EPG refresh requested', { sourceId });
     
-    // Trigger refresh in background
-    epgService.forceRefresh(sourceId).catch(err => {
-      logger.error('Background EPG refresh failed:', err);
-    });
-    
-    res.json({ 
-      message: 'EPG refresh initiated',
-      sourceId,
-      note: 'Refresh is running in background. Check status endpoint for progress.'
-    });
+    // FOR DEBUGGING: Run synchronously to capture results  
+    try {
+      // Get the source details
+      const source = await database.get('SELECT * FROM epg_sources WHERE id = ? AND enabled = 1', [sourceId]);
+      
+      if (!source) {
+        return res.status(404).json({ error: 'EPG source not found' });
+      }
+
+      // Download and parse EPG data manually for debugging
+      const epgData = await epgService.downloadEPG(source);
+      const programs = await epgService.parseEPG(epgData, sourceId);
+      
+      // Store programs manually 
+      await epgService.storePrograms(programs);
+      
+      // Check final results
+      const programCount = await database.get('SELECT COUNT(*) as count FROM epg_programs');
+      const channelCount = await database.get('SELECT COUNT(*) as count FROM epg_channels WHERE source_id = ?', [sourceId]);
+      
+      res.json({ 
+        message: 'EPG refresh completed successfully',
+        sourceId,
+        debug: {
+          xmlSize: epgData.length,
+          programsParsed: programs.length,
+          samplePrograms: programs.slice(0, 3).map(p => ({
+            id: p.id,
+            channel_id: p.channel_id,
+            title: p.title,
+            start_time: p.start_time
+          }))
+        },
+        results: {
+          totalPrograms: programCount?.count || 0,
+          channelsForSource: channelCount?.count || 0
+        }
+      });
+    } catch (refreshError) {
+      logger.error('EPG refresh failed:', refreshError);
+      res.status(500).json({ 
+        error: 'EPG refresh failed',
+        details: refreshError.message,
+        sourceId
+      });
+    }
   } catch (error) {
     logger.error('EPG refresh initiation error:', error);
     res.status(500).json({ error: 'Failed to initiate EPG refresh' });

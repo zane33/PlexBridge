@@ -219,6 +219,15 @@ class DatabaseService {
       `);
       createSettingsTable.run();
 
+      // Add type column to settings table if it doesn't exist
+      try {
+        this.db.prepare('ALTER TABLE settings ADD COLUMN type TEXT DEFAULT "string"').run();
+        logger.info('Added type column to settings table');
+      } catch (error) {
+        // Column already exists, ignore error
+        logger.info('type column already exists in settings table');
+      }
+
       // Create epg_sources table
       const createEpgSourcesTable = this.db.prepare(`
         CREATE TABLE IF NOT EXISTS epg_sources (
@@ -258,6 +267,57 @@ class DatabaseService {
         logger.info('last_success column already exists in epg_sources table');
       }
 
+      // **CRITICAL FIX**: Drop and recreate epg_programs table without foreign key constraint
+      // The foreign key constraint was preventing programs from being stored because
+      // channel_id contains EPG channel IDs, not internal channel table IDs
+      try {
+        // Check if table exists and has foreign key constraint
+        const tableInfo = this.db.prepare("PRAGMA table_info(epg_programs)").all();
+        const foreignKeys = this.db.prepare("PRAGMA foreign_key_list(epg_programs)").all();
+        
+        if (foreignKeys.length > 0) {
+          logger.info('Migrating epg_programs table to remove foreign key constraint');
+          
+          // Create backup
+          this.db.prepare(`
+            CREATE TABLE IF NOT EXISTS epg_programs_backup AS 
+            SELECT * FROM epg_programs
+          `).run();
+          
+          // Drop existing table
+          this.db.prepare('DROP TABLE epg_programs').run();
+          
+          // Recreate without foreign key
+          this.db.prepare(`
+            CREATE TABLE epg_programs (
+              id TEXT PRIMARY KEY,
+              channel_id TEXT,
+              title TEXT NOT NULL,
+              description TEXT,
+              start_time DATETIME NOT NULL,
+              end_time DATETIME NOT NULL,
+              category TEXT,
+              episode_number TEXT,
+              season_number TEXT,
+              created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+            )
+          `).run();
+          
+          // Restore data
+          this.db.prepare(`
+            INSERT INTO epg_programs 
+            SELECT * FROM epg_programs_backup
+          `).run();
+          
+          // Drop backup
+          this.db.prepare('DROP TABLE epg_programs_backup').run();
+          
+          logger.info('✅ EPG programs table migration completed successfully');
+        }
+      } catch (migrationError) {
+        logger.warn('EPG programs table migration failed (table may not exist yet):', migrationError.message);
+      }
+
       // Create epg_channels table
       const createEpgChannelsTable = this.db.prepare(`
         CREATE TABLE IF NOT EXISTS epg_channels (
@@ -284,8 +344,7 @@ class DatabaseService {
           category TEXT,
           episode_number TEXT,
           season_number TEXT,
-          created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-          FOREIGN KEY (channel_id) REFERENCES channels (id)
+          created_at DATETIME DEFAULT CURRENT_TIMESTAMP
         )
       `);
       createEpgProgramsTable.run();
