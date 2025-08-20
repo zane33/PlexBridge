@@ -174,9 +174,10 @@ const logger = winston.createLogger({
 // Add custom logging methods
 logger.stream = function(message, meta = {}) {
   this.info(message, { ...meta, category: 'stream' });
-  if (dbLogger) {
-    dbLogger.log('info', message, { ...meta, category: 'stream' });
-  }
+  // Disable database logging to prevent errors
+  // if (dbLogger) {
+  //   dbLogger.log('info', message, { ...meta, category: 'stream' });
+  // }
 };
 
 // Enhanced stream session logging
@@ -190,9 +191,10 @@ logger.streamSession = function(action, sessionData) {
   };
   
   this.info(message, meta);
-  if (dbLogger) {
-    dbLogger.log('info', message, meta);
-  }
+  // Disable database logging to prevent errors
+  // if (dbLogger) {
+  //   dbLogger.log('info', message, meta);
+  // }
   
   // Also emit socket event for real-time log monitoring
   if (global.io) {
@@ -207,23 +209,26 @@ logger.streamSession = function(action, sessionData) {
 
 logger.security = function(message, meta = {}) {
   this.warn(message, { ...meta, category: 'security' });
-  if (dbLogger) {
-    dbLogger.log('warn', message, { ...meta, category: 'security' });
-  }
+  // Disable database logging to prevent errors
+  // if (dbLogger) {
+  //   dbLogger.log('warn', message, { ...meta, category: 'security' });
+  // }
 };
 
 logger.performance = function(message, meta = {}) {
   this.info(message, { ...meta, category: 'performance' });
-  if (dbLogger) {
-    dbLogger.log('info', message, { ...meta, category: 'performance' });
-  }
+  // Disable database logging to prevent errors
+  // if (dbLogger) {
+  //   dbLogger.log('info', message, { ...meta, category: 'performance' });
+  // }
 };
 
 logger.epg = function(message, meta = {}) {
   this.info(message, { ...meta, category: 'epg' });
-  if (dbLogger) {
-    dbLogger.log('info', message, { ...meta, category: 'epg' });
-  }
+  // Disable database logging to prevent errors
+  // if (dbLogger) {
+  //   dbLogger.log('info', message, { ...meta, category: 'epg' });
+  // }
 };
 
 // Override default logging methods to also log to database
@@ -234,42 +239,46 @@ const originalDebug = logger.debug.bind(logger);
 
 logger.info = function(message, meta = {}) {
   originalInfo(message, meta);
-  if (dbLogger) {
-    // Don't await database logging to prevent blocking
-    dbLogger.log('info', message, meta).catch(() => {
-      // Silently ignore database logging errors to prevent loops
-    });
-  }
+  // Disable database logging to prevent errors
+  // if (dbLogger) {
+  //   // Don't await database logging to prevent blocking
+  //   dbLogger.log('info', message, meta).catch(() => {
+  //     // Silently ignore database logging errors to prevent loops
+  //   });
+  // }
 };
 
 logger.warn = function(message, meta = {}) {
   originalWarn(message, meta);
-  if (dbLogger) {
-    // Don't await database logging to prevent blocking
-    dbLogger.log('warn', message, meta).catch(() => {
-      // Silently ignore database logging errors to prevent loops
-    });
-  }
+  // Disable database logging to prevent errors
+  // if (dbLogger) {
+  //   // Don't await database logging to prevent blocking
+  //   dbLogger.log('warn', message, meta).catch(() => {
+  //     // Silently ignore database logging errors to prevent loops
+  //   });
+  // }
 };
 
 logger.error = function(message, meta = {}) {
   originalError(message, meta);
-  if (dbLogger) {
-    // Don't await database logging to prevent blocking
-    dbLogger.log('error', message, meta).catch(() => {
-      // Silently ignore database logging errors to prevent loops
-    });
-  }
+  // Disable database logging to prevent errors
+  // if (dbLogger) {
+  //   // Don't await database logging to prevent blocking
+  //   dbLogger.log('error', message, meta).catch(() => {
+  //     // Silently ignore database logging errors to prevent loops
+  //   });
+  // }
 };
 
 logger.debug = function(message, meta = {}) {
   originalDebug(message, meta);
-  if (dbLogger) {
-    // Don't await database logging to prevent blocking
-    dbLogger.log('debug', message, meta).catch(() => {
-      // Silently ignore database logging errors to prevent loops
-    });
-  }
+  // Disable database logging to prevent errors
+  // if (dbLogger) {
+  //   // Don't await database logging to prevent blocking
+  //   dbLogger.log('debug', message, meta).catch(() => {
+  //     // Silently ignore database logging errors to prevent loops
+  //   });
+  // }
 };
 
 // Initialize database logger

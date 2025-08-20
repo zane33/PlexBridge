@@ -129,17 +129,23 @@ const gracefulShutdown = async (signal) => {
       logger.info('HTTP server closed');
     });
 
-    // Shutdown EPG service
+    // Shutdown EPG service if available
     try {
-      await epgService.shutdown();
-      logger.info('EPG service shutdown completed');
+      if (typeof epgService !== 'undefined' && epgService.shutdown) {
+        await epgService.shutdown();
+        logger.info('EPG service shutdown completed');
+      }
     } catch (epgShutdownError) {
       logger.warn('EPG service shutdown error:', epgShutdownError);
     }
 
     // Close database connections
-    await database.close();
-    logger.info('Database connections closed');
+    try {
+      await database.close();
+      logger.info('Database connections closed');
+    } catch (dbCloseError) {
+      logger.warn('Database close error:', dbCloseError);
+    }
 
     // Cache and SSDP services not initialized
     logger.info('Cache and SSDP services were not initialized');
@@ -188,8 +194,8 @@ const initializeApp = async () => {
         await database.initialize();
         logger.info('Database initialized successfully');
         
-        // Initialize database logger
-        logger.initDatabaseLogger(database);
+        // Skip database logger initialization to prevent recursive loops
+        logger.info('Database logger initialization skipped');
         
         dbInitialized = true;
       } catch (dbError) {

@@ -44,7 +44,7 @@ class SettingsService {
   async loadSettingsFromDatabase() {
     try {
       // Check if database is available
-      if (!database || !database.isInitialized || !database.db) {
+      if (!database || !database.isInitialized) {
         logger.info('Database not available, using config defaults');
         const defaultSettings = { plexlive: config.plexlive || this.getDefaultSettings() };
         this.updateCache(defaultSettings);
@@ -164,7 +164,7 @@ class SettingsService {
    */
   async updateSettings(settings) {
     try {
-      if (!database || !database.isInitialized || !database.db) {
+      if (!database || !database.isInitialized) {
         throw new Error('Database not available');
       }
 
@@ -258,7 +258,7 @@ class SettingsService {
    */
   async resetSettings(category = null) {
     try {
-      if (!database || !database.isInitialized || !database.db) {
+      if (!database || !database.isInitialized) {
         throw new Error('Database not available');
       }
 

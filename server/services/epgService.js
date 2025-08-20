@@ -666,11 +666,15 @@ class EPGService {
         VALUES (?, ?, ?, ?, 1)
       `, [id, name, url, refresh_interval]);
 
-      // Schedule refresh for new source
-      const source = await database.get('SELECT * FROM epg_sources WHERE id = ?', [id]);
-      await this.scheduleRefresh(source);
+      // Only schedule refresh if service is initialized
+      if (this.isInitialized) {
+        const source = await database.get('SELECT * FROM epg_sources WHERE id = ?', [id]);
+        await this.scheduleRefresh(source);
+        logger.epg('EPG source added and scheduled', { id, url });
+      } else {
+        logger.epg('EPG source added (refresh scheduling deferred until service initialization)', { id, url });
+      }
 
-      logger.epg('EPG source added', { id, url });
       return true;
 
     } catch (error) {

@@ -142,7 +142,7 @@ const validate = (schema) => {
 router.get('/channels', async (req, res) => {
   try {
     // Check if database is initialized
-    if (!database || !database.isInitialized || !database.db) {
+    if (!database || !database.isInitialized) {
       logger.info('Database not initialized, returning empty channels array');
       return res.json([]); // Return empty array if database not initialized
     }
@@ -342,7 +342,7 @@ router.put('/channels/bulk-update', async (req, res) => {
 router.get('/streams', async (req, res) => {
   try {
     // Check if database is initialized
-    if (!database || !database.isInitialized || !database.db) {
+    if (!database || !database.isInitialized) {
       logger.info('Database not initialized, returning empty streams array');
       return res.json([]); // Return empty array if database not initialized
     }
@@ -725,7 +725,7 @@ router.get('/epg/sources', async (req, res) => {
     res.setHeader('Content-Type', 'application/json');
     
     // Check if database is initialized
-    if (!database || !database.isInitialized || !database.db) {
+    if (!database || !database.isInitialized) {
       logger.info('Database not initialized, returning empty EPG sources array');
       return res.status(200).json([]); // Return empty array if database not initialized
     }
@@ -795,7 +795,7 @@ router.get('/epg/channels', async (req, res) => {
     res.setHeader('Content-Type', 'application/json');
     
     // Check if database is initialized
-    if (!database || !database.isInitialized || !database.db) {
+    if (!database || !database.isInitialized) {
       logger.info('Database not initialized, returning empty EPG channels');
       return res.status(200).json({ available_channels: [] }); // Return empty array if database not initialized
     }
@@ -946,7 +946,7 @@ router.get('/epg/programs', async (req, res) => {
     res.setHeader('Content-Type', 'application/json');
     
     // Check if database is initialized
-    if (!database || !database.isInitialized || !database.db) {
+    if (!database || !database.isInitialized) {
       logger.info('Database not initialized, returning empty EPG programs');
       return res.status(200).json([]); // Return empty array if database not initialized
     }

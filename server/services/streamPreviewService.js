@@ -1172,8 +1172,6 @@ class StreamPreviewService {
 // Create singleton instance
 const streamPreviewService = new StreamPreviewService();
 
-// Handle graceful shutdown
-process.on('SIGTERM', () => streamPreviewService.shutdown());
-process.on('SIGINT', () => streamPreviewService.shutdown());
+// Process event handlers removed to prevent premature shutdown
 
 module.exports = streamPreviewService;

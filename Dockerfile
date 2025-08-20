@@ -31,6 +31,7 @@ COPY package*.json ./
 # Install dependencies with npm configuration and rebuild native modules
 RUN npm config set registry https://registry.npmjs.org/ && \
     npm ci --only=production && \
+    npm rebuild better-sqlite3 && \
     npm cache clean --force
 
 # Copy application code
