@@ -418,11 +418,16 @@ class StreamPreviewService {
         return res.redirect(stream.url);
       }
 
-      // For other formats, use simple proxy if possible, otherwise fallback to redirect
-      if (stream.type === 'http') {
+      // For other formats, use simple proxy for HTTP-based streams (including HLS)
+      if (stream.type === 'http' || stream.type === 'hls') {
+        logger.stream('Using HTTP proxy for stream', { 
+          streamId: stream.id,
+          streamType: stream.type,
+          url: stream.url
+        });
         return this.simpleHttpProxy(stream.url, req, res);
       } else {
-        // For non-HTTP streams, fallback to redirect for now
+        // For non-HTTP streams (RTSP, etc.), fallback to redirect for now
         logger.stream('Redirecting to stream URL for non-HTTP stream', { 
           streamId: stream.id,
           streamType: stream.type
@@ -1070,13 +1075,21 @@ class StreamPreviewService {
       
       // Set streaming headers for compatibility
       res.set({
-        'Content-Type': 'video/mp4',
         'Access-Control-Allow-Origin': '*',
         'Access-Control-Allow-Headers': 'Range, Content-Type, Authorization',
         'Access-Control-Expose-Headers': 'Content-Range, Content-Length, Accept-Ranges',
         'Cache-Control': 'no-cache, no-store, must-revalidate',
         'Accept-Ranges': 'bytes'
       });
+      
+      // Set appropriate content type based on URL
+      if (streamUrl.includes('.m3u8')) {
+        res.set('Content-Type', 'application/vnd.apple.mpegurl');
+      } else if (streamUrl.includes('.ts')) {
+        res.set('Content-Type', 'video/MP2T');
+      } else {
+        res.set('Content-Type', 'video/mp4');
+      }
 
       // Forward range requests for video seeking
       const headers = {

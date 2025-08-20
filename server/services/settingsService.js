@@ -88,8 +88,18 @@ class SettingsService {
       // Create the final nested settings structure starting with defaults
       const finalNestedSettings = JSON.parse(JSON.stringify(configDefaults));
       
-      // Apply database settings to override defaults
+      // Apply database settings to override defaults - prioritize plexlive. prefixed keys
       if (Array.isArray(dbSettings)) {
+        // First pass: collect all plexlive.* keys
+        const plexliveKeys = new Set();
+        dbSettings.forEach(setting => {
+          if (setting.key.startsWith('plexlive.')) {
+            const nestedKey = setting.key.replace('plexlive.', '');
+            plexliveKeys.add(nestedKey);
+          }
+        });
+        
+        // Second pass: apply settings, prioritizing plexlive.* prefixed versions
         dbSettings.forEach(setting => {
           let value = setting.value;
           
@@ -110,6 +120,9 @@ class SettingsService {
           if (setting.key.startsWith('plexlive.')) {
             const nestedKey = setting.key.replace('plexlive.', '');
             this.setNestedValue(finalNestedSettings, nestedKey, value);
+          } else if (!plexliveKeys.has(setting.key)) {
+            // Only apply non-prefixed keys if there's no plexlive.* version
+            this.setNestedValue(finalNestedSettings, setting.key, value);
           }
         });
       }
@@ -120,13 +133,19 @@ class SettingsService {
       // Update cache with properly structured settings
       this.updateCache(finalSettings);
       
+      // Debug which setting keys were prioritized
+      const plexliveStreamingSettings = dbSettings.filter(s => s.key.startsWith('plexlive.streaming.'));
+      const nonPrefixedStreamingSettings = dbSettings.filter(s => s.key.startsWith('streaming.') && !s.key.startsWith('plexlive.'));
+      
       logger.info('Settings loaded successfully from database', { 
         dbSettingsCount: dbSettings.length,
         maxConcurrentStreams: finalSettings.plexlive?.streaming?.maxConcurrentStreams,
         locale: finalSettings.plexlive?.localization?.locale,
         timezone: finalSettings.plexlive?.localization?.timezone,
         configDefault: configDefaults.streaming?.maxConcurrentStreams,
-        dbMaxConcurrentValue: dbSettings.find(s => s.key === 'plexlive.streaming.maxConcurrentStreams')?.value
+        plexliveStreamingCount: plexliveStreamingSettings.length,
+        nonPrefixedStreamingCount: nonPrefixedStreamingSettings.length,
+        actualMaxConcurrentFromDB: dbSettings.find(s => s.key === 'plexlive.streaming.maxConcurrentStreams')?.value
       });
 
       return finalSettings;

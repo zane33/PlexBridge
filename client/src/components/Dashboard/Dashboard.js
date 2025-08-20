@@ -150,6 +150,13 @@ function Dashboard() {
       fetchMetrics(); // Refresh metrics when settings change
     });
 
+    const unsubscribeSettingsUpdate = socketService.on('settings:updated', (data) => {
+      if (data.settings) {
+        setCurrentSettings(data.settings);
+        console.log('Dashboard received settings update:', data.settings.plexlive?.streaming?.maxConcurrentStreams);
+      }
+    });
+
     return () => {
       clearInterval(interval);
       unsubscribeMetrics();
@@ -157,6 +164,7 @@ function Dashboard() {
       unsubscribeStreamStop();
       unsubscribeBandwidthUpdate();
       unsubscribeSettingsChange();
+      unsubscribeSettingsUpdate();
     };
   }, []);
 

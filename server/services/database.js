@@ -487,9 +487,9 @@ class DatabaseService {
         }
 
         await this.run(`
-          INSERT OR IGNORE INTO settings (key, value, type, description)
-          VALUES (?, ?, ?, ?)
-        `, [fullKey, stringValue, type, this.getSettingDescription(fullKey)]);
+          INSERT OR IGNORE INTO settings (key, value, type)
+          VALUES (?, ?, ?)
+        `, [fullKey, stringValue, type]);
       }
     }
   }
@@ -532,9 +532,9 @@ class DatabaseService {
             }
 
             await this.run(`
-              INSERT OR IGNORE INTO settings (key, value, type, description)
-              VALUES (?, ?, ?, ?)
-            `, [key, stringValue, type, this.getSettingDescription(key)]);
+              INSERT OR IGNORE INTO settings (key, value, type)
+              VALUES (?, ?, ?)
+            `, [key, stringValue, type]);
           }
         }
         

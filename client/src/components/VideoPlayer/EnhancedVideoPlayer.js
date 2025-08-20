@@ -79,6 +79,7 @@ const EnhancedVideoPlayer = ({
   const playerContainerRef = useRef(null);
   const isCleaningUp = useRef(false);
   const initializationTimeoutRef = useRef(null);
+  const currentStreamUrlRef = useRef(null);
   
   const { enqueueSnackbar } = useSnackbar();
   const theme = useTheme();
@@ -96,34 +97,32 @@ const EnhancedVideoPlayer = ({
       return '';
     }
     
+    let finalUrl = '';
+    
     if (streamId) {
-      // ALWAYS use the backend stream preview endpoint with transcoding enabled
-      // This ensures browser compatibility regardless of proxy setting
-      let proxyUrl = `${window.location.origin}/streams/preview/${streamId}`;
-      
-      // CRITICAL FIX: Always enable transcoding for browser video previews
-      // This fixes the audio-only issue by providing transcoded MP4 instead of HLS
-      proxyUrl += '?transcode=true';
-      console.log(`Using ALWAYS-TRANSCODED proxy URL for stream ${streamId}: ${proxyUrl}`);
-      
-      return proxyUrl;
-    } else if (proxyEnabled && channelId) {
-      // Use the channel stream endpoint for channel-based playback
-      let channelUrl = `${window.location.origin}/stream/${channelId}`;
-      // Also apply transcoding to channel URLs when proxy is enabled
-      channelUrl += '?transcode=true';
-      console.log(`Using transcoded channel URL for channel ${channelId}: ${channelUrl}`);
-      return channelUrl;
+      if (proxyEnabled) {
+        // Use the backend stream preview endpoint with transcoding for proxy mode
+        finalUrl = `${window.location.origin}/streams/preview/${streamId}?transcode=true`;
+      } else {
+        // Use the original stream URL directly (upstream URI)
+        finalUrl = streamUrl;
+      }
     } else if (channelId) {
-      // For channel URLs without proxy, still try to use transcoding
-      let channelUrl = `${window.location.origin}/stream/${channelId}?transcode=true`;
-      console.log(`Using direct transcoded channel URL for channel ${channelId}: ${channelUrl}`);
-      return channelUrl;
+      if (proxyEnabled) {
+        // Use the channel stream endpoint for channel-based playback with proxy
+        finalUrl = `${window.location.origin}/stream/${channelId}?transcode=true`;
+      } else {
+        // Use the original stream URL directly (upstream URI)
+        finalUrl = streamUrl;
+      }
+    } else {
+      // Fall back to direct stream URL
+      finalUrl = streamUrl;
     }
     
-    // Only fall back to direct stream URL if no streamId or channelId available
-    console.log(`Using direct stream URL (no transcoding available): ${streamUrl}`);
-    return streamUrl;
+    // Cache the URL to prevent unnecessary recalculations
+    currentStreamUrlRef.current = finalUrl;
+    return finalUrl;
   }, [streamUrl, proxyEnabled, channelId, streamId]);
 
   // Detect stream format and capabilities with enhanced proxy URL detection
@@ -512,7 +511,7 @@ const EnhancedVideoPlayer = ({
     } finally {
       setLoading(false);
     }
-  }, [open, streamUrl, getStreamUrl, detectStreamCapabilities, cleanupPlayer, useVideoJS, onError]);
+  }, [open, streamUrl, getStreamUrl, detectStreamCapabilities, cleanupPlayer, useVideoJS, onError, proxyEnabled]);
 
   // Initialize Video.js player for complex streams
   const initializeVideoJSPlayer = useCallback(async (url, capabilities) => {
@@ -1103,10 +1102,12 @@ const EnhancedVideoPlayer = ({
 
   // Effects
   useEffect(() => {
-    console.log('EnhancedVideoPlayer useEffect triggered:', { open, streamUrl, hasStreamUrl: !!streamUrl });
-    
     if (open && streamUrl) {
-      console.log('Calling initializePlayer from useEffect');
+      // Check if the URL has actually changed to prevent unnecessary re-initialization
+      const newUrl = getStreamUrl();
+      if (currentStreamUrlRef.current === newUrl && videoReady) {
+        return; // URL hasn't changed and player is already ready
+      }
       
       // CRITICAL FIX: Wait for cleanup to complete before initializing
       // This fixes the race condition where isCleaningUp.current is true
@@ -1116,29 +1117,22 @@ const EnhancedVideoPlayer = ({
         const maxAttempts = 50; // 50 * 50ms = 2.5 seconds max wait
         
         while (isCleaningUp.current && attempts < maxAttempts) {
-          console.log(`Waiting for cleanup to complete... attempt ${attempts + 1}`);
           await new Promise(resolve => setTimeout(resolve, 50));
           attempts++;
         }
         
         // If cleanup is still running after max attempts, force reset
         if (isCleaningUp.current) {
-          console.warn('Cleanup taking too long, forcing reset of isCleaningUp flag');
           isCleaningUp.current = false;
         }
         
         // Only proceed if dialog is still open and we have a stream URL
         if (open && streamUrl) {
-          console.log('Cleanup complete, now initializing player');
           initializePlayer();
-        } else {
-          console.log('Dialog closed or stream URL changed during cleanup wait, skipping initialization');
         }
       };
       
       waitForCleanupAndInitialize();
-    } else {
-      console.log('Not calling initializePlayer:', { open, streamUrl });
     }
     
     return () => {
@@ -1148,7 +1142,7 @@ const EnhancedVideoPlayer = ({
       }
       cleanupPlayer();
     };
-  }, [open, streamUrl]); // Remove the dependency on initializePlayer to prevent loops
+  }, [open, streamUrl, streamId, channelId, getStreamUrl, videoReady]); // Add getStreamUrl and videoReady to dependencies
 
   // Keyboard event listener
   useEffect(() => {
@@ -1185,7 +1179,7 @@ const EnhancedVideoPlayer = ({
       
       return () => clearTimeout(timeoutId);
     }
-  }, [proxyEnabled, useVideoJS]);
+  }, [proxyEnabled, useVideoJS, open, streamUrl]); // Add open and streamUrl to prevent stale closures
 
   const handleClose = () => {
     cleanupPlayer();
@@ -1561,50 +1555,57 @@ const EnhancedVideoPlayer = ({
             </Fade>
           )}
 
-          {/* Stream Info Overlay */}
-          <Box
-            sx={{
-              position: 'absolute',
-              top: 16,
-              left: 16,
-              right: 16,
-              bgcolor: 'rgba(0,0,0,0.7)',
-              color: 'white',
-              p: 2,
-              borderRadius: 1,
-              backdropFilter: 'blur(5px)'
-            }}
-          >
-            <Typography variant="body2" sx={{ wordBreak: 'break-all', mb: 1 }}>
-              <strong>Stream URL:</strong> {getStreamUrl()}
-            </Typography>
-            <Box display="flex" alignItems="center" gap={1} flexWrap="wrap">
-              {streamInfo && (
-                <Chip 
-                  label={`${streamInfo.type.toUpperCase()}`}
-                  size="small" 
-                  color="primary" 
-                />
-              )}
-              {proxyEnabled && (
-                <Chip 
-                  label="Proxied" 
-                  size="small" 
-                  color="success" 
-                  variant="outlined"
-                />
-              )}
-              <Button
-                size="small"
-                variant="outlined"
-                onClick={copyStreamUrl}
-                sx={{ color: 'white', borderColor: 'white' }}
-                startIcon={<CopyIcon />}
-              >
-                Copy URL
-              </Button>
-            </Box>
-          </Box>
+                     {/* Stream Info Overlay */}
+           <Box
+             sx={{
+               position: 'absolute',
+               top: 16,
+               left: 16,
+               right: 16,
+               bgcolor: 'rgba(0,0,0,0.7)',
+               color: 'white',
+               p: 2,
+               borderRadius: 1,
+               backdropFilter: 'blur(5px)'
+             }}
+           >
+             <Typography variant="body2" sx={{ wordBreak: 'break-all', mb: 1 }}>
+               <strong>Stream URL:</strong> {getStreamUrl()}
+             </Typography>
+             <Box display="flex" alignItems="center" gap={1} flexWrap="wrap">
+               {streamInfo && (
+                 <Chip 
+                   label={`${streamInfo.type.toUpperCase()}`}
+                   size="small" 
+                   color="primary" 
+                 />
+               )}
+               {proxyEnabled ? (
+                 <Chip 
+                   label="PlexBridge Proxy" 
+                   size="small" 
+                   color="success" 
+                   variant="outlined"
+                 />
+               ) : (
+                 <Chip 
+                   label="Direct Upstream" 
+                   size="small" 
+                   color="warning" 
+                   variant="outlined"
+                 />
+               )}
+               <Button
+                 size="small"
+                 variant="outlined"
+                 onClick={copyStreamUrl}
+                 sx={{ color: 'white', borderColor: 'white' }}
+                 startIcon={<CopyIcon />}
+               >
+                 Copy URL
+               </Button>
+             </Box>
+           </Box>
         </Box>
       </DialogContent>
 
@@ -1626,26 +1627,26 @@ const EnhancedVideoPlayer = ({
           gap={isMobile ? 2 : 4} 
           flexWrap="wrap"
         >
-          <FormControlLabel
-            control={
-              <Switch
-                checked={proxyEnabled}
-                onChange={(e) => setProxyEnabled(e.target.checked)}
-                color="primary"
-                inputProps={{ 'aria-describedby': 'proxy-help' }}
-              />
-            }
-            label={
-              <Box>
-                <Typography color="white" variant={isMobile ? 'body2' : 'body1'}>
-                  Use PlexBridge Proxy
-                </Typography>
-                <Typography color="text.secondary" variant="caption" id="proxy-help">
-                  Recommended for CORS issues
-                </Typography>
-              </Box>
-            }
-          />
+                     <FormControlLabel
+             control={
+               <Switch
+                 checked={proxyEnabled}
+                 onChange={(e) => setProxyEnabled(e.target.checked)}
+                 color="primary"
+                 inputProps={{ 'aria-describedby': 'proxy-help' }}
+               />
+             }
+             label={
+               <Box>
+                 <Typography color="white" variant={isMobile ? 'body2' : 'body1'}>
+                   Use PlexBridge Proxy
+                 </Typography>
+                 <Typography color="text.secondary" variant="caption" id="proxy-help">
+                   {proxyEnabled ? 'Testing Plex-compatible proxy URL' : 'Testing direct upstream URL'}
+                 </Typography>
+               </Box>
+             }
+           />
           
           <FormControlLabel
             sx={{ ml: isMobile ? 0 : 2 }}
@@ -1694,22 +1695,22 @@ const EnhancedVideoPlayer = ({
         <Divider sx={{ bgcolor: '#333' }} />
 
         {/* Enhanced Help and Tips */}
-        <Alert 
-          severity="info" 
-          sx={{ 
-            bgcolor: 'rgba(33, 150, 243, 0.1)', 
-            color: 'white',
-            '& .MuiAlert-icon': { color: 'info.main' }
-          }}
-          icon={<WarningIcon />}
-        >
-          <Typography variant="body2" gutterBottom>
-            <strong>Keyboard Controls:</strong> Space/K (play/pause), M (mute), F (fullscreen), R (refresh), Esc (exit fullscreen)
-          </Typography>
-          <Typography variant="caption" color="text.secondary">
-            Browser Limitations: Some streams may not play due to CORS restrictions. Use proxy mode or external players for best compatibility.
-          </Typography>
-        </Alert>
+                 <Alert 
+           severity="info" 
+           sx={{ 
+             bgcolor: 'rgba(33, 150, 243, 0.1)', 
+             color: 'white',
+             '& .MuiAlert-icon': { color: 'info.main' }
+           }}
+           icon={<WarningIcon />}
+         >
+           <Typography variant="body2" gutterBottom>
+             <strong>Keyboard Controls:</strong> Space/K (play/pause), M (mute), F (fullscreen), R (refresh), Esc (exit fullscreen)
+           </Typography>
+           <Typography variant="caption" color="text.secondary">
+             <strong>Proxy Mode:</strong> Tests the PlexBridge proxy URL that Plex would use. <strong>Direct Mode:</strong> Tests the original upstream URL directly. Some streams may not play due to CORS restrictions in direct mode.
+           </Typography>
+         </Alert>
 
         {/* External Player Options - Enhanced for Mobile */}
         <Box 

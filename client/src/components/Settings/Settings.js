@@ -62,8 +62,9 @@ function Settings() {
     const unsubscribeSettings = socketService.on('settings:updated', (data) => {
       console.log('Received settings update via Socket.IO:', data);
       if (data.settings) {
+        // Don't merge with defaults here - use the exact settings from server
         setSettings(data.settings);
-        showSnackbar('Settings updated from another source', 'info');
+        showSnackbar('Settings updated successfully', 'success');
       }
     });
 
@@ -139,12 +140,17 @@ function Settings() {
       
       const response = await settingsApi.updateSettings(settings);
       
-      // Update local settings with the response from server
+      // Update local settings with the response from server (this should be the exact same structure we sent)
       if (response.data && response.data.settings) {
         setSettings(response.data.settings);
         console.log('Settings updated and reloaded from server', { 
-          maxConcurrentStreams: response.data.settings.plexlive?.streaming?.maxConcurrentStreams
+          maxConcurrentStreams: response.data.settings.plexlive?.streaming?.maxConcurrentStreams,
+          actualResponseSettings: response.data.settings
         });
+      } else {
+        // If no settings in response, force reload to get fresh data
+        console.warn('No settings returned in update response, reloading...');
+        await loadSettings();
       }
       
       showSnackbar('Settings saved successfully', 'success');
