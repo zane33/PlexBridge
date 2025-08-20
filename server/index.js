@@ -131,12 +131,35 @@ const gracefulShutdown = async (signal) => {
 
     // Shutdown EPG service if available
     try {
-      if (typeof epgService !== 'undefined' && epgService.shutdown) {
+      const epgService = require('./services/epgService');
+      if (epgService && epgService.shutdown) {
         await epgService.shutdown();
         logger.info('EPG service shutdown completed');
       }
     } catch (epgShutdownError) {
       logger.warn('EPG service shutdown error:', epgShutdownError);
+    }
+
+    // Shutdown cache service if available
+    try {
+      const cacheService = require('./services/cacheService');
+      if (cacheService && cacheService.shutdown) {
+        await cacheService.shutdown();
+        logger.info('Cache service shutdown completed');
+      }
+    } catch (cacheShutdownError) {
+      logger.warn('Cache service shutdown error:', cacheShutdownError);
+    }
+
+    // Shutdown SSDP service if available
+    try {
+      const ssdpService = require('./services/ssdpService');
+      if (ssdpService && ssdpService.shutdown) {
+        await ssdpService.shutdown();
+        logger.info('SSDP service shutdown completed');
+      }
+    } catch (ssdpShutdownError) {
+      logger.warn('SSDP service shutdown error:', ssdpShutdownError);
     }
 
     // Close database connections
@@ -146,9 +169,6 @@ const gracefulShutdown = async (signal) => {
     } catch (dbCloseError) {
       logger.warn('Database close error:', dbCloseError);
     }
-
-    // Cache and SSDP services not initialized
-    logger.info('Cache and SSDP services were not initialized');
 
     process.exit(0);
   } catch (error) {
@@ -194,8 +214,13 @@ const initializeApp = async () => {
         await database.initialize();
         logger.info('Database initialized successfully');
         
-        // Skip database logger initialization to prevent recursive loops
-        logger.info('Database logger initialization skipped');
+        // Initialize database logger
+        try {
+          logger.initDatabaseLogger(database);
+          logger.info('Database logger initialized successfully');
+        } catch (dbLoggerError) {
+          logger.warn('Failed to initialize database logger:', dbLoggerError.message);
+        }
         
         dbInitialized = true;
       } catch (dbError) {
@@ -211,11 +236,25 @@ const initializeApp = async () => {
       }
     }
 
-    // Skip cache service initialization (causing startup hangs)
-    logger.info('Cache service initialization skipped to prevent startup delays');
+    // Initialize cache service
+    try {
+      logger.info('Initializing cache service...');
+      const cacheService = require('./services/cacheService');
+      await cacheService.initialize();
+      logger.info('✅ Cache service initialized successfully');
+    } catch (cacheError) {
+      logger.warn('Failed to initialize cache service, continuing without cache:', cacheError.message);
+    }
 
-    // Skip SSDP service initialization for now
-    logger.info('SSDP service initialization skipped for stability');
+    // Initialize SSDP service
+    try {
+      logger.info('Initializing SSDP service...');
+      const ssdpService = require('./services/ssdpService');
+      await ssdpService.initialize();
+      logger.info('✅ SSDP service initialized successfully');
+    } catch (ssdpError) {
+      logger.warn('Failed to initialize SSDP service, continuing without SSDP:', ssdpError.message);
+    }
 
     // Test database health
     const dbHealth = await database.healthCheck();
@@ -254,8 +293,15 @@ const initializeApp = async () => {
       logger.warn('Failed to load settings from database, using defaults:', settingsError.message);
     }
 
-    // Skip EPG service initialization for now
-    logger.info('EPG service initialization skipped for testing');
+    // Initialize EPG service
+    try {
+      logger.info('Initializing EPG service...');
+      const epgService = require('./services/epgService');
+      await epgService.initialize();
+      logger.info('✅ EPG service initialized successfully');
+    } catch (epgError) {
+      logger.warn('Failed to initialize EPG service, continuing without EPG:', epgError.message);
+    }
 
     // Register API routes after database initialization
     try {
