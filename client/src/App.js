@@ -9,10 +9,12 @@ import EPGManager from './components/EPGManager/EPGManager';
 import LogViewer from './components/LogViewer/LogViewer';
 import Settings from './components/Settings/Settings';
 import ErrorBoundary from './components/ErrorBoundary/ErrorBoundary';
+import ConnectionMonitor from './components/ConnectionMonitor/ConnectionMonitor';
 
 function App() {
   return (
     <ErrorBoundary>
+      <ConnectionMonitor />
       <Box sx={{ display: 'flex' }}>
         <Layout>
           <Routes>

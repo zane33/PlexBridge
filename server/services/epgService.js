@@ -199,7 +199,13 @@ class EPGService {
           [downloadError.message, sourceId]
         );
         
-        throw downloadError;
+        // Don't throw during background refresh - just log and return
+        logger.warn('EPG refresh failed for source, will retry on next cycle', {
+          sourceId,
+          sourceName: source.name,
+          error: downloadError.message
+        });
+        return;
       }
       
       // Parse EPG XML (now includes storing channel information)
@@ -220,7 +226,13 @@ class EPGService {
           ['Parse error: ' + parseError.message, sourceId]
         );
         
-        throw parseError;
+        // Don't throw during background refresh - just log and return
+        logger.warn('EPG parsing failed for source, will retry on next cycle', {
+          sourceId,
+          sourceName: source.name,
+          error: parseError.message
+        });
+        return;
       }
       
       if (programs.length === 0) {
@@ -584,9 +596,9 @@ class EPGService {
     }
 
     try {
-      await database.transaction(async (db) => {
+      database.transaction(() => {
         // Clear old EPG channels for this source
-        await db.run('DELETE FROM epg_channels WHERE source_id = ?', [sourceId]);
+        database.db.prepare('DELETE FROM epg_channels WHERE source_id = ?').run(sourceId);
 
         // Insert new EPG channels in batches
         const batchSize = 1000;
@@ -596,16 +608,18 @@ class EPGService {
           VALUES (?, ?, ?, ?)
         `;
 
+        const insertStmt = database.db.prepare(insertSQL);
+        
         for (let i = 0; i < epgChannels.length; i += batchSize) {
           const batch = epgChannels.slice(i, i + batchSize);
           
           for (const channel of batch) {
-            await db.run(insertSQL, [
+            insertStmt.run(
               channel.epg_id,
               channel.display_name,
               channel.icon_url,
               channel.source_id
-            ]);
+            );
           }
         }
       });
@@ -627,10 +641,10 @@ class EPGService {
     }
 
     try {
-      await database.transaction(async (db) => {
+      database.transaction(() => {
         // Clear old programs first
         const threeDaysAgo = new Date(Date.now() - 3 * 24 * 60 * 60 * 1000).toISOString();
-        const deletedResult = await db.run('DELETE FROM epg_programs WHERE end_time < ?', [threeDaysAgo]);
+        const deletedResult = database.db.prepare('DELETE FROM epg_programs WHERE end_time < ?').run(threeDaysAgo);
         
         logger.info('Cleared old EPG programs', { 
           deletedCount: deletedResult.changes,
@@ -648,13 +662,14 @@ class EPGService {
         let insertedCount = 0;
         let errorCount = 0;
         const channelCounts = {};
+        const insertStmt = database.db.prepare(insertSQL);
         
         for (let i = 0; i < programs.length; i += batchSize) {
           const batch = programs.slice(i, i + batchSize);
           
           for (const program of batch) {
             try {
-              await db.run(insertSQL, [
+              insertStmt.run(
                 program.id,
                 program.channel_id,
                 program.title,
@@ -664,7 +679,7 @@ class EPGService {
                 program.category,
                 program.episode_number,
                 program.season_number
-              ]);
+              );
               insertedCount++;
               
               // Count programs per channel for reporting

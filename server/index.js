@@ -25,6 +25,29 @@ const io = socketIo(server, {
   cors: {
     origin: process.env.NODE_ENV === 'production' ? false : "http://localhost:3000",
     methods: ["GET", "POST"]
+  },
+  // Connection settings
+  pingInterval: 25000,  // How often to ping clients (25 seconds)
+  pingTimeout: 20000,   // How long to wait for pong (20 seconds)
+  upgradeTimeout: 30000, // Timeout for transport upgrade
+  
+  // Transport settings
+  transports: ['websocket', 'polling'],
+  allowUpgrades: true,
+  
+  // Performance settings
+  perMessageDeflate: false, // Disable compression for lower latency
+  httpCompression: false,   // Disable HTTP compression
+  
+  // Connection limits
+  maxHttpBufferSize: 1e6,  // 1MB max message size
+  connectTimeout: 45000,    // 45 seconds to establish connection
+  
+  // Cookie settings for sticky sessions
+  cookie: {
+    name: 'io',
+    httpOnly: true,
+    sameSite: 'strict'
   }
 });
 
@@ -70,25 +93,23 @@ app.set('io', io);
 app.use('/logos', express.static(path.join(__dirname, '../data/logos')));
 app.use(express.static(path.join(__dirname, '../client/build')));
 
-// Health check endpoint
-app.get('/health', (req, res) => {
-  res.json({
-    status: 'healthy',
-    timestamp: new Date().toISOString(),
-    uptime: process.uptime(),
-    memory: process.memoryUsage(),
-    version: require('../package.json').version
-  });
-});
-
 // NOTE: React catch-all route moved to initializeApp() after API routes are registered
 
 // Make socket.io instance available globally for services
 global.io = io;
 
-// Socket.IO connection handling
+// Socket.IO connection handling with enhanced error recovery
 io.on('connection', (socket) => {
-  logger.info(`Client connected: ${socket.id}`);
+  logger.info(`Client connected: ${socket.id} from ${socket.handshake.address}`);
+  
+  // Track connection time
+  socket.data.connectedAt = Date.now();
+  
+  // Send initial connection confirmation
+  socket.emit('connection:confirmed', {
+    id: socket.id,
+    timestamp: new Date().toISOString()
+  });
 
   socket.on('join-logs', () => {
     socket.join('logs');
@@ -104,11 +125,34 @@ io.on('connection', (socket) => {
     socket.join('settings');
     logger.info(`Client ${socket.id} joined settings room`);
   });
+  
+  // Handle client pings for custom health checks
+  socket.on('ping', (callback) => {
+    if (typeof callback === 'function') {
+      callback({ timestamp: Date.now() });
+    }
+  });
 
-  socket.on('disconnect', () => {
-    logger.info(`Client disconnected: ${socket.id}`);
+  socket.on('disconnect', (reason) => {
+    const duration = Date.now() - socket.data.connectedAt;
+    logger.info(`Client disconnected: ${socket.id}, reason: ${reason}, duration: ${duration}ms`);
+  });
+  
+  socket.on('error', (error) => {
+    logger.error(`Socket error for ${socket.id}:`, error);
   });
 });
+
+// Monitor Socket.IO server health
+io.on('connect_error', (error) => {
+  logger.error('Socket.IO server connection error:', error);
+});
+
+// Periodically log connection stats
+setInterval(() => {
+  const sockets = io.of('/').sockets;
+  logger.debug(`Active WebSocket connections: ${sockets.size}`);
+}, 60000); // Every minute
 
 // Error handling middleware
 app.use((err, req, res, next) => {
@@ -307,6 +351,7 @@ const initializeApp = async () => {
     // Register API routes after database initialization
     try {
       logger.info('Registering API routes...');
+      const healthRoutes = require('./routes/health');
       const apiRoutes = require('./routes/api');
       const streamRoutes = require('./routes/streams');
       const epgRoutes = require('./routes/epg');
@@ -315,6 +360,7 @@ const initializeApp = async () => {
       const m3uImportRoutes = require('./routes/m3uImport');
 
       // API Routes - MUST BE BEFORE STATIC FILES
+      app.use('/', healthRoutes);  // Health check routes
       app.use('/api/streams/parse/m3u', m3uRoutes);
       app.use('/api/streams/import/m3u', m3uImportRoutes);
       app.use('/api', apiRoutes);

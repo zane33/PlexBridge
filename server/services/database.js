@@ -9,6 +9,10 @@ class DatabaseService {
     this.db = null;
     this.isInitialized = false;
     this.dbPath = config.database.path;
+    this.reconnectAttempts = 0;
+    this.maxReconnectAttempts = 5;
+    this.reconnectDelay = 1000;
+    this.healthCheckInterval = null;
   }
 
   async initialize() {
@@ -34,6 +38,15 @@ class DatabaseService {
       this.db.pragma('cache_size = 10000');
       this.db.pragma('temp_store = MEMORY');
       
+      // Additional production optimizations
+      this.db.pragma('busy_timeout = 5000'); // Wait up to 5 seconds for locks
+      this.db.pragma('wal_autocheckpoint = 1000'); // Auto-checkpoint every 1000 pages
+      this.db.pragma('mmap_size = 30000000000'); // Use memory-mapped I/O (30GB)
+      
+      // Set connection pool settings
+      this.db.pragma('max_page_count = 2147483646'); // Maximum database size
+      this.db.pragma('locking_mode = NORMAL'); // Normal locking for multi-process
+      
       // Create tables if they don't exist
       await this.createTables();
       
@@ -41,7 +54,12 @@ class DatabaseService {
       await this.initializeDefaultSettings();
       
       this.isInitialized = true;
-      logger.info('Real database initialized successfully');
+      this.reconnectAttempts = 0;
+      
+      // Start health check monitoring
+      this.startHealthMonitoring();
+      
+      logger.info('Real database initialized successfully with production settings');
       return this.db;
     } catch (error) {
       logger.error('Real database initialization failed:', error.message);
@@ -57,47 +75,92 @@ class DatabaseService {
   // Mock database initialization - simplified
 
   // Real database operations
-  run(sql, params = []) {
+  async run(sql, params = []) {
     try {
       if (!this.db || !this.isInitialized) {
-        throw new Error('Database not initialized');
+        await this.reconnect();
       }
       
       const stmt = this.db.prepare(sql);
       const result = stmt.run(...params);
       return Promise.resolve(result);
     } catch (err) {
-      logger.error('Database run error:', { sql, params, error: err.message });
+      logger.error('Database run error:', { sql: sql.substring(0, 100), error: err.message });
+      
+      // Attempt reconnection on certain errors
+      if (this.isConnectionError(err)) {
+        await this.reconnect();
+        // Retry once after reconnection
+        try {
+          const stmt = this.db.prepare(sql);
+          const result = stmt.run(...params);
+          return Promise.resolve(result);
+        } catch (retryErr) {
+          logger.error('Database run retry failed:', retryErr.message);
+          return Promise.reject(retryErr);
+        }
+      }
+      
       return Promise.reject(err);
     }
   }
 
-  get(sql, params = []) {
+  async get(sql, params = []) {
     try {
       if (!this.db || !this.isInitialized) {
-        throw new Error('Database not initialized');
+        await this.reconnect();
       }
       
       const stmt = this.db.prepare(sql);
       const result = stmt.get(...params);
       return Promise.resolve(result);
     } catch (err) {
-      logger.error('Database get error:', { sql, params, error: err.message });
+      logger.error('Database get error:', { sql: sql.substring(0, 100), error: err.message });
+      
+      // Attempt reconnection on certain errors
+      if (this.isConnectionError(err)) {
+        await this.reconnect();
+        // Retry once after reconnection
+        try {
+          const stmt = this.db.prepare(sql);
+          const result = stmt.get(...params);
+          return Promise.resolve(result);
+        } catch (retryErr) {
+          logger.error('Database get retry failed:', retryErr.message);
+          return Promise.reject(retryErr);
+        }
+      }
+      
       return Promise.reject(err);
     }
   }
 
-  all(sql, params = []) {
+  async all(sql, params = []) {
     try {
       if (!this.db || !this.isInitialized) {
-        throw new Error('Database not initialized');
+        await this.reconnect();
       }
       
       const stmt = this.db.prepare(sql);
       const result = stmt.all(...params);
       return Promise.resolve(result);
     } catch (err) {
-      logger.error('Database all error:', { sql, params, error: err.message });
+      logger.error('Database all error:', { sql: sql.substring(0, 100), error: err.message });
+      
+      // Attempt reconnection on certain errors
+      if (this.isConnectionError(err)) {
+        await this.reconnect();
+        // Retry once after reconnection
+        try {
+          const stmt = this.db.prepare(sql);
+          const result = stmt.all(...params);
+          return Promise.resolve(result);
+        } catch (retryErr) {
+          logger.error('Database all retry failed:', retryErr.message);
+          return Promise.reject(retryErr);
+        }
+      }
+      
       return Promise.reject(err);
     }
   }
@@ -177,6 +240,22 @@ class DatabaseService {
       } catch (error) {
         // Column already exists, ignore error
         logger.info('last_refresh column already exists in epg_sources table');
+      }
+
+      // Add last_error column if it doesn't exist
+      try {
+        this.db.prepare('ALTER TABLE epg_sources ADD COLUMN last_error TEXT').run();
+      } catch (error) {
+        // Column already exists, ignore error
+        logger.info('last_error column already exists in epg_sources table');
+      }
+
+      // Add last_success column if it doesn't exist
+      try {
+        this.db.prepare('ALTER TABLE epg_sources ADD COLUMN last_success DATETIME').run();
+      } catch (error) {
+        // Column already exists, ignore error
+        logger.info('last_success column already exists in epg_sources table');
       }
 
       // Create epg_channels table
@@ -275,16 +354,95 @@ class DatabaseService {
   }
 
   // Transaction support
-  async transaction(callback) {
+  transaction(callback) {
     try {
       if (!this.db || !this.isInitialized) {
         throw new Error('Database not initialized');
       }
       
-      const result = await this.db.transaction(callback)();
+      // better-sqlite3 transactions are synchronous
+      const transactionFn = this.db.transaction(callback);
+      const result = transactionFn();
       return result;
     } catch (error) {
       throw error;
+    }
+  }
+
+  // Check if error is connection-related
+  isConnectionError(err) {
+    if (!err) return false;
+    const message = err.message || '';
+    return message.includes('SQLITE_BUSY') ||
+           message.includes('SQLITE_LOCKED') ||
+           message.includes('SQLITE_CANTOPEN') ||
+           message.includes('SQLITE_CORRUPT') ||
+           message.includes('database is locked') ||
+           message.includes('no such table');
+  }
+
+  // Reconnect to database
+  async reconnect() {
+    if (this.reconnectAttempts >= this.maxReconnectAttempts) {
+      logger.error('Max reconnection attempts reached, giving up');
+      throw new Error('Database connection failed permanently');
+    }
+
+    this.reconnectAttempts++;
+    logger.warn(`Attempting database reconnection (${this.reconnectAttempts}/${this.maxReconnectAttempts})...`);
+
+    try {
+      // Close existing connection if any
+      if (this.db) {
+        try {
+          this.db.close();
+        } catch (closeErr) {
+          logger.warn('Error closing database during reconnect:', closeErr.message);
+        }
+      }
+
+      // Wait before reconnecting
+      await new Promise(resolve => setTimeout(resolve, this.reconnectDelay * this.reconnectAttempts));
+
+      // Re-initialize
+      this.db = null;
+      this.isInitialized = false;
+      await this.initialize();
+      
+      logger.info('Database reconnection successful');
+      this.reconnectAttempts = 0;
+    } catch (error) {
+      logger.error('Database reconnection failed:', error.message);
+      throw error;
+    }
+  }
+
+  // Start health monitoring
+  startHealthMonitoring() {
+    if (this.healthCheckInterval) return;
+
+    this.healthCheckInterval = setInterval(async () => {
+      try {
+        const health = await this.healthCheck();
+        if (health.status === 'unhealthy') {
+          logger.warn('Database health check failed:', health.error);
+          
+          // Attempt to reconnect if unhealthy
+          if (this.isInitialized) {
+            await this.reconnect();
+          }
+        }
+      } catch (error) {
+        logger.error('Health monitoring error:', error.message);
+      }
+    }, 60000); // Check every minute
+  }
+
+  // Stop health monitoring
+  stopHealthMonitoring() {
+    if (this.healthCheckInterval) {
+      clearInterval(this.healthCheckInterval);
+      this.healthCheckInterval = null;
     }
   }
 
@@ -317,6 +475,9 @@ class DatabaseService {
   }
 
   async close() {
+    // Stop health monitoring first
+    this.stopHealthMonitoring();
+    
     if (this.isInitialized && this.db) {
       try {
         logger.info('Closing database');

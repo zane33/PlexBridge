@@ -30,9 +30,9 @@ router.get('/device.xml', (req, res) => {
 });
 
 // Lineup status endpoint
-router.get('/lineup_status.json', (req, res) => {
+router.get('/lineup_status.json', async (req, res) => {
   try {
-    const activeStreams = streamManager.getActiveStreams();
+    const activeStreams = await streamManager.getActiveStreams();
     const tunerStatus = ssdpService.generateTunerStatus();
     
     // Update tuner status based on active streams
@@ -249,10 +249,10 @@ router.post('/contentdirectory/control', (req, res) => {
 });
 
 // Status endpoint for monitoring
-router.get('/status', (req, res) => {
+router.get('/status', async (req, res) => {
   try {
     const ssdpStatus = ssdpService.getStatus();
-    const activeStreams = streamManager.getActiveStreams();
+    const activeStreams = await streamManager.getActiveStreams();
     
     res.json({
       ssdp: ssdpStatus,

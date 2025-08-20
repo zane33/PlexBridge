@@ -242,21 +242,28 @@ class M3UImportService {
     const errors = [];
 
     try {
-      await database.transaction(async (db) => {
+      database.transaction(() => {
+        const insertChannelStmt = database.db.prepare(`
+          INSERT INTO channels (id, name, number, enabled, logo, epg_id, created_at, updated_at)
+          VALUES (?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+        `);
+        
+        const insertStreamStmt = database.db.prepare(`
+          INSERT INTO streams (id, channel_id, name, url, type, backup_urls, auth_username, auth_password, headers, protocol_options, enabled, created_at, updated_at)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+        `);
+        
         for (const channelData of channels) {
           try {
             // Create channel
-            await db.run(`
-              INSERT INTO channels (id, name, number, enabled, logo, epg_id, created_at, updated_at)
-              VALUES (?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
-            `, [
+            insertChannelStmt.run(
               channelData.channelId,
               channelData.processedName,
               channelData.assignedNumber,
               import_options.enable_imported_channels,
               channelData.logo || null,
               channelData.epgId || null
-            ]);
+            );
 
             const createdChannel = {
               id: channelData.channelId,
@@ -274,10 +281,7 @@ class M3UImportService {
             const streamHeaders = this.buildStreamHeaders(channelData);
             const protocolOptions = this.buildProtocolOptions(channelData);
 
-            await db.run(`
-              INSERT INTO streams (id, channel_id, name, url, type, backup_urls, auth_username, auth_password, headers, protocol_options, enabled, created_at, updated_at)
-              VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
-            `, [
+            insertStreamStmt.run(
               channelData.streamId,
               channelData.channelId,
               streamName,
@@ -289,7 +293,7 @@ class M3UImportService {
               JSON.stringify(streamHeaders),
               JSON.stringify(protocolOptions),
               import_options.enable_imported_channels
-            ]);
+            );
 
             const createdStream = {
               id: channelData.streamId,

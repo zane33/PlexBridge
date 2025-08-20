@@ -171,7 +171,12 @@ class SettingsService {
       // Flatten nested settings to dot notation for database storage
       const flatSettings = this.flattenSettings(settings.plexlive || settings, 'plexlive');
 
-      await database.transaction(async (db) => {
+      database.transaction(() => {
+        const insertStmt = database.db.prepare(`
+          INSERT OR REPLACE INTO settings (key, value, type, created_at, updated_at)
+          VALUES (?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+        `);
+        
         for (const [key, value] of Object.entries(flatSettings)) {
           let stringValue = value;
           let type = 'string';
@@ -187,10 +192,7 @@ class SettingsService {
             stringValue = JSON.stringify(value);
           }
 
-          await db.run(`
-            INSERT OR REPLACE INTO settings (key, value, type, updated_at)
-            VALUES (?, ?, ?, CURRENT_TIMESTAMP)
-          `, [key, stringValue, type]);
+          insertStmt.run(key, stringValue, type);
         }
       });
 

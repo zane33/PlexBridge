@@ -29,6 +29,11 @@ services:
       dockerfile: Dockerfile
     container_name: plextv
     restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
     ports:
       - "8080:8080"
       - "1900:1900/udp"
@@ -61,6 +66,22 @@ services:
       # Redis configuration (internal Redis)
       - REDIS_HOST=localhost
       - REDIS_PORT=6379
+      
+      # Database configuration for production
+      - DB_POOL_SIZE=5                    # Connection pool size
+      - DB_BUSY_TIMEOUT=5000               # Wait up to 5s for locks
+      - DB_WAL_MODE=true                  # Enable WAL mode
+      - DB_CHECKPOINT_INTERVAL=1000       # WAL checkpoint interval
+      
+      # WebSocket configuration
+      - WS_PING_INTERVAL=25000             # Ping clients every 25s
+      - WS_PING_TIMEOUT=20000              # Wait 20s for pong response
+      - WS_RECONNECT_DELAY=1000            # Initial reconnect delay
+      - WS_MAX_RECONNECT_DELAY=5000       # Max reconnect delay
+      
+      # Health monitoring
+      - HEALTH_CHECK_INTERVAL=60000       # Check health every minute
+      - DB_HEALTH_CHECK_INTERVAL=60000    # Database health check interval
       
       # Optional: Device identification
       # - DEVICE_NAME=PlexTV
