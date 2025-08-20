@@ -626,24 +626,30 @@ class DatabaseService {
 // Create singleton instance
 const databaseService = new DatabaseService();
 
-// Handle graceful shutdown
+// Handle graceful shutdown - only if database is initialized
 process.on('SIGTERM', async () => {
   logger.info('Received SIGTERM, closing database...');
-  await databaseService.close();
+  if (databaseService.isInitialized) {
+    await databaseService.close();
+  }
 });
 
 process.on('SIGINT', async () => {
   logger.info('Received SIGINT, closing database...');
-  await databaseService.close();
+  if (databaseService.isInitialized) {
+    await databaseService.close();
+  }
 });
 
 // Handle uncaught exceptions - close database before exit
 process.on('uncaughtException', async (error) => {
   logger.error('Uncaught exception:', error);
-  try {
-    await databaseService.close();
-  } catch (closeError) {
-    logger.error('Error closing database during uncaught exception:', closeError);
+  if (databaseService.isInitialized) {
+    try {
+      await databaseService.close();
+    } catch (closeError) {
+      logger.error('Error closing database during uncaught exception:', closeError);
+    }
   }
   process.exit(1);
 });
@@ -651,10 +657,12 @@ process.on('uncaughtException', async (error) => {
 // Handle unhandled promise rejections
 process.on('unhandledRejection', async (reason, promise) => {
   logger.error('Unhandled rejection at:', promise, 'reason:', reason);
-  try {
-    await databaseService.close();
-  } catch (closeError) {
-    logger.error('Error closing database during unhandled rejection:', closeError);
+  if (databaseService.isInitialized) {
+    try {
+      await databaseService.close();
+    } catch (closeError) {
+      logger.error('Error closing database during unhandled rejection:', closeError);
+    }
   }
   process.exit(1);
 });
