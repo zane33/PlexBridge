@@ -1946,8 +1946,8 @@ router.delete('/logs/cleanup', async (req, res) => {
 // Helper function to get recent file logs
 async function getRecentFileLogs(level = null, limit = 50) {
   try {
-    const logDir = config.logging.path || '/data/logs';
-    console.log('getRecentFileLogs: logDir =', logDir);
+    // Use absolute path to ensure we're looking in the right place
+    const logDir = '/data/logs';
     
     // Try multiple date formats to find the most recent log file
     const currentDate = new Date();
@@ -1956,12 +1956,10 @@ async function getRecentFileLogs(level = null, limit = 50) {
       new Date(currentDate.getTime() + 24*60*60*1000).toISOString().split('T')[0], // Tomorrow UTC (timezone edge case)
       new Date(currentDate.getTime() - 24*60*60*1000).toISOString().split('T')[0], // Yesterday UTC
     ];
-    console.log('getRecentFileLogs: possibleDates =', possibleDates);
     
     let appLogFile = null;
     for (const date of possibleDates) {
       const testFile = path.join(logDir, `app-${date}.log`);
-      console.log('getRecentFileLogs: checking', testFile, 'exists:', fs.existsSync(testFile));
       if (fs.existsSync(testFile)) {
         appLogFile = testFile;
         break;
@@ -1970,30 +1968,23 @@ async function getRecentFileLogs(level = null, limit = 50) {
     
     // Fallback: find the most recent app log file
     if (!appLogFile) {
-      console.log('getRecentFileLogs: no date-based file found, checking directory');
       const files = fs.readdirSync(logDir);
-      console.log('getRecentFileLogs: all files in logDir:', files);
       const appLogs = files
         .filter(f => f.startsWith('app-') && f.endsWith('.log') && !f.includes('.gz'))
         .sort()
         .reverse();
-      console.log('getRecentFileLogs: filtered app logs:', appLogs);
       
       if (appLogs.length > 0) {
         appLogFile = path.join(logDir, appLogs[0]);
       }
     }
     
-    console.log('getRecentFileLogs: final appLogFile =', appLogFile);
-    
     if (!appLogFile || !fs.existsSync(appLogFile)) {
-      console.log('getRecentFileLogs: no valid log file found');
       return [];
     }
     
     const content = fs.readFileSync(appLogFile, 'utf8');
     const lines = content.split('\n').filter(line => line.trim());
-    console.log('getRecentFileLogs: read', lines.length, 'lines from log file');
     
     // Get last N lines
     const recentLines = lines.slice(-limit);
@@ -2004,10 +1995,8 @@ async function getRecentFileLogs(level = null, limit = 50) {
       .filter(log => log && (!level || log.level === level.toUpperCase()))
       .reverse(); // Most recent first
     
-    console.log('getRecentFileLogs: returning', logs.length, 'parsed logs');
     return logs;
   } catch (error) {
-    console.error('getRecentFileLogs: error:', error);
     logger.error('Error reading recent file logs:', error);
     return [];
   }
