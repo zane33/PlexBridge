@@ -1131,10 +1131,14 @@ class StreamManager {
   }
 
   // Get concurrency metrics
-  getConcurrencyMetrics() {
+  getConcurrencyMetrics(maxConcurrentStreams = null) {
     const totalStreams = this.activeStreams.size;
-    // Use synchronous config fallback for metrics since this method needs to be sync
-    const maxConcurrent = process.env.MAX_CONCURRENT_STREAMS || 10;
+    
+    // Use provided maxConcurrentStreams or fall back to environment/default
+    const maxConcurrent = (maxConcurrentStreams !== null && maxConcurrentStreams !== undefined) 
+      ? parseInt(maxConcurrentStreams) || 10
+      : parseInt(process.env.MAX_CONCURRENT_STREAMS) || 10;
+    
     const channelCounts = new Map();
     
     for (const [channelId, sessions] of this.channelStreams) {

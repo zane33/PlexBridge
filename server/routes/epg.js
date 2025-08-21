@@ -285,36 +285,106 @@ function generateXMLTV(channels, programs) {
     return `${year}${month}${day}${hour}${minute}${second} +0000`;
   };
 
+  // Generate proper channel ID mapping
+  const channelIdMap = new Map();
+  channels.forEach(channel => {
+    // Create a consistent channel ID that matches what's expected
+    // Use epg_id if available, otherwise create a normalized ID from channel name/number
+    let channelId = channel.epg_id;
+    if (!channelId) {
+      // Create a normalized channel ID from name and number
+      const normalizedName = channel.name.toLowerCase()
+        .replace(/[^a-z0-9]/g, '-')
+        .replace(/-+/g, '-')
+        .replace(/^-|-$/g, '');
+      channelId = `ch-${channel.number}-${normalizedName}`;
+    }
+    channelIdMap.set(channel.id, channelId);
+  });
+
   let xml = '<?xml version="1.0" encoding="UTF-8"?>\n';
   xml += '<!DOCTYPE tv SYSTEM "xmltv.dtd">\n';
-  xml += '<tv generator-info-name="PlexTV" generator-info-url="https://github.com/plextv">\n';
+  xml += '<tv source-info-name="PlexBridge IPTV" source-info-url="https://github.com/plextv/plexbridge" generator-info-name="PlexBridge" generator-info-url="https://github.com/plextv/plexbridge">\n';
 
-  // Add channels
+  // Add channels with proper structure
   channels.forEach(channel => {
-    xml += `  <channel id="${escapeXML(channel.id)}">\n`;
+    const channelId = channelIdMap.get(channel.id);
+    xml += `  <channel id="${escapeXML(channelId)}">\n`;
     xml += `    <display-name>${escapeXML(channel.name)}</display-name>\n`;
     xml += `    <display-name>${escapeXML(channel.number.toString())}</display-name>\n`;
+    
+    // Add logical channel number (LCN) for proper Plex integration
+    xml += `    <lcn>${escapeXML(channel.number.toString())}</lcn>\n`;
+    
     if (channel.logo) {
       xml += `    <icon src="${escapeXML(channel.logo)}" />\n`;
     }
     xml += '  </channel>\n';
   });
 
-  // Add programs
+  // Add programs with corrected channel references
   programs.forEach(program => {
-    xml += `  <programme start="${formatXMLTVTime(program.start_time)}" stop="${formatXMLTVTime(program.end_time)}" channel="${escapeXML(program.channel_id)}">\n`;
-    xml += `    <title>${escapeXML(program.title)}</title>\n`;
+    // Map program channel_id to the correct channel
+    let programChannelId = program.channel_id;
+    
+    // If program.channel_id looks like a UUID, map it to the correct channel ID
+    const channel = channels.find(ch => ch.id === program.channel_id || ch.epg_id === program.channel_id);
+    if (channel) {
+      programChannelId = channelIdMap.get(channel.id) || program.channel_id;
+    }
+    
+    xml += `  <programme start="${formatXMLTVTime(program.start_time)}" stop="${formatXMLTVTime(program.end_time)}" channel="${escapeXML(programChannelId)}">\n`;
+    xml += `    <title lang="en">${escapeXML(program.title)}</title>\n`;
     
     if (program.description) {
-      xml += `    <desc>${escapeXML(program.description)}</desc>\n`;
+      xml += `    <desc lang="en">${escapeXML(program.description)}</desc>\n`;
     }
     
     if (program.category) {
-      xml += `    <category>${escapeXML(program.category)}</category>\n`;
+      xml += `    <category lang="en">${escapeXML(program.category)}</category>\n`;
     }
     
+    // Add episode information in multiple formats for better compatibility
     if (program.episode_number && program.season_number) {
+      // XMLTV NS format (season.episode.part)
       xml += `    <episode-num system="xmltv_ns">${program.season_number - 1}.${program.episode_number - 1}.</episode-num>\n`;
+      
+      // Common alternative format
+      xml += `    <episode-num system="onscreen">S${String(program.season_number).padStart(2, '0')}E${String(program.episode_number).padStart(2, '0')}</episode-num>\n`;
+    }
+    
+    // Add original air date if available
+    if (program.original_air_date || program.date) {
+      const airDate = program.original_air_date || program.date;
+      xml += `    <date>${escapeXML(airDate.substring(0, 8))}</date>\n`;
+    }
+    
+    // Add rating information if available
+    if (program.rating) {
+      xml += `    <rating system="MPAA">\n`;
+      xml += `      <value>${escapeXML(program.rating)}</value>\n`;
+      xml += `    </rating>\n`;
+    }
+    
+    // Add star rating if available
+    if (program.star_rating) {
+      xml += `    <star-rating>\n`;
+      xml += `      <value>${escapeXML(program.star_rating)}/10</value>\n`;
+      xml += `    </star-rating>\n`;
+    }
+    
+    // Add credits if available
+    if (program.credits) {
+      xml += `    <credits>\n`;
+      if (program.credits.director) {
+        xml += `      <director>${escapeXML(program.credits.director)}</director>\n`;
+      }
+      if (program.credits.actors) {
+        program.credits.actors.forEach(actor => {
+          xml += `      <actor>${escapeXML(actor)}</actor>\n`;
+        });
+      }
+      xml += `    </credits>\n`;
     }
     
     xml += '  </programme>\n';
@@ -350,7 +420,7 @@ function generateSampleEPGData(channels) {
       const randomProgram = programTypes[Math.floor(Math.random() * programTypes.length)];
       
       samplePrograms.push({
-        channel_id: channel.id, // Use channel.id for Plex compatibility
+        channel_id: channel.id, // This will be mapped correctly in generateXMLTV
         title: `${randomProgram.title} - ${channel.name}`,
         description: `${randomProgram.description} on ${channel.name}`,
         start_time: startTime.toISOString(),

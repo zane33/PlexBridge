@@ -1367,9 +1367,18 @@ router.get('/server/info', (req, res) => {
 // STREAM MANAGEMENT API
 router.get('/streams/active', async (req, res) => {
   try {
+    // Get max concurrent streams from settings
+    let maxConcurrentStreams = 10;
+    try {
+      maxConcurrentStreams = await settingsService.getSetting('plexlive.streaming.maxConcurrentStreams', 10);
+      maxConcurrentStreams = parseInt(maxConcurrentStreams) || 10;
+    } catch (error) {
+      logger.warn('Failed to get max concurrent streams for active streams endpoint:', error);
+    }
+    
     const activeStreams = await streamManager.getActiveStreams();
     const streamsByChannel = streamManager.getStreamsByChannel();
-    const concurrencyMetrics = streamManager.getConcurrencyMetrics();
+    const concurrencyMetrics = streamManager.getConcurrencyMetrics(maxConcurrentStreams);
     
     res.json({
       streams: activeStreams, // Dashboard expects "streams" property
@@ -1432,10 +1441,22 @@ router.delete('/streams/active/channel/:streamId', async (req, res) => {
 // SYSTEM API
 router.get('/metrics', async (req, res) => {
   try {
-    // Check cache first
-    const cached = await cacheService.getMetrics();
-    if (cached && typeof cached === 'object' && cached.timestamp) {
-      return res.json(cached);
+    // Check cache first (skip cache if debug=1 query parameter)
+    if (!req.query.debug) {
+      const cached = await cacheService.getMetrics();
+      if (cached && typeof cached === 'object' && cached.timestamp) {
+        return res.json(cached);
+      }
+    }
+
+    // Get real max concurrent streams from settings first
+    let maxConcurrentStreams = 10; // fallback default
+    try {
+      maxConcurrentStreams = await settingsService.getSetting('plexlive.streaming.maxConcurrentStreams', 10);
+      maxConcurrentStreams = parseInt(maxConcurrentStreams) || 10;
+    } catch (settingsError) {
+      logger.warn('Failed to get max concurrent streams from settings, using fallback:', settingsError);
+      maxConcurrentStreams = parseInt(process.env.MAX_CONCURRENT_STREAMS) || 10;
     }
 
     // Get active streams safely
@@ -1446,41 +1467,22 @@ router.get('/metrics', async (req, res) => {
     try {
       activeStreams = streamManager.getActiveStreams() || [];
       streamsByChannel = streamManager.getStreamsByChannel() || {};
-      concurrencyMetrics = streamManager.getConcurrencyMetrics() || {};
+      
+      // Call getConcurrencyMetrics with the correct maxConcurrentStreams value
+      logger.info('Metrics API: Calling getConcurrencyMetrics with:', maxConcurrentStreams);
+      concurrencyMetrics = streamManager.getConcurrencyMetrics(maxConcurrentStreams);
+      logger.info('Metrics API: Got concurrency result:', concurrencyMetrics);
     } catch (streamError) {
       logger.warn('Stream manager not available for metrics:', streamError);
       activeStreams = [];
       streamsByChannel = {};
-      concurrencyMetrics = {};
-    }
-
-    // Get real max concurrent streams from settings with detailed debugging
-    let maxConcurrentStreams = 10; // fallback default
-    try {
-      const allSettings = await settingsService.getSettings();
-      console.log('DEBUG: All settings keys:', Object.keys(allSettings));
-      console.log('DEBUG: maxConcurrentStreams from flat:', allSettings['plexlive.streaming.maxConcurrentStreams']);
-      
-      // Access the setting directly from the flat settings structure
-      maxConcurrentStreams = allSettings['plexlive.streaming.maxConcurrentStreams'];
-      
-      // If not found in flat structure, try nested access
-      if (maxConcurrentStreams === undefined) {
-        maxConcurrentStreams = await settingsService.getSetting('plexlive.streaming.maxConcurrentStreams', 10);
-        console.log('DEBUG: maxConcurrentStreams from nested:', maxConcurrentStreams);
-      }
-      
-      // Ensure it's a valid number
-      const originalValue = maxConcurrentStreams;
-      maxConcurrentStreams = parseInt(maxConcurrentStreams) || 10;
-      console.log('DEBUG: maxConcurrentStreams conversion:', originalValue, '->', maxConcurrentStreams);
-      
-      logger.info('Using max concurrent streams for metrics:', maxConcurrentStreams);
-    } catch (settingsError) {
-      console.log('DEBUG: Settings error:', settingsError);
-      logger.warn('Failed to get max concurrent streams from settings, using fallback:', settingsError);
-      // Try environment variable as backup
-      maxConcurrentStreams = parseInt(process.env.MAX_CONCURRENT_STREAMS) || 10;
+      concurrencyMetrics = {
+        totalActiveStreams: 0,
+        maxConcurrentStreams: maxConcurrentStreams,
+        utilizationPercentage: 0,
+        channelStreamCounts: {},
+        uniqueClients: 0
+      };
     }
 
     // Get health checks with fallbacks
