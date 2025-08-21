@@ -362,9 +362,11 @@ const initializeApp = async () => {
       const ssdpRoutes = require('./routes/ssdp');
       const m3uRoutes = require('./routes/m3u');
       const m3uImportRoutes = require('./routes/m3uImport');
+      const plexSetupRoutes = require('./routes/plex-setup');
 
       // API Routes - MUST BE BEFORE STATIC FILES
       app.use('/', healthRoutes);  // Health check routes
+      app.use('/', plexSetupRoutes);  // Plex setup guide
       app.use('/api/streams/parse/m3u', m3uRoutes);
       app.use('/api/streams/import/m3u', m3uImportRoutes);
       app.use('/api', apiRoutes);

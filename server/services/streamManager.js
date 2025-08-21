@@ -123,6 +123,40 @@ class StreamManager {
     }
   }
 
+  // Resolve final URL after following redirects (for constructing sub-file URLs)
+  async resolveFinalUrl(url) {
+    try {
+      logger.stream('Resolving final URL after redirects', { originalUrl: url });
+      
+      // Use a GET request with a small range to get the final URL after redirects
+      const response = await axios.get(url, {
+        timeout: 10000,
+        maxRedirects: 5,
+        headers: {
+          'User-Agent': config.protocols.http.userAgent || 'PlexBridge/1.0',
+          'Range': 'bytes=0-1023' // Only get first 1KB to minimize data transfer
+        },
+        responseType: 'text'
+      });
+      
+      // The response.request.responseURL should contain the final URL
+      const finalUrl = response.request.responseURL || response.config.url || url;
+      
+      logger.stream('Final URL resolved', { 
+        originalUrl: url, 
+        finalUrl: finalUrl 
+      });
+      
+      return finalUrl;
+    } catch (error) {
+      logger.warn('Failed to resolve final URL, using original', { 
+        url, 
+        error: error.message 
+      });
+      return url; // Fallback to original URL
+    }
+  }
+
   // Validate stream URL and test connectivity
   async validateStream(streamData) {
     const { url, type, auth } = streamData;
@@ -1281,12 +1315,24 @@ class StreamManager {
       });
 
       // For HLS/DASH, fetch the content and potentially rewrite URLs
+      logger.info('Fetching stream content', { 
+        streamUrl, 
+        streamType, 
+        channelId: channel.id 
+      });
+      
       const response = await axios.get(streamUrl, {
         timeout: 30000,
         responseType: streamType === 'hls' ? 'text' : 'stream', // Get text for HLS to rewrite URLs
         headers: {
           'User-Agent': config.protocols.http.userAgent || 'PlexBridge/1.0'
         }
+      });
+      
+      logger.info('Stream content fetched successfully', {
+        status: response.status,
+        contentLength: response.data ? response.data.length : 'unknown',
+        contentType: response.headers['content-type']
       });
 
       if (streamType === 'hls') {
@@ -1301,8 +1347,9 @@ class StreamManager {
           contentLength: playlistContent.length
         });
         
-        // Only rewrite if this is a master playlist (contains stream references)
-        if (playlistContent.includes('.m3u8') || playlistContent.includes('.ts')) {
+        // Only rewrite if this is a master playlist (contains .m3u8 references)
+        // Media playlists (containing .ts references) should be served as-is
+        if (playlistContent.includes('.m3u8')) {
           const baseUrl = `http://${req.get('host')}/stream/${channel.id}/`;
           
           logger.info('Before URL rewriting', { 
@@ -1355,14 +1402,32 @@ class StreamManager {
 
     } catch (error) {
       // If direct streaming fails, fall back to transcoding
-      logger.warn('Direct streaming failed, falling back to transcoding', { 
+      logger.error('Direct streaming failed, falling back to transcoding', { 
         channelId: channel.id,
         channelName: channel.name,
         url: streamUrl,
         clientIP: req.ip,
-        error: error.message 
+        error: error.message,
+        stack: error.stack
       });
-      return await this.proxyTranscodedStreamWithChannel(streamUrl, streamType, channel, req, res);
+      
+      try {
+        return await this.proxyTranscodedStreamWithChannel(streamUrl, streamType, channel, req, res);
+      } catch (transcodingError) {
+        logger.error('Transcoding fallback also failed', {
+          channelId: channel.id,
+          url: streamUrl,
+          originalError: error.message,
+          transcodingError: transcodingError.message
+        });
+        if (!res.headersSent) {
+          res.status(500).json({ 
+            error: 'Stream proxy failed', 
+            details: error.message,
+            fallbackError: transcodingError.message 
+          });
+        }
+      }
     }
   }
 

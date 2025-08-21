@@ -147,32 +147,6 @@ function ChannelManager() {
       activationConstraint: {
         distance: 8,
       },
-      // Allow dragging on the entire row except for interactive elements
-      shouldHandleEvent: (event) => {
-        // Get the target element
-        let element = event.target;
-        
-        // Traverse up the DOM to check if we're inside an interactive element
-        while (element && element !== event.currentTarget) {
-          // Prevent drag on buttons, inputs, checkboxes, and their containers
-          if (
-            element.tagName === 'BUTTON' ||
-            element.tagName === 'INPUT' ||
-            element.type === 'checkbox' ||
-            element.role === 'button' ||
-            element.closest('[role="button"]') ||
-            element.closest('button') ||
-            element.closest('input') ||
-            element.closest('.MuiIconButton-root') ||
-            element.closest('.MuiCheckbox-root')
-          ) {
-            return false;
-          }
-          element = element.parentElement;
-        }
-        
-        return true;
-      }
     }),
     useSensor(KeyboardSensor, {
       coordinateGetter: sortableKeyboardCoordinates,
@@ -837,6 +811,8 @@ function ChannelManager() {
                               <TableCell 
                                 padding="checkbox"
                                 sx={{ cursor: 'default' }}
+                                onMouseDown={(e) => e.stopPropagation()}
+                                onPointerDown={(e) => e.stopPropagation()}
                               >
                                 <Checkbox
                                   checked={selectedChannels.includes(channel.id)}
@@ -986,6 +962,8 @@ function ChannelManager() {
                               </TableCell>
                               <TableCell 
                                 sx={{ cursor: 'default' }}
+                                onMouseDown={(e) => e.stopPropagation()}
+                                onPointerDown={(e) => e.stopPropagation()}
                               >
                                 <Box display="flex" gap={1}>
                                   <Tooltip title="Edit Channel">

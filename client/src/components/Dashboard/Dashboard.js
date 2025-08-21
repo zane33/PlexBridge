@@ -1337,6 +1337,28 @@ function Dashboard() {
                           Enter this URL when prompted for the tuner location. Plex will automatically discover your PlexTV Bridge server.
                         </Typography>
                       </Alert>
+
+                      <Alert severity="warning" sx={{ mt: 2, backgroundColor: 'rgba(255, 152, 0, 0.1)' }}>
+                        <Typography variant="body2">
+                          <strong>📺 EPG Setup Required:</strong> After device discovery, you'll need to manually configure the EPG (Program Guide). 
+                          When Plex asks for guide data, select "Use XMLTV" and enter the EPG XML URL from the Additional URLs section below.
+                        </Typography>
+                        <Box sx={{ mt: 2 }}>
+                          <Button
+                            variant="contained"
+                            size="small"
+                            onClick={() => window.open('/plex-setup.html', '_blank')}
+                            sx={{
+                              backgroundColor: '#ff9800',
+                              '&:hover': {
+                                backgroundColor: '#f57c00',
+                              }
+                            }}
+                          >
+                            📋 Complete Plex Setup Guide
+                          </Button>
+                        </Box>
+                      </Alert>
                     </CardContent>
                   </Card>
 
@@ -1403,7 +1425,7 @@ function Dashboard() {
 
                             <Grid item xs={12}>
                               <TextField
-                                label="EPG XML URL (for Program Guide)"
+                                label="📺 EPG XML URL (Required for Plex Program Guide)"
                                 fullWidth
                                 value={serverInfo.urls?.epgXml || ''}
                                 variant="outlined"
@@ -1412,9 +1434,9 @@ function Dashboard() {
                                   readOnly: true,
                                   endAdornment: (
                                     <InputAdornment position="end">
-                                      <Tooltip title="Copy EPG XML URL">
+                                      <Tooltip title="Copy EPG XML URL for Plex">
                                         <IconButton
-                                          onClick={() => copyToClipboard(serverInfo.urls?.epgXml, 'EPG XML URL')}
+                                          onClick={() => copyToClipboard(serverInfo.urls?.epgXml, 'EPG XML URL for Plex')}
                                           edge="end"
                                         >
                                           <CopyIcon />
@@ -1423,7 +1445,15 @@ function Dashboard() {
                                     </InputAdornment>
                                   ),
                                 }}
-                                helperText="XMLTV format program guide for compatible software"
+                                helperText="XMLTV format - Enter this URL in Plex when prompted for guide data"
+                                sx={{
+                                  '& .MuiOutlinedInput-root': {
+                                    backgroundColor: 'rgba(255, 152, 0, 0.05)',
+                                    '& fieldset': {
+                                      borderColor: 'rgba(255, 152, 0, 0.3)',
+                                    },
+                                  },
+                                }}
                               />
                             </Grid>
 
