@@ -65,13 +65,13 @@ RUN chmod +x /app/start.sh /app/run-server.sh /app/verify-database.sh /app/fix-p
     chown plextv:plextv /app/client/build && \
     chown -R plextv:plextv /app/client/build/static
 
-# Environment variables
+# Environment variables (will be overridden by docker-compose)
 ENV NODE_ENV=production \
     HOST_IP=0.0.0.0 \
-    HTTP_PORT=3000 \
-    STREAM_PORT=3000 \
+    HTTP_PORT=8080 \
+    STREAM_PORT=8080 \
     DISCOVERY_PORT=1900 \
-    PORT=3000 \
+    PORT=8080 \
     DB_PATH=/data/database/plextv.db \
     LOG_PATH=/data/logs \
     CACHE_PATH=/data/cache \
@@ -79,10 +79,10 @@ ENV NODE_ENV=production \
 
 # Health check
 HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
-    CMD curl -f http://localhost:${HTTP_PORT:-3000}/health || exit 1
+    CMD curl -f http://localhost:${HTTP_PORT:-8080}/health || exit 1
 
 # Expose ports
-EXPOSE 3000 1900/udp
+EXPOSE 8080 1900/udp
 
 # Volume for persistent data
 VOLUME ["/data"]
