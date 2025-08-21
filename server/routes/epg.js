@@ -275,14 +275,23 @@ function generateXMLTV(channels, programs) {
 
   const formatXMLTVTime = (isoString) => {
     const date = new Date(isoString);
-    const year = date.getUTCFullYear();
-    const month = String(date.getUTCMonth() + 1).padStart(2, '0');
-    const day = String(date.getUTCDate()).padStart(2, '0');
-    const hour = String(date.getUTCHours()).padStart(2, '0');
-    const minute = String(date.getUTCMinutes()).padStart(2, '0');
-    const second = String(date.getUTCSeconds()).padStart(2, '0');
     
-    return `${year}${month}${day}${hour}${minute}${second} +0000`;
+    // Get local timezone offset in minutes
+    const timezoneOffset = -date.getTimezoneOffset();
+    const offsetHours = Math.floor(Math.abs(timezoneOffset) / 60);
+    const offsetMinutes = Math.abs(timezoneOffset) % 60;
+    const offsetSign = timezoneOffset >= 0 ? '+' : '-';
+    const offsetString = `${offsetSign}${String(offsetHours).padStart(2, '0')}${String(offsetMinutes).padStart(2, '0')}`;
+    
+    // Format in local time (what Plex expects)
+    const year = date.getFullYear();
+    const month = String(date.getMonth() + 1).padStart(2, '0');
+    const day = String(date.getDate()).padStart(2, '0');
+    const hour = String(date.getHours()).padStart(2, '0');
+    const minute = String(date.getMinutes()).padStart(2, '0');
+    const second = String(date.getSeconds()).padStart(2, '0');
+    
+    return `${year}${month}${day}${hour}${minute}${second} ${offsetString}`;
   };
 
   // Generate proper channel ID mapping
@@ -344,24 +353,65 @@ function generateXMLTV(channels, programs) {
       xml += `    <category lang="en">${escapeXML(program.category)}</category>\n`;
     }
     
-    // Add episode information in multiple formats for better compatibility
-    if (program.episode_number && program.season_number) {
-      // XMLTV NS format (season.episode.part)
-      xml += `    <episode-num system="xmltv_ns">${program.season_number - 1}.${program.episode_number - 1}.</episode-num>\n`;
-      
-      // Common alternative format
-      xml += `    <episode-num system="onscreen">S${String(program.season_number).padStart(2, '0')}E${String(program.episode_number).padStart(2, '0')}</episode-num>\n`;
+    // Add sub-title (episode title) if available
+    if (program.sub_title || program.subtitle) {
+      xml += `    <sub-title lang="en">${escapeXML(program.sub_title || program.subtitle)}</sub-title>\n`;
     }
     
     // Add original air date if available
     if (program.original_air_date || program.date) {
       const airDate = program.original_air_date || program.date;
-      xml += `    <date>${escapeXML(airDate.substring(0, 8))}</date>\n`;
+      // Extract year from date for XMLTV format
+      const dateMatch = airDate.match(/(\d{4})/);
+      if (dateMatch) {
+        xml += `    <date>${escapeXML(dateMatch[1])}</date>\n`;
+      }
     }
+    
+    // Add keywords if available
+    if (program.keywords || program.category) {
+      const keywords = program.keywords || [program.category];
+      if (Array.isArray(keywords)) {
+        keywords.forEach(keyword => {
+          xml += `    <keyword>${escapeXML(keyword)}</keyword>\n`;
+        });
+      } else {
+        xml += `    <keyword>${escapeXML(keywords)}</keyword>\n`;
+      }
+    }
+    
+    // Add episode information in multiple formats for better compatibility
+    if (program.episode_number && program.season_number) {
+      // XMLTV NS format (season.episode.part/total) - Plex expects the full format
+      const seasonIndex = program.season_number - 1;
+      const episodeIndex = program.episode_number - 1;
+      const partIndex = program.part_number ? program.part_number - 1 : 0;
+      const totalParts = program.total_parts || 1;
+      
+      xml += `    <episode-num system="xmltv_ns">${seasonIndex}.${episodeIndex}.${partIndex}/${totalParts}</episode-num>\n`;
+      
+      // Common alternative format
+      xml += `    <episode-num system="onscreen">S${String(program.season_number).padStart(2, '0')}E${String(program.episode_number).padStart(2, '0')}</episode-num>\n`;
+    }
+    
+    // Add video technical details (important for Plex)
+    xml += `    <video>\n`;
+    xml += `      <colour>yes</colour>\n`;
+    xml += `      <aspect>${program.aspect_ratio || '16:9'}</aspect>\n`;
+    if (program.resolution) {
+      xml += `      <quality>${escapeXML(program.resolution)}</quality>\n`;
+    }
+    xml += `    </video>\n`;
+    
+    // Add audio technical details (important for Plex)
+    xml += `    <audio>\n`;
+    xml += `      <stereo>${program.audio_type || 'stereo'}</stereo>\n`;
+    xml += `    </audio>\n`;
     
     // Add rating information if available
     if (program.rating) {
-      xml += `    <rating system="MPAA">\n`;
+      // Use a generic rating system that's more likely to be accepted
+      xml += `    <rating system="VCHIP">\n`;
       xml += `      <value>${escapeXML(program.rating)}</value>\n`;
       xml += `    </rating>\n`;
     }
@@ -421,13 +471,21 @@ function generateSampleEPGData(channels) {
       
       samplePrograms.push({
         channel_id: channel.id, // This will be mapped correctly in generateXMLTV
-        title: `${randomProgram.title} - ${channel.name}`,
+        title: `${randomProgram.title}`,
+        sub_title: `Episode ${hour + 1}`,
         description: `${randomProgram.description} on ${channel.name}`,
         start_time: startTime.toISOString(),
         end_time: endTime.toISOString(),
         category: 'Entertainment',
-        episode_number: null,
-        season_number: null
+        keywords: ['Entertainment', channel.name],
+        episode_number: (hour % 24) + 1,
+        season_number: 1,
+        part_number: 1,
+        total_parts: 1,
+        date: new Date().getFullYear().toString(),
+        aspect_ratio: '16:9',
+        audio_type: 'stereo',
+        rating: 'TV-G'
       });
     }
   });

@@ -5,7 +5,53 @@ const streamManager = require('../services/streamManager');
 const streamPreviewService = require('../services/streamPreviewService');
 const logger = require('../utils/logger');
 
-// Stream proxy endpoint for Plex
+// Stream proxy endpoint for Plex with sub-path support for HLS/DASH segments
+router.get('/stream/:channelId/*', async (req, res) => {
+  try {
+    const { channelId } = req.params;
+    const subPath = req.params[0]; // This captures everything after channelId
+    
+    logger.info(`Stream request for channel with subpath: ${channelId}/${subPath}`, { 
+      clientIP: req.ip,
+      userAgent: req.get('User-Agent'),
+      fullUrl: req.url
+    });
+    
+    // Get channel info from database
+    const channel = await database.get('SELECT * FROM channels WHERE id = ?', [channelId]);
+    if (!channel) {
+      logger.warn('Channel not found for stream request', { channelId, subPath, clientIP: req.ip });
+      return res.status(404).send('Channel not found');
+    }
+    
+    // Get stream info for channel
+    const stream = await database.get('SELECT * FROM streams WHERE channel_id = ?', [channelId]);
+    if (!stream) {
+      logger.warn('Stream not found for channel', { 
+        channelId, 
+        channelName: channel.name,
+        channelNumber: channel.number,
+        subPath,
+        clientIP: req.ip 
+      });
+      return res.status(404).send('Stream not found for channel');
+    }
+    
+    // Construct the full URL by appending the subPath to the base stream URL
+    const baseUrl = stream.url.replace(/\/[^\/]*$/, '/'); // Remove filename, keep directory
+    const targetUrl = baseUrl + subPath;
+    logger.info(`Constructed target URL for subpath: ${targetUrl}`);
+    
+    // Proxy the stream with channel context
+    await streamManager.proxyStreamWithChannel(targetUrl, channel, stream, req, res);
+    
+  } catch (error) {
+    logger.error('Stream proxy error with subpath:', error);
+    res.status(500).send('Stream error');
+  }
+});
+
+// Stream proxy endpoint for Plex (main playlist only)
 router.get('/stream/:channelId', async (req, res) => {
   try {
     const { channelId } = req.params;

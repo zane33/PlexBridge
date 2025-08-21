@@ -1376,9 +1376,13 @@ router.get('/streams/active', async (req, res) => {
       logger.warn('Failed to get max concurrent streams for active streams endpoint:', error);
     }
     
+    logger.info('Getting active streams...');
     const activeStreams = await streamManager.getActiveStreams();
+    logger.info('Getting streams by channel...');
     const streamsByChannel = streamManager.getStreamsByChannel();
+    logger.info('Getting concurrency metrics...');
     const concurrencyMetrics = streamManager.getConcurrencyMetrics(maxConcurrentStreams);
+    logger.info('Active streams endpoint data prepared successfully');
     
     res.json({
       streams: activeStreams, // Dashboard expects "streams" property
