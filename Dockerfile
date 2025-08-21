@@ -39,20 +39,8 @@ RUN npm config set registry https://registry.npmjs.org/ && \
 COPY server/ ./server/
 COPY config/ ./config/
 
-# Copy client package files first for better caching
-COPY client/package*.json ./client/
-
-# Install client dependencies
-WORKDIR /app/client
-RUN npm config set registry https://registry.npmjs.org/ && \
-    npm config set strict-ssl false && \
-    npm ci --only=production
-
-# Copy client source and build it
-COPY client/src/ ./src/
-COPY client/public/ ./public/
-RUN npm run build
-WORKDIR /app
+# Copy pre-built client (build locally first with: cd client && npm run build)
+COPY client/build/ ./client/build/
 
 # Copy configuration files
 COPY supervisord.conf /etc/supervisord.conf
@@ -61,9 +49,12 @@ COPY run-server.sh /app/run-server.sh
 COPY verify-database.sh /app/verify-database.sh
 COPY fix-permissions.sh /app/fix-permissions.sh
 
-# Set permissions
+# Set permissions (optimized to avoid slow chown operations)
 RUN chmod +x /app/start.sh /app/run-server.sh /app/verify-database.sh /app/fix-permissions.sh && \
-    chown -R plextv:plextv /app
+    chown -R plextv:plextv /app/server && \
+    chown -R plextv:plextv /app/config && \
+    chown plextv:plextv /app/client/build && \
+    chown -R plextv:plextv /app/client/build/static
 
 # Environment variables
 ENV NODE_ENV=production \
