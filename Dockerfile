@@ -39,18 +39,8 @@ RUN npm config set registry https://registry.npmjs.org/ && \
 COPY server/ ./server/
 COPY config/ ./config/
 
-# Copy client package files first for better caching
-COPY client/package*.json ./client/
-
-# Install client dependencies
-WORKDIR /app/client
-RUN npm ci --only=production
-
-# Copy client source and build it
-COPY client/src/ ./src/
-COPY client/public/ ./public/
-RUN npm run build
-WORKDIR /app
+# Copy pre-built client
+COPY client/build/ ./client/build/
 
 # Copy configuration files
 COPY supervisord.conf /etc/supervisord.conf
