@@ -2063,13 +2063,40 @@ router.post('/settings/reset', async (req, res) => {
 // BACKUP/RESTORE API
 router.get('/backup/export', async (req, res) => {
   try {
-    const { format = 'json', includePasswords = false } = req.query;
+    const { format = 'json', includePasswords = false, includeEpgData = false, includeLogs = false } = req.query;
     
     // Get all configuration data
     const channels = await database.all('SELECT * FROM channels ORDER BY number');
     const streams = await database.all('SELECT * FROM streams');
     const epgSources = await database.all('SELECT * FROM epg_sources');
     const settings = await database.all('SELECT * FROM settings');
+    
+    // Get EPG data if requested
+    let epgChannels = [];
+    let epgPrograms = [];
+    if (includeEpgData === 'true' || includeEpgData === true) {
+      epgChannels = await database.all('SELECT * FROM epg_channels ORDER BY display_name');
+      // Limit EPG programs to recent data to avoid huge files
+      const oneWeekAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
+      epgPrograms = await database.all(
+        'SELECT * FROM epg_programs WHERE start_time >= ? ORDER BY start_time LIMIT 10000',
+        [oneWeekAgo]
+      );
+    }
+    
+    // Get log data if requested
+    let recentLogs = [];
+    if (includeLogs === 'true' || includeLogs === true) {
+      try {
+        recentLogs = await logger.getLogs({
+          limit: 1000,
+          level: null
+        });
+      } catch (logError) {
+        logger.warn('Failed to include logs in backup:', logError);
+        recentLogs = [];
+      }
+    }
     
     // Process streams to handle sensitive data
     const processedStreams = streams.map(stream => {
@@ -2115,20 +2142,37 @@ router.get('/backup/export', async (req, res) => {
     });
     
     const backupData = {
-      version: '1.0.0',
+      version: '2.0.0',
       timestamp: new Date().toISOString(),
       includesPasswords: includePasswords,
+      includesEpgData: includeEpgData === 'true' || includeEpgData === true,
+      includesLogs: includeLogs === 'true' || includeLogs === true,
       data: {
         channels,
         streams: processedStreams,
         epgSources,
-        settings: settingsObj
+        settings: settingsObj,
+        ...(epgChannels.length > 0 && { epgChannels }),
+        ...(epgPrograms.length > 0 && { epgPrograms }),
+        ...(recentLogs.length > 0 && { logs: recentLogs })
       },
       metadata: {
         totalChannels: channels.length,
         totalStreams: streams.length,
         totalEpgSources: epgSources.length,
-        totalSettings: Object.keys(settingsObj).length
+        totalSettings: Object.keys(settingsObj).length,
+        totalEpgChannels: epgChannels.length,
+        totalEpgPrograms: epgPrograms.length,
+        totalLogs: recentLogs.length,
+        backupSizeMB: Math.round(JSON.stringify({
+          channels,
+          streams: processedStreams,
+          epgSources,
+          settings: settingsObj,
+          epgChannels,
+          epgPrograms,
+          logs: recentLogs
+        }).length / 1024 / 1024 * 100) / 100
       }
     };
     
@@ -2153,14 +2197,395 @@ router.get('/backup/export', async (req, res) => {
   }
 });
 
-// Backup import (simplified for now)
+// Backup import and restore
 router.post('/backup/import', async (req, res) => {
-  res.status(501).json({ error: 'Backup import temporarily disabled for container stability' });
+  try {
+    const { backupData, options = {} } = req.body;
+    const { 
+      clearExisting = false, 
+      importChannels = true,
+      importStreams = true,
+      importEpgSources = true,
+      importSettings = true,
+      importEpgData = false,
+      skipValidation = false
+    } = options;
+
+    // Validate backup data structure
+    if (!backupData || !backupData.version || !backupData.data) {
+      return res.status(400).json({ 
+        error: 'Invalid backup data', 
+        details: ['Backup file is missing required structure'] 
+      });
+    }
+
+    // Version compatibility check
+    const supportedVersions = ['1.0.0', '2.0.0'];
+    if (!supportedVersions.includes(backupData.version)) {
+      return res.status(400).json({ 
+        error: 'Unsupported backup version', 
+        details: [`Version ${backupData.version} is not supported. Supported versions: ${supportedVersions.join(', ')}`] 
+      });
+    }
+
+    const results = {
+      imported: {
+        channels: 0,
+        streams: 0,
+        epgSources: 0,
+        settings: 0,
+        epgChannels: 0,
+        epgPrograms: 0
+      },
+      skipped: {
+        channels: 0,
+        streams: 0,
+        epgSources: 0,
+        settings: 0,
+        epgChannels: 0,
+        epgPrograms: 0
+      },
+      errors: []
+    };
+
+    // Begin transaction for atomicity
+    await database.run('BEGIN TRANSACTION');
+
+    try {
+      // Clear existing data if requested
+      if (clearExisting) {
+        if (importStreams) await database.run('DELETE FROM streams');
+        if (importChannels) await database.run('DELETE FROM channels');
+        if (importEpgSources) await database.run('DELETE FROM epg_sources');
+        if (importSettings) await database.run('DELETE FROM settings');
+        if (importEpgData) {
+          await database.run('DELETE FROM epg_programs');
+          await database.run('DELETE FROM epg_channels');
+        }
+      }
+
+      // Import channels
+      if (importChannels && backupData.data.channels) {
+        for (const channel of backupData.data.channels) {
+          try {
+            await database.run(`
+              INSERT OR ${clearExisting ? 'REPLACE' : 'IGNORE'} INTO channels 
+              (id, name, number, enabled, logo, epg_id, created_at, updated_at) 
+              VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            `, [
+              channel.id,
+              channel.name,
+              channel.number,
+              channel.enabled,
+              channel.logo,
+              channel.epg_id,
+              channel.created_at || new Date().toISOString(),
+              new Date().toISOString()
+            ]);
+            results.imported.channels++;
+          } catch (error) {
+            if (error.code === 'SQLITE_CONSTRAINT_UNIQUE') {
+              results.skipped.channels++;
+            } else {
+              results.errors.push(`Channel ${channel.name}: ${error.message}`);
+            }
+          }
+        }
+      }
+
+      // Import streams
+      if (importStreams && backupData.data.streams) {
+        for (const stream of backupData.data.streams) {
+          try {
+            await database.run(`
+              INSERT OR ${clearExisting ? 'REPLACE' : 'IGNORE'} INTO streams 
+              (id, channel_id, name, url, type, backup_urls, auth_username, auth_password, 
+               headers, protocol_options, enabled, created_at, updated_at) 
+              VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            `, [
+              stream.id,
+              stream.channel_id,
+              stream.name,
+              stream.url,
+              stream.type,
+              JSON.stringify(stream.backup_urls || []),
+              stream.auth_username === '[REDACTED]' ? null : stream.auth_username,
+              stream.auth_password === '[REDACTED]' ? null : stream.auth_password,
+              JSON.stringify(stream.headers || {}),
+              JSON.stringify(stream.protocol_options || {}),
+              stream.enabled,
+              stream.created_at || new Date().toISOString(),
+              new Date().toISOString()
+            ]);
+            results.imported.streams++;
+          } catch (error) {
+            if (error.code === 'SQLITE_CONSTRAINT_UNIQUE') {
+              results.skipped.streams++;
+            } else {
+              results.errors.push(`Stream ${stream.name}: ${error.message}`);
+            }
+          }
+        }
+      }
+
+      // Import EPG sources
+      if (importEpgSources && backupData.data.epgSources) {
+        for (const epgSource of backupData.data.epgSources) {
+          try {
+            await database.run(`
+              INSERT OR ${clearExisting ? 'REPLACE' : 'IGNORE'} INTO epg_sources 
+              (id, name, url, refresh_interval, enabled, created_at, updated_at) 
+              VALUES (?, ?, ?, ?, ?, ?, ?)
+            `, [
+              epgSource.id,
+              epgSource.name,
+              epgSource.url,
+              epgSource.refresh_interval,
+              epgSource.enabled,
+              epgSource.created_at || new Date().toISOString(),
+              new Date().toISOString()
+            ]);
+            results.imported.epgSources++;
+          } catch (error) {
+            if (error.code === 'SQLITE_CONSTRAINT_UNIQUE') {
+              results.skipped.epgSources++;
+            } else {
+              results.errors.push(`EPG Source ${epgSource.name}: ${error.message}`);
+            }
+          }
+        }
+      }
+
+      // Import settings
+      if (importSettings && backupData.data.settings) {
+        for (const [key, value] of Object.entries(backupData.data.settings)) {
+          try {
+            const valueStr = typeof value === 'object' ? JSON.stringify(value) : String(value);
+            const type = typeof value === 'number' ? 'number' : 
+                        typeof value === 'boolean' ? 'boolean' :
+                        typeof value === 'object' ? 'json' : 'string';
+            
+            await database.run(`
+              INSERT OR REPLACE INTO settings (key, value, type, created_at, updated_at) 
+              VALUES (?, ?, ?, ?, ?)
+            `, [key, valueStr, type, new Date().toISOString(), new Date().toISOString()]);
+            results.imported.settings++;
+          } catch (error) {
+            results.errors.push(`Setting ${key}: ${error.message}`);
+          }
+        }
+      }
+
+      // Import EPG data if requested and available
+      if (importEpgData && backupData.data.epgChannels) {
+        for (const epgChannel of backupData.data.epgChannels) {
+          try {
+            await database.run(`
+              INSERT OR ${clearExisting ? 'REPLACE' : 'IGNORE'} INTO epg_channels 
+              (epg_id, display_name, icon_url, source_id) 
+              VALUES (?, ?, ?, ?)
+            `, [
+              epgChannel.epg_id,
+              epgChannel.display_name,
+              epgChannel.icon_url,
+              epgChannel.source_id
+            ]);
+            results.imported.epgChannels++;
+          } catch (error) {
+            if (error.code === 'SQLITE_CONSTRAINT_UNIQUE') {
+              results.skipped.epgChannels++;
+            } else {
+              results.errors.push(`EPG Channel ${epgChannel.display_name}: ${error.message}`);
+            }
+          }
+        }
+      }
+
+      if (importEpgData && backupData.data.epgPrograms) {
+        for (const epgProgram of backupData.data.epgPrograms) {
+          try {
+            await database.run(`
+              INSERT OR ${clearExisting ? 'REPLACE' : 'IGNORE'} INTO epg_programs 
+              (id, channel_id, title, description, start_time, end_time, category, source_id) 
+              VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            `, [
+              epgProgram.id,
+              epgProgram.channel_id,
+              epgProgram.title,
+              epgProgram.description,
+              epgProgram.start_time,
+              epgProgram.end_time,
+              epgProgram.category,
+              epgProgram.source_id
+            ]);
+            results.imported.epgPrograms++;
+          } catch (error) {
+            if (error.code === 'SQLITE_CONSTRAINT_UNIQUE') {
+              results.skipped.epgPrograms++;
+            } else {
+              results.errors.push(`EPG Program ${epgProgram.title}: ${error.message}`);
+            }
+          }
+        }
+      }
+
+      await database.run('COMMIT');
+      
+      // Clear relevant caches
+      await cacheService.del('lineup:channels');
+      
+      logger.info('Backup import completed successfully', {
+        imported: results.imported,
+        skipped: results.skipped,
+        errorCount: results.errors.length,
+        backupVersion: backupData.version,
+        backupTimestamp: backupData.timestamp
+      });
+
+      res.json({
+        message: 'Backup import completed successfully',
+        results,
+        summary: {
+          totalImported: Object.values(results.imported).reduce((a, b) => a + b, 0),
+          totalSkipped: Object.values(results.skipped).reduce((a, b) => a + b, 0),
+          totalErrors: results.errors.length
+        }
+      });
+
+    } catch (transactionError) {
+      await database.run('ROLLBACK');
+      throw transactionError;
+    }
+
+  } catch (error) {
+    logger.error('Backup import error:', error);
+    res.status(500).json({ 
+      error: 'Failed to import backup', 
+      message: error.message,
+      details: error.details || []
+    });
+  }
 });
 
-// Backup validation (simplified for now)
+// Backup validation
 router.post('/backup/validate', async (req, res) => {
-  res.status(501).json({ error: 'Backup validation temporarily disabled for container stability' });
+  try {
+    const { backupData } = req.body;
+    const validation = {
+      isValid: true,
+      errors: [],
+      warnings: [],
+      summary: null
+    };
+
+    // Basic structure validation
+    if (!backupData) {
+      validation.isValid = false;
+      validation.errors.push('No backup data provided');
+      return res.json(validation);
+    }
+
+    if (!backupData.version) {
+      validation.isValid = false;
+      validation.errors.push('Backup version is missing');
+    }
+
+    if (!backupData.data) {
+      validation.isValid = false;
+      validation.errors.push('Backup data section is missing');
+      return res.json(validation);
+    }
+
+    // Version compatibility
+    const supportedVersions = ['1.0.0', '2.0.0'];
+    if (backupData.version && !supportedVersions.includes(backupData.version)) {
+      validation.isValid = false;
+      validation.errors.push(`Unsupported backup version: ${backupData.version}. Supported versions: ${supportedVersions.join(', ')}`);
+    }
+
+    const { data } = backupData;
+
+    // Validate data structure
+    if (!Array.isArray(data.channels)) {
+      validation.errors.push('Channels data must be an array');
+      validation.isValid = false;
+    }
+
+    if (!Array.isArray(data.streams)) {
+      validation.errors.push('Streams data must be an array');
+      validation.isValid = false;
+    }
+
+    if (!Array.isArray(data.epgSources)) {
+      validation.errors.push('EPG sources data must be an array');
+      validation.isValid = false;
+    }
+
+    if (typeof data.settings !== 'object') {
+      validation.errors.push('Settings data must be an object');
+      validation.isValid = false;
+    }
+
+    // Detailed validation if basic structure is valid
+    if (validation.isValid) {
+      // Validate channels
+      if (data.channels) {
+        data.channels.forEach((channel, index) => {
+          if (!channel.id || !channel.name || typeof channel.number !== 'number') {
+            validation.warnings.push(`Channel ${index + 1}: Missing required fields (id, name, number)`);
+          }
+          if (channel.number < 1 || channel.number > 9999) {
+            validation.warnings.push(`Channel ${channel.name || index + 1}: Invalid channel number (${channel.number})`);
+          }
+        });
+      }
+
+      // Validate streams
+      if (data.streams) {
+        data.streams.forEach((stream, index) => {
+          if (!stream.id || !stream.name || !stream.url || !stream.channel_id) {
+            validation.warnings.push(`Stream ${index + 1}: Missing required fields (id, name, url, channel_id)`);
+          }
+          if (stream.url && !stream.url.startsWith('http')) {
+            validation.warnings.push(`Stream ${stream.name || index + 1}: Invalid URL format`);
+          }
+        });
+      }
+
+      // Check for data consistency
+      if (data.channels && data.streams) {
+        const channelIds = new Set(data.channels.map(c => c.id));
+        const orphanedStreams = data.streams.filter(s => !channelIds.has(s.channel_id));
+        if (orphanedStreams.length > 0) {
+          validation.warnings.push(`${orphanedStreams.length} stream(s) reference channels that don't exist in the backup`);
+        }
+      }
+
+      // Generate summary
+      validation.summary = {
+        version: backupData.version,
+        timestamp: backupData.timestamp,
+        channels: data.channels ? data.channels.length : 0,
+        streams: data.streams ? data.streams.length : 0,
+        epgSources: data.epgSources ? data.epgSources.length : 0,
+        settings: data.settings ? Object.keys(data.settings).length : 0,
+        epgChannels: data.epgChannels ? data.epgChannels.length : 0,
+        epgPrograms: data.epgPrograms ? data.epgPrograms.length : 0,
+        logs: data.logs ? data.logs.length : 0,
+        includesPasswords: backupData.includesPasswords || false,
+        includesEpgData: backupData.includesEpgData || false,
+        includesLogs: backupData.includesLogs || false
+      };
+    }
+
+    res.json(validation);
+  } catch (error) {
+    logger.error('Backup validation error:', error);
+    res.status(500).json({ 
+      error: 'Failed to validate backup', 
+      message: error.message 
+    });
+  }
 });
 
 // Get setting descriptions/metadata

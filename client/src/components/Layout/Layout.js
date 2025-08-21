@@ -28,6 +28,7 @@ import {
   Schedule as ScheduleIcon,
   Article as ArticleIcon,
   Settings as SettingsIcon,
+  Storage as StorageIcon,
   Close as CloseIcon,
 } from '@mui/icons-material';
 
@@ -39,6 +40,7 @@ const menuItems = [
   { text: 'Streams', icon: <StreamIcon />, path: '/streams' },
   { text: 'EPG', icon: <ScheduleIcon />, path: '/epg' },
   { text: 'Logs', icon: <ArticleIcon />, path: '/logs' },
+  { text: 'Backup', icon: <StorageIcon />, path: '/backup' },
   { text: 'Settings', icon: <SettingsIcon />, path: '/settings' },
 ];
 

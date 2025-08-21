@@ -8,6 +8,7 @@ import StreamManager from './components/StreamManager/StreamManager';
 import EPGManager from './components/EPGManager/EPGManager';
 import LogViewer from './components/LogViewer/LogViewer';
 import Settings from './components/Settings/Settings';
+import BackupManager from './components/BackupManager/BackupManager';
 import ErrorBoundary from './components/ErrorBoundary/ErrorBoundary';
 import ConnectionMonitor from './components/ConnectionMonitor/ConnectionMonitor';
 
@@ -46,6 +47,11 @@ function App() {
             <Route path="/settings" element={
               <ErrorBoundary>
                 <Settings />
+              </ErrorBoundary>
+            } />
+            <Route path="/backup" element={
+              <ErrorBoundary>
+                <BackupManager />
               </ErrorBoundary>
             } />
           </Routes>
