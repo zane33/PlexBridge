@@ -92,6 +92,11 @@ stderr_logfile=/data/logs/plextv.error.log\n\
 environment=NODE_ENV="production"' > /etc/supervisord.conf; \
     fi
 
+# Create data directory structure and set permissions
+RUN mkdir -p /data/database /data/logs /data/cache /data/logos && \
+    chown -R plextv:plextv /data && \
+    chmod -R 755 /data
+
 # Environment variables with sensible defaults
 ENV NODE_ENV=production \
     HOST_IP=0.0.0.0 \

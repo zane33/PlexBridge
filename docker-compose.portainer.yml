@@ -44,12 +44,9 @@ services:
       - "8080:8080"
       - "1900:1900/udp"
     volumes:
-      # Use bind mounts for Synology/Portainer compatibility
-      - ./data:/data
-      - ./config:/app/config
-      # Alternative: Use named volumes (may not work in all Portainer environments)
-      # - plextv_data:/data
-      # - plextv_config:/app/config
+      # Use named volumes for production deployment (fully automated)
+      - plextv_data:/data
+      - plextv_config:/app/config
     environment:
       # Application environment
       - NODE_ENV=production
@@ -103,9 +100,10 @@ services:
       retries: 3
       start_period: 40s
 
-# Named volumes (commented out - using bind mounts instead for Portainer compatibility)
-# volumes:
-#   plextv_data:
-#     driver: local
-#   plextv_config:
-#     driver: local
+# Named volumes for persistent data storage
+# These will be created automatically by Docker
+volumes:
+  plextv_data:
+    driver: local
+  plextv_config:
+    driver: local
