@@ -138,21 +138,36 @@ class SSDPService {
       const settings = await settingsService.getSettings();
       const deviceName = settings?.plexlive?.device?.name || config.ssdp.friendlyName;
       
-      const networkInterfaces = os.networkInterfaces();
-      let localIP = '127.0.0.1';
+      // Priority order: Environment variable > Settings > Config > Auto-detect
+      let localIP = process.env.ADVERTISED_HOST ||                              // Docker environment
+                   settings?.plexlive?.network?.advertisedHost ||              // Settings UI
+                   config.plexlive?.network?.advertisedHost ||                 // Config file  
+                   config.network?.advertisedHost;                             // Legacy config
       
-      for (const interfaceName in networkInterfaces) {
-        const addresses = networkInterfaces[interfaceName];
-        for (const address of addresses) {
-          if (address.family === 'IPv4' && !address.internal) {
-            localIP = address.address;
-            break;
+      if (!localIP) {
+        // Auto-detect IP if no advertised host is configured
+        const networkInterfaces = os.networkInterfaces();
+        localIP = '127.0.0.1';
+        
+        for (const interfaceName in networkInterfaces) {
+          const addresses = networkInterfaces[interfaceName];
+          for (const address of addresses) {
+            if (address.family === 'IPv4' && !address.internal) {
+              localIP = address.address;
+              break;
+            }
           }
+          if (localIP !== '127.0.0.1') break;
         }
-        if (localIP !== '127.0.0.1') break;
       }
 
-      const deviceUrl = `http://${localIP}:${config.server.port}`;
+      // Ensure we have port if not included
+      let deviceUrl;
+      if (localIP.includes(':')) {
+        deviceUrl = localIP.startsWith('http') ? localIP : `http://${localIP}`;
+      } else {
+        deviceUrl = `http://${localIP}:${config.server.port}`;
+      }
 
       return `<?xml version="1.0"?>
 <root xmlns="urn:schemas-upnp-org:device-1-0">
@@ -198,18 +213,37 @@ class SSDPService {
       const deviceName = settings?.plexlive?.device?.name || config.ssdp.friendlyName;
       const tunerCount = settings?.plexlive?.streaming?.maxConcurrentStreams || config.streams.maxConcurrent;
       
-      const networkInterfaces = os.networkInterfaces();
-      let localIP = '127.0.0.1';
+      // Debug logging for IP resolution
+      logger.info('SSDP Discovery IP Resolution Debug:', {
+        envVar: process.env.ADVERTISED_HOST,
+        settingsPath: settings?.plexlive?.network?.advertisedHost,
+        configPath: config.plexlive?.network?.advertisedHost,
+        legacyConfig: config.network?.advertisedHost
+      });
       
-      for (const interfaceName in networkInterfaces) {
-        const addresses = networkInterfaces[interfaceName];
-        for (const address of addresses) {
-          if (address.family === 'IPv4' && !address.internal) {
-            localIP = address.address;
-            break;
+      // Priority order: Environment variable > Settings > Config > Auto-detect
+      let localIP = process.env.ADVERTISED_HOST ||                              // Docker environment
+                   settings?.plexlive?.network?.advertisedHost ||              // Settings UI
+                   config.plexlive?.network?.advertisedHost ||                 // Config file  
+                   config.network?.advertisedHost;                             // Legacy config
+      
+      logger.info('SSDP Discovery IP after priority check:', { localIP });
+      
+      if (!localIP) {
+        // Auto-detect IP if no advertised host is configured
+        const networkInterfaces = os.networkInterfaces();
+        localIP = '127.0.0.1';
+        
+        for (const interfaceName in networkInterfaces) {
+          const addresses = networkInterfaces[interfaceName];
+          for (const address of addresses) {
+            if (address.family === 'IPv4' && !address.internal) {
+              localIP = address.address;
+              break;
+            }
           }
+          if (localIP !== '127.0.0.1') break;
         }
-        if (localIP !== '127.0.0.1') break;
       }
 
       return {

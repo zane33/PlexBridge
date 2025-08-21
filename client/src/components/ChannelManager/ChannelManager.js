@@ -277,17 +277,22 @@ function ChannelManager() {
 
   // Enhanced drag end handler with improved automatic channel numbering
   const handleDragEnd = async (event) => {
+    console.log('handleDragEnd called with event:', event);
     const { active, over } = event;
+    console.log('Drag event - active:', active?.id, 'over:', over?.id);
     
     if (!over || active.id === over.id) {
+      console.log('Drag end: no valid target or same target, returning');
       setIsDragReordering(false);
       return;
     }
 
     const oldIndex = sortedChannels.findIndex((channel) => channel.id === active.id);
     const newIndex = sortedChannels.findIndex((channel) => channel.id === over.id);
+    console.log(`Drag indices - oldIndex: ${oldIndex}, newIndex: ${newIndex}`);
 
     if (oldIndex !== newIndex) {
+      console.log('Performing reorder operation...');
       const draggedChannel = sortedChannels.find(ch => ch.id === active.id);
       const reorderedChannels = arrayMove(sortedChannels, oldIndex, newIndex);
       
@@ -387,18 +392,21 @@ function ChannelManager() {
         name: formData.name.trim(),
       };
 
-      // Check if channel number conflicts and handle reordering
+      // Check if channel number conflicts and handle reordering BEFORE saving
       const targetNumber = data.number;
       const conflictingChannel = channels.find(ch => 
         ch.number === targetNumber && ch.id !== editingChannel?.id
       );
 
+      // If there's a conflict, resolve it first by reordering existing channels
+      if (conflictingChannel) {
+        await handleConflictResolution(targetNumber, editingChannel?.id);
+      }
+
       if (editingChannel) {
         await api.put(`/api/channels/${editingChannel.id}`, data);
         
-        // If there's a conflict, reorder channels automatically
         if (conflictingChannel) {
-          await handleAutomaticReordering(editingChannel.id, targetNumber);
           enqueueSnackbar(`Channel updated and other channels reordered automatically! 🎉`, { 
             variant: 'success',
             autoHideDuration: 4000,
@@ -412,10 +420,7 @@ function ChannelManager() {
       } else {
         await api.post('/api/channels', data);
         
-        // If there's a conflict, reorder channels automatically
         if (conflictingChannel) {
-          // Get the newly created channel ID from response if available
-          await fetchChannels(); // Refresh to get the new channel
           enqueueSnackbar(`Channel created and existing channels reordered automatically! 🎉`, { 
             variant: 'success',
             autoHideDuration: 4000,
@@ -438,6 +443,38 @@ function ChannelManager() {
       });
     } finally {
       setSaving(false);
+    }
+  };
+
+  // Handle conflict resolution BEFORE saving a channel
+  const handleConflictResolution = async (targetNumber, excludeChannelId = null) => {
+    try {
+      // Get fresh channel data
+      const response = await api.get('/api/channels');
+      const allChannels = response.data;
+      
+      // Find all channels that need to be shifted to make room for the target number
+      const channelsToShift = allChannels.filter(ch => 
+        ch.number >= targetNumber && ch.id !== excludeChannelId
+      );
+      
+      if (channelsToShift.length > 0) {
+        // Shift all conflicting channels up by 1
+        const updates = channelsToShift.map(channel => ({
+          id: channel.id,
+          number: channel.number + 1,
+          name: channel.name,
+          enabled: channel.enabled,
+          stream_id: channel.stream_id,
+          epg_id: channel.epg_id
+        }));
+        
+        // Apply bulk update to shift channels
+        await api.put('/api/channels/bulk-update', { channels: updates });
+      }
+    } catch (error) {
+      console.error('Error resolving channel number conflict:', error);
+      throw error;
     }
   };
 

@@ -1884,8 +1884,20 @@ router.get('/settings', async (req, res) => {
     
     const settings = await settingsService.getSettings();
     
+    // Show effective advertised host (environment variable takes precedence)
+    if (!settings.plexlive) settings.plexlive = {};
+    if (!settings.plexlive.network) settings.plexlive.network = {};
+    
+    // Show the effective value that's actually being used
+    const effectiveAdvertisedHost = process.env.ADVERTISED_HOST || settings.plexlive.network.advertisedHost;
+    if (effectiveAdvertisedHost) {
+      settings.plexlive.network.advertisedHost = effectiveAdvertisedHost;
+      settings.plexlive.network._advertisedHostSource = process.env.ADVERTISED_HOST ? 'environment' : 'settings';
+    }
+    
     logger.info('Settings retrieved successfully', { 
       maxConcurrentStreams: settings.plexlive?.streaming?.maxConcurrentStreams,
+      advertisedHost: effectiveAdvertisedHost,
       hasPlexlive: !!settings.plexlive
     });
     

@@ -45,24 +45,46 @@ router.get('/lineup_status.json', async (req, res) => {
       }
     });
 
-    // Get local IP and port for EPG URLs
-    const networkInterfaces = require('os').networkInterfaces();
-    let localIP = '127.0.0.1';
-    for (const interfaceName in networkInterfaces) {
-      const addresses = networkInterfaces[interfaceName];
-      for (const address of addresses) {
-        if (address.family === 'IPv4' && !address.internal) {
-          localIP = address.address;
-          break;
+    // Get current settings to determine advertised host
+    const settingsService = require('../services/settingsService');
+    const config = require('../config');
+    const settings = await settingsService.getSettings();
+    
+    // Priority order: Environment variable > Settings > Config > Auto-detect fallback
+    let baseHost = process.env.ADVERTISED_HOST ||                              // Docker environment
+                  settings?.plexlive?.network?.advertisedHost ||              // Settings UI
+                  config.plexlive?.network?.advertisedHost ||                 // Config file  
+                  config.network?.advertisedHost;                             // Legacy config
+    
+    if (!baseHost) {
+      // Auto-detect IP as fallback
+      const networkInterfaces = require('os').networkInterfaces();
+      let localIP = '127.0.0.1';
+      for (const interfaceName in networkInterfaces) {
+        const addresses = networkInterfaces[interfaceName];
+        for (const address of addresses) {
+          if (address.family === 'IPv4' && !address.internal) {
+            localIP = address.address;
+            break;
+          }
         }
+        if (localIP !== '127.0.0.1') break;
       }
-      if (localIP !== '127.0.0.1') break;
+      
+      // Get port from request host or use default
+      const hostHeader = req.get('host') || 'localhost:8080';
+      const port = hostHeader.split(':')[1] || '8080';
+      baseHost = `${localIP}:${port}`;
     }
     
-    // Get port from request host or use default
-    const hostHeader = req.get('host') || 'localhost:8080';
-    const port = hostHeader.split(':')[1] || '8080';
-    const baseURL = `http://${localIP}:${port}`;
+    // Ensure we have port if not included
+    if (!baseHost.includes(':')) {
+      baseHost += ':8080';
+    }
+    
+    // Ensure we have http:// prefix
+    const baseURL = baseHost.startsWith('http') ? baseHost : `http://${baseHost}`;
+    
 
     const status = {
       ScanInProgress: 0,
@@ -101,22 +123,40 @@ router.get('/lineup.json', async (req, res) => {
       ORDER BY c.number
     `);
 
-    // Get base URL for EPG references
-    const hostHeader = req.get('host') || 'localhost:8080';
+    // Get current settings to determine advertised host
+    const settingsService = require('../services/settingsService');
+    const config = require('../config');
+    const settings = await settingsService.getSettings();
+    
+    // Priority order: Environment variable > Settings > Config > Host header fallback
+    let baseHost = process.env.ADVERTISED_HOST ||                              // Docker environment
+                  settings?.plexlive?.network?.advertisedHost ||              // Settings UI
+                  config.plexlive?.network?.advertisedHost ||                 // Config file  
+                  config.network?.advertisedHost ||                           // Legacy config
+                  req.get('host') ||                                           // Host header fallback
+                  'localhost:8080';                                           // Final fallback
+    
+    // Ensure we have port if not included
+    if (!baseHost.includes(':')) {
+      baseHost += ':8080';
+    }
+    
+    // Ensure we have http:// prefix
+    const baseURL = baseHost.startsWith('http') ? baseHost : `http://${baseHost}`;
     
     const lineup = channels.map(channel => ({
       GuideNumber: channel.number.toString(),
       GuideName: channel.name,
-      URL: `http://${hostHeader}/stream/${channel.id}`,
+      URL: `${baseURL}/stream/${channel.id}`,
       HD: 1, // Assume HD for all channels
       DRM: 0, // No DRM
       Favorite: 0,
       
       // EPG Information for this channel
       EPGAvailable: true,
-      EPGSource: `http://${hostHeader}/epg/xmltv.xml`,
-      EPGURL: `http://${hostHeader}/epg/xmltv.xml`,
-      GuideURL: `http://${hostHeader}/epg/xmltv/${channel.id}`,
+      EPGSource: `${baseURL}/epg/xmltv.xml`,
+      EPGURL: `${baseURL}/epg/xmltv.xml`,
+      GuideURL: `${baseURL}/epg/xmltv/${channel.id}`,
       EPGChannelID: channel.epg_id || channel.id
     }));
 
