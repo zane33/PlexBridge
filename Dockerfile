@@ -41,6 +41,7 @@ COPY config/ ./config/
 
 # Copy and build client
 # Copy pre-built client
+RUN mkdir -p ./client/build
 COPY client/build/ ./client/build/
 
 # Copy configuration files
