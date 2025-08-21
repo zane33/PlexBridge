@@ -4,25 +4,41 @@ const os = require('os');
 const config = require('../config');
 
 // Plex setup information endpoint
-router.get('/plex-setup', (req, res) => {
+router.get('/plex-setup', async (req, res) => {
   try {
-    // Get local IP for URLs
-    const networkInterfaces = os.networkInterfaces();
-    let localIP = '127.0.0.1';
+    // Use unified configuration system for consistent IP address
+    const settingsService = require('../services/settingsService');
+    const settings = await settingsService.getSettings();
     
-    for (const interfaceName in networkInterfaces) {
-      const addresses = networkInterfaces[interfaceName];
-      for (const address of addresses) {
-        if (address.family === 'IPv4' && !address.internal) {
-          localIP = address.address;
-          break;
+    // Priority order: Environment variable > Settings > Config > Auto-detect
+    let localIP = process.env.ADVERTISED_HOST ||                              // Docker environment
+                 settings?.plexlive?.network?.advertisedHost ||              // Settings UI
+                 config.plexlive?.network?.advertisedHost ||                 // Config file  
+                 config.network?.advertisedHost;                             // Legacy config
+    
+    if (!localIP) {
+      // Auto-detect IP if no advertised host is configured
+      const networkInterfaces = os.networkInterfaces();
+      localIP = '127.0.0.1';
+      
+      for (const interfaceName in networkInterfaces) {
+        const addresses = networkInterfaces[interfaceName];
+        for (const address of addresses) {
+          if (address.family === 'IPv4' && !address.internal) {
+            localIP = address.address;
+            break;
+          }
         }
+        if (localIP !== '127.0.0.1') break;
       }
-      if (localIP !== '127.0.0.1') break;
     }
 
-    const hostHeader = req.get('host') || `${localIP}:${config.server.port}`;
-    const baseURL = `http://${hostHeader}`;
+    // Clean up IP if it includes port already
+    if (localIP.includes(':')) {
+      localIP = localIP.split(':')[0];
+    }
+
+    const baseURL = `http://${localIP}:${config.server.port}`;
     
     const setupInfo = {
       device: {
@@ -64,25 +80,41 @@ router.get('/plex-setup', (req, res) => {
 });
 
 // Plex setup web page
-router.get('/plex-setup.html', (req, res) => {
+router.get('/plex-setup.html', async (req, res) => {
   try {
-    // Get local IP for URLs
-    const networkInterfaces = os.networkInterfaces();
-    let localIP = '127.0.0.1';
+    // Use unified configuration system for consistent IP address
+    const settingsService = require('../services/settingsService');
+    const settings = await settingsService.getSettings();
     
-    for (const interfaceName in networkInterfaces) {
-      const addresses = networkInterfaces[interfaceName];
-      for (const address of addresses) {
-        if (address.family === 'IPv4' && !address.internal) {
-          localIP = address.address;
-          break;
+    // Priority order: Environment variable > Settings > Config > Auto-detect
+    let localIP = process.env.ADVERTISED_HOST ||                              // Docker environment
+                 settings?.plexlive?.network?.advertisedHost ||              // Settings UI
+                 config.plexlive?.network?.advertisedHost ||                 // Config file  
+                 config.network?.advertisedHost;                             // Legacy config
+    
+    if (!localIP) {
+      // Auto-detect IP if no advertised host is configured
+      const networkInterfaces = os.networkInterfaces();
+      localIP = '127.0.0.1';
+      
+      for (const interfaceName in networkInterfaces) {
+        const addresses = networkInterfaces[interfaceName];
+        for (const address of addresses) {
+          if (address.family === 'IPv4' && !address.internal) {
+            localIP = address.address;
+            break;
+          }
         }
+        if (localIP !== '127.0.0.1') break;
       }
-      if (localIP !== '127.0.0.1') break;
     }
 
-    const hostHeader = req.get('host') || `${localIP}:${config.server.port}`;
-    const baseURL = `http://${hostHeader}`;
+    // Clean up IP if it includes port already
+    if (localIP.includes(':')) {
+      localIP = localIP.split(':')[0];
+    }
+
+    const baseURL = `http://${localIP}:${config.server.port}`;
     const xmltvURL = `${baseURL}/epg/xmltv.xml`;
 
     const html = `

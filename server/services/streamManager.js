@@ -1266,6 +1266,12 @@ class StreamManager {
   // Proxy stream specifically for Plex HDHomeRun compatibility (MPEG-TS output)
   async proxyPlexCompatibleStream(streamUrl, channel, req, res) {
     try {
+      // Debug logging to track where failures occur
+      console.log('DEBUG: proxyPlexCompatibleStream called', { 
+        streamUrl, 
+        channelId: channel?.id, 
+        channelName: channel?.name 
+      });
       logger.info('Starting Plex-compatible MPEG-TS stream', {
         channelId: channel.id,
         channelName: channel.name,
@@ -1303,6 +1309,8 @@ class StreamManager {
         });
         // Continue with original URL if redirect resolution fails
       }
+
+      console.log('DEBUG: Redirect resolution complete', { finalStreamUrl });
       
       // Set appropriate headers for MPEG-TS stream
       res.set({
@@ -1330,10 +1338,10 @@ class StreamManager {
       if (finalStreamUrl.includes('.m3u8')) {
         const hlsArgs = settings?.plexlive?.transcoding?.mpegts?.hlsProtocolArgs || 
                        config.plexlive?.transcoding?.mpegts?.hlsProtocolArgs ||
-                       '-allowed_extensions ALL -protocol_whitelist file,http,https,tcp,tls';
+                       '-allowed_extensions ALL -protocol_whitelist file,http,https,tcp,tls,pipe';
         
-        // Insert HLS args after the input URL
-        ffmpegCommand = ffmpegCommand.replace('-i ' + finalStreamUrl, '-i ' + finalStreamUrl + ' ' + hlsArgs);
+        // Insert HLS args BEFORE the input URL for proper protocol handling
+        ffmpegCommand = ffmpegCommand.replace('-i ' + finalStreamUrl, hlsArgs + ' -i ' + finalStreamUrl);
       }
       
       // Parse command line into arguments array
@@ -1347,11 +1355,19 @@ class StreamManager {
         clientIP: req.ip
       });
 
+      console.log('DEBUG: Starting FFmpeg with args', { 
+        ffmpegPath: config.streams.ffmpegPath, 
+        args: args.slice(0, 5) + '...' // Show first few args
+      });
+
       const ffmpegProcess = spawn(config.streams.ffmpegPath, args);
       
       if (!ffmpegProcess.pid) {
+        console.log('DEBUG: FFmpeg failed to start');
         throw new Error('Failed to start FFmpeg MPEG-TS transcoding process');
       }
+
+      console.log('DEBUG: FFmpeg started successfully', { pid: ffmpegProcess.pid });
 
       logger.info('FFmpeg MPEG-TS process started', { 
         channelId: channel.id,
