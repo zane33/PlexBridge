@@ -470,10 +470,15 @@ function ChannelManager() {
         }));
         
         // Apply bulk update to shift channels
-        await api.put('/api/channels/bulk-update', { channels: updates });
+        await api.put('/api/channels/bulk-update', { updates: updates });
       }
     } catch (error) {
       console.error('Error resolving channel number conflict:', error);
+      console.error('Full error details:', {
+        message: error.message,
+        response: error.response?.data,
+        status: error.response?.status
+      });
       throw error;
     }
   };

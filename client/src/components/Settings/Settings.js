@@ -809,6 +809,62 @@ function Settings() {
                     </Select>
                   </FormControl>
                 </Grid>
+
+                {/* MPEG-TS Settings for Plex Live TV */}
+                <Grid item xs={12}>
+                  <Divider sx={{ my: 2 }} />
+                  <Typography variant="h6" gutterBottom>
+                    MPEG-TS Settings (Plex Live TV)
+                  </Typography>
+                  <Typography variant="body2" color="textSecondary" sx={{ mb: 2 }}>
+                    Configure FFmpeg parameters for HDHomeRun-compatible MPEG-TS streams that Plex Live TV can consume.
+                    Use [URL] as a placeholder for the stream URL.
+                  </Typography>
+                </Grid>
+
+                <Grid item xs={12}>
+                  <FormControlLabel
+                    control={
+                      <Switch
+                        checked={getSetting('plexlive.transcoding.mpegts.enabled', true)}
+                        onChange={(e) => updateSetting('plexlive.transcoding.mpegts.enabled', e.target.checked)}
+                      />
+                    }
+                    label="Enable MPEG-TS Transcoding for Plex"
+                  />
+                  <Typography variant="caption" display="block" color="textSecondary">
+                    Enable HDHomeRun-compatible MPEG-TS output for Plex Live TV integration
+                  </Typography>
+                </Grid>
+
+                <Grid item xs={12}>
+                  <TextField
+                    fullWidth
+                    multiline
+                    rows={3}
+                    label="FFmpeg Arguments"
+                    placeholder="-hide_banner -loglevel error -i [URL] -c:v copy -c:a copy -f mpegts pipe:1"
+                    value={getSetting('plexlive.transcoding.mpegts.ffmpegArgs', 
+                      '-hide_banner -loglevel error -i [URL] -c:v copy -c:a copy -f mpegts -mpegts_m2ts_mode 0 -mpegts_start_pid 0x100 -mpegts_copyts 1 -muxrate 0 -avoid_negative_ts make_zero -fflags +genpts+igndts -async 1 -mpegts_pmt_start_pid 0x1000 -mpegts_service_id 1 -max_muxing_queue_size 1024 pipe:1'
+                    )}
+                    onChange={(e) => updateSetting('plexlive.transcoding.mpegts.ffmpegArgs', e.target.value)}
+                    helperText="Complete FFmpeg command line. Use [URL] placeholder for stream URL. Example: -hide_banner -loglevel error -i [URL] -c:a libmp3lame -vcodec copy -f mpegts pipe:1"
+                    sx={{ mb: 2 }}
+                  />
+                </Grid>
+
+                <Grid item xs={12}>
+                  <TextField
+                    fullWidth
+                    label="HLS Protocol Arguments"
+                    placeholder="-allowed_extensions ALL -protocol_whitelist file,http,https,tcp,tls"
+                    value={getSetting('plexlive.transcoding.mpegts.hlsProtocolArgs', 
+                      '-allowed_extensions ALL -protocol_whitelist file,http,https,tcp,tls'
+                    )}
+                    onChange={(e) => updateSetting('plexlive.transcoding.mpegts.hlsProtocolArgs', e.target.value)}
+                    helperText="Additional FFmpeg arguments for HLS (.m3u8) streams"
+                  />
+                </Grid>
               </Grid>
             </AccordionDetails>
           </Accordion>

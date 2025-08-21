@@ -1263,6 +1263,155 @@ class StreamManager {
     }
   }
 
+  // Proxy stream specifically for Plex HDHomeRun compatibility (MPEG-TS output)
+  async proxyPlexCompatibleStream(streamUrl, channel, req, res) {
+    try {
+      logger.info('Starting Plex-compatible MPEG-TS stream', {
+        channelId: channel.id,
+        channelName: channel.name,
+        channelNumber: channel.number,
+        streamUrl,
+        clientIP: req.ip
+      });
+
+      // Resolve redirects for the stream URL before passing to FFmpeg
+      let finalStreamUrl = streamUrl;
+      try {
+        const axios = require('axios');
+        logger.info('Resolving stream redirects', { channelId: channel.id, streamUrl });
+        
+        const response = await axios.head(streamUrl, {
+          maxRedirects: 5,
+          timeout: 10000,
+          headers: {
+            'User-Agent': 'PlexBridge/1.0'
+          }
+        });
+        finalStreamUrl = response.request.responseURL || streamUrl;
+        
+        logger.info('Stream URL resolution completed', {
+          channelId: channel.id,
+          originalUrl: streamUrl,
+          finalUrl: finalStreamUrl,
+          redirected: finalStreamUrl !== streamUrl
+        });
+      } catch (redirectError) {
+        logger.warn('Failed to resolve stream redirect, using original URL', {
+          channelId: channel.id,
+          error: redirectError.message,
+          originalUrl: streamUrl
+        });
+        // Continue with original URL if redirect resolution fails
+      }
+      
+      // Set appropriate headers for MPEG-TS stream
+      res.set({
+        'Content-Type': 'video/mp2t',                 // MPEG-TS MIME type
+        'Access-Control-Allow-Origin': '*',
+        'Access-Control-Allow-Headers': 'Range, Content-Type, Authorization',
+        'Access-Control-Expose-Headers': 'Content-Range, Content-Length, Accept-Ranges',
+        'Cache-Control': 'no-cache, no-store, must-revalidate',
+        'Accept-Ranges': 'bytes'
+      });
+
+      // Get FFmpeg arguments from settings
+      const settingsService = require('./settingsService');
+      const settings = await settingsService.getSettings();
+      
+      // Get configurable FFmpeg command line
+      let ffmpegCommand = settings?.plexlive?.transcoding?.mpegts?.ffmpegArgs || 
+                         config.plexlive?.transcoding?.mpegts?.ffmpegArgs ||
+                         '-hide_banner -loglevel error -i [URL] -c:v copy -c:a copy -f mpegts pipe:1';
+      
+      // Replace [URL] placeholder with actual stream URL
+      ffmpegCommand = ffmpegCommand.replace('[URL]', finalStreamUrl);
+      
+      // Add HLS-specific arguments if needed
+      if (finalStreamUrl.includes('.m3u8')) {
+        const hlsArgs = settings?.plexlive?.transcoding?.mpegts?.hlsProtocolArgs || 
+                       config.plexlive?.transcoding?.mpegts?.hlsProtocolArgs ||
+                       '-allowed_extensions ALL -protocol_whitelist file,http,https,tcp,tls';
+        
+        // Insert HLS args after the input URL
+        ffmpegCommand = ffmpegCommand.replace('-i ' + finalStreamUrl, '-i ' + finalStreamUrl + ' ' + hlsArgs);
+      }
+      
+      // Parse command line into arguments array
+      const args = ffmpegCommand.split(' ').filter(arg => arg.trim() !== '');
+
+      // Log the exact command being executed
+      logger.info('Executing FFmpeg command', {
+        channelId: channel.id,
+        command: `${config.streams.ffmpegPath} ${args.join(' ')}`,
+        finalStreamUrl,
+        clientIP: req.ip
+      });
+
+      const ffmpegProcess = spawn(config.streams.ffmpegPath, args);
+      
+      if (!ffmpegProcess.pid) {
+        throw new Error('Failed to start FFmpeg MPEG-TS transcoding process');
+      }
+
+      logger.info('FFmpeg MPEG-TS process started', { 
+        channelId: channel.id,
+        pid: ffmpegProcess.pid,
+        clientIP: req.ip
+      });
+
+      // Handle process events
+      ffmpegProcess.on('error', (error) => {
+        logger.error('FFmpeg MPEG-TS process error', { 
+          channelId: channel.id,
+          error: error.message 
+        });
+        if (!res.headersSent) {
+          res.status(500).send('Transcoding failed');
+        }
+      });
+
+      ffmpegProcess.stderr.on('data', (data) => {
+        const errorOutput = data.toString();
+        // Log all stderr output for debugging
+        logger.info('FFmpeg MPEG-TS stderr', { 
+          channelId: channel.id,
+          output: errorOutput.trim() 
+        });
+      });
+
+      ffmpegProcess.stdout.on('data', (data) => {
+        logger.info('FFmpeg MPEG-TS stdout data received', {
+          channelId: channel.id,
+          dataSize: data.length
+        });
+      });
+
+      // Clean up on client disconnect
+      req.on('close', () => {
+        if (ffmpegProcess && !ffmpegProcess.killed) {
+          logger.info('Client disconnected, killing FFmpeg MPEG-TS process', { 
+            channelId: channel.id,
+            pid: ffmpegProcess.pid 
+          });
+          ffmpegProcess.kill('SIGTERM');
+        }
+      });
+
+      // Pipe FFmpeg output to client
+      ffmpegProcess.stdout.pipe(res);
+
+    } catch (error) {
+      logger.error('Plex-compatible stream proxy error', { 
+        channelId: channel.id,
+        url: streamUrl, 
+        error: error.message 
+      });
+      if (!res.headersSent) {
+        res.status(500).json({ error: 'Plex stream proxy failed', details: error.message });
+      }
+    }
+  }
+
   // Simple proxy stream method for direct stream proxying (used by routes)
   async proxyStream(streamUrl, req, res) {
     try {

@@ -11,6 +11,15 @@ router.get('/stream/:channelId/:filename?', async (req, res) => {
     const { channelId, filename } = req.params;
     const isSubFile = !!filename;
     
+    // Check if this is a Plex request that needs MPEG-TS format
+    const userAgent = req.get('User-Agent') || '';
+    const isPlexRequest = userAgent.toLowerCase().includes('plex') || 
+                         userAgent.toLowerCase().includes('pms') ||
+                         userAgent.toLowerCase().includes('lavf') ||      // FFmpeg/libav from Plex
+                         userAgent.toLowerCase().includes('ffmpeg') ||    // Direct FFmpeg
+                         req.query.format === 'mpegts' ||
+                         req.query.raw === 'true';
+    
     // Simple debug logging
     logger.info('Stream request received', { 
       channelId, 
@@ -18,7 +27,17 @@ router.get('/stream/:channelId/:filename?', async (req, res) => {
       isSubFile,
       userAgent: req.get('User-Agent'),
       method: req.method,
-      url: req.url
+      url: req.url,
+      isPlexRequest,
+      queryParams: req.query
+    });
+    
+    // TEMPORARY: Console log for immediate debugging
+    console.log('STREAM DEBUG:', {
+      channelId,
+      isSubFile,
+      userAgent: req.get('User-Agent'),
+      isPlexRequest
     });
     
     // Route is working - remove test response
@@ -140,8 +159,23 @@ router.get('/stream/:channelId/:filename?', async (req, res) => {
         res.status(500).send(`Failed to proxy sub-file: ${error.message}`);
       }
     } else {
-      // For main playlist, use the full stream manager with URL rewriting
-      await streamManager.proxyStreamWithChannel(targetUrl, channel, stream, req, res);
+      // For main playlist requests
+      if (isPlexRequest && !isSubFile) {
+        // Plex needs direct MPEG-TS stream, not HLS playlist
+        logger.info('Plex request detected - forcing MPEG-TS transcoding', { 
+          channelId, 
+          userAgent 
+        });
+        
+        // TEMPORARY: Add console debug
+        console.log('ATTEMPTING PLEX TRANSCODING:', { targetUrl, channelId });
+        
+        // Force MPEG-TS transcoding for Plex compatibility
+        await streamManager.proxyPlexCompatibleStream(targetUrl, channel, req, res);
+      } else {
+        // For regular requests, use the full stream manager with URL rewriting
+        await streamManager.proxyStreamWithChannel(targetUrl, channel, stream, req, res);
+      }
     }
     
   } catch (error) {
@@ -197,5 +231,98 @@ router.get('/streams/active', async (req, res) => {
   }
 });
 
+
+// Test endpoint for FFmpeg transcoding (temporary for debugging)
+router.get('/test/ffmpeg/:streamUrl', async (req, res) => {
+  try {
+    const testStreamUrl = decodeURIComponent(req.params.streamUrl);
+    
+    logger.info('FFmpeg test endpoint called', { testStreamUrl });
+    
+    // Resolve redirect manually
+    const axios = require('axios');
+    let finalUrl = testStreamUrl;
+    try {
+      const response = await axios.head(testStreamUrl, {
+        maxRedirects: 5,
+        timeout: 10000,
+        headers: { 'User-Agent': 'PlexBridge/1.0' }
+      });
+      finalUrl = response.request.responseURL || testStreamUrl;
+      logger.info('Test redirect resolution', { original: testStreamUrl, final: finalUrl });
+    } catch (e) {
+      logger.warn('Test redirect failed', { error: e.message });
+    }
+    
+    // Set MPEG-TS headers
+    res.set({
+      'Content-Type': 'video/mp2t',
+      'Access-Control-Allow-Origin': '*',
+      'Cache-Control': 'no-cache'
+    });
+    
+    // Get FFmpeg arguments from settings (same as main implementation)
+    const settingsService = require('../services/settingsService');
+    const config = require('../config');
+    const settings = await settingsService.getSettings();
+    
+    // Get configurable FFmpeg command line
+    let ffmpegCommand = settings?.plexlive?.transcoding?.mpegts?.ffmpegArgs || 
+                       config.plexlive?.transcoding?.mpegts?.ffmpegArgs ||
+                       '-hide_banner -loglevel error -i [URL] -c:v copy -c:a copy -f mpegts pipe:1';
+    
+    // Replace [URL] placeholder with actual stream URL
+    ffmpegCommand = ffmpegCommand.replace('[URL]', finalUrl);
+    
+    // Add HLS-specific arguments if needed
+    if (finalUrl.includes('.m3u8')) {
+      const hlsArgs = settings?.plexlive?.transcoding?.mpegts?.hlsProtocolArgs || 
+                     config.plexlive?.transcoding?.mpegts?.hlsProtocolArgs ||
+                     '-allowed_extensions ALL -protocol_whitelist file,http,https,tcp,tls';
+      
+      // Insert HLS args after the input URL
+      ffmpegCommand = ffmpegCommand.replace('-i ' + finalUrl, '-i ' + finalUrl + ' ' + hlsArgs);
+    }
+    
+    // Parse command line into arguments array
+    const args = ffmpegCommand.split(' ').filter(arg => arg.trim() !== '');
+    
+    const { spawn } = require('child_process');
+    
+    logger.info('Test FFmpeg command', { command: `ffmpeg ${args.join(' ')}` });
+    
+    const ffmpeg = spawn('ffmpeg', args);
+    
+    if (!ffmpeg.pid) {
+      return res.status(500).send('FFmpeg failed to start');
+    }
+    
+    logger.info('Test FFmpeg started', { pid: ffmpeg.pid });
+    
+    ffmpeg.stdout.pipe(res);
+    
+    ffmpeg.stderr.on('data', (data) => {
+      logger.warn('FFmpeg stderr', { error: data.toString() });
+    });
+    
+    ffmpeg.on('error', (error) => {
+      logger.error('FFmpeg error', { error: error.message });
+      if (!res.headersSent) res.status(500).send('FFmpeg error');
+    });
+    
+    ffmpeg.on('close', (code) => {
+      logger.info('FFmpeg process closed', { code });
+    });
+    
+    req.on('close', () => {
+      logger.info('Client disconnected, terminating FFmpeg');
+      ffmpeg.kill('SIGTERM');
+    });
+    
+  } catch (error) {
+    logger.error('Test endpoint error', { error: error.message });
+    res.status(500).send('Test failed');
+  }
+});
 
 module.exports = router;

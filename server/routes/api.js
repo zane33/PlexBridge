@@ -17,8 +17,8 @@ const channelSchema = Joi.object({
   name: Joi.string().required().max(255),
   number: Joi.number().integer().min(1).max(9999).required(),
   enabled: Joi.boolean().default(true),
-  logo: Joi.string().allow(null).max(500),
-  epg_id: Joi.string().allow(null).max(255)
+  logo: Joi.string().allow(null, '').max(500).default(null),
+  epg_id: Joi.string().allow(null, '').max(255).default(null)
 });
 
 const streamSchema = Joi.object({
@@ -126,13 +126,16 @@ const settingsSchema = Joi.object({
 // Middleware for input validation
 const validate = (schema) => {
   return (req, res, next) => {
+    console.log('Validating request body:', req.body);
     const { error, value } = schema.validate(req.body);
     if (error) {
+      console.log('Validation failed:', error.details.map(d => d.message));
       return res.status(400).json({
         error: 'Validation failed',
         details: error.details.map(d => d.message)
       });
     }
+    console.log('Validation successful, validated body:', value);
     req.validatedBody = value;
     next();
   };
@@ -194,11 +197,25 @@ router.post('/channels', validate(channelSchema), async (req, res) => {
   try {
     const id = uuidv4();
     const data = req.validatedBody;
+    
+    // Ensure proper null handling for SQLite
+    const sqlParams = [
+      id, 
+      data.name, 
+      data.number, 
+      data.enabled ? 1 : 0,  // Convert boolean to integer for SQLite
+      data.logo && data.logo.trim() ? data.logo.trim() : null,     // Convert empty strings to null
+      data.epg_id && data.epg_id.trim() ? data.epg_id.trim() : null // Convert empty strings to null
+    ];
+    
+    console.log('Creating channel with data:', data);
+    console.log('SQL parameters:', sqlParams);
+    console.log('Parameter types:', sqlParams.map(p => typeof p));
 
     await database.run(`
       INSERT INTO channels (id, name, number, enabled, logo, epg_id)
       VALUES (?, ?, ?, ?, ?, ?)
-    `, [id, data.name, data.number, data.enabled, data.logo, data.epg_id]);
+    `, sqlParams);
 
     const channel = await database.get('SELECT * FROM channels WHERE id = ?', [id]);
     
@@ -217,57 +234,7 @@ router.post('/channels', validate(channelSchema), async (req, res) => {
   }
 });
 
-router.put('/channels/:id', validate(channelSchema), async (req, res) => {
-  try {
-    const data = req.validatedBody;
-    
-    const result = await database.run(`
-      UPDATE channels 
-      SET name = ?, number = ?, enabled = ?, logo = ?, epg_id = ?
-      WHERE id = ?
-    `, [data.name, data.number, data.enabled, data.logo, data.epg_id, req.params.id]);
-
-    if (result.changes === 0) {
-      return res.status(404).json({ error: 'Channel not found' });
-    }
-
-    const channel = await database.get('SELECT * FROM channels WHERE id = ?', [req.params.id]);
-    
-    // Clear channel lineup cache
-    await cacheService.del('lineup:channels');
-    
-    logger.info('Channel updated', { id: req.params.id, name: data.name });
-    res.json(channel);
-  } catch (error) {
-    if (error.code === 'SQLITE_CONSTRAINT_UNIQUE') {
-      res.status(400).json({ error: 'Channel number already exists' });
-    } else {
-      logger.error('Channel update error:', error);
-      res.status(500).json({ error: 'Failed to update channel' });
-    }
-  }
-});
-
-router.delete('/channels/:id', async (req, res) => {
-  try {
-    const result = await database.run('DELETE FROM channels WHERE id = ?', [req.params.id]);
-    
-    if (result.changes === 0) {
-      return res.status(404).json({ error: 'Channel not found' });
-    }
-
-    // Clear channel lineup cache
-    await cacheService.del('lineup:channels');
-    
-    logger.info('Channel deleted', { id: req.params.id });
-    res.json({ message: 'Channel deleted successfully' });
-  } catch (error) {
-    logger.error('Channel delete error:', error);
-    res.status(500).json({ error: 'Failed to delete channel' });
-  }
-});
-
-// Bulk update channels (for drag-and-drop reordering)
+// Bulk update channels (for drag-and-drop reordering) - MUST BE BEFORE /:id route
 router.put('/channels/bulk-update', async (req, res) => {
   try {
     const { updates } = req.body;
@@ -335,6 +302,63 @@ router.put('/channels/bulk-update', async (req, res) => {
   } catch (error) {
     logger.error('Bulk channel update error:', error);
     res.status(500).json({ error: 'Failed to update channels' });
+  }
+});
+
+router.put('/channels/:id', validate(channelSchema), async (req, res) => {
+  try {
+    const data = req.validatedBody;
+    
+    const result = await database.run(`
+      UPDATE channels 
+      SET name = ?, number = ?, enabled = ?, logo = ?, epg_id = ?
+      WHERE id = ?
+    `, [
+      data.name, 
+      data.number, 
+      data.enabled ? 1 : 0, // Convert boolean to integer for SQLite
+      data.logo && data.logo.trim() ? data.logo.trim() : null, // Convert empty string to null
+      data.epg_id && data.epg_id.trim() ? data.epg_id.trim() : null, // Convert empty string to null
+      req.params.id
+    ]);
+
+    if (result.changes === 0) {
+      return res.status(404).json({ error: 'Channel not found' });
+    }
+
+    const channel = await database.get('SELECT * FROM channels WHERE id = ?', [req.params.id]);
+    
+    // Clear channel lineup cache
+    await cacheService.del('lineup:channels');
+    
+    logger.info('Channel updated', { id: req.params.id, name: data.name });
+    res.json(channel);
+  } catch (error) {
+    if (error.code === 'SQLITE_CONSTRAINT_UNIQUE') {
+      res.status(400).json({ error: 'Channel number already exists' });
+    } else {
+      logger.error('Channel update error:', error);
+      res.status(500).json({ error: 'Failed to update channel' });
+    }
+  }
+});
+
+router.delete('/channels/:id', async (req, res) => {
+  try {
+    const result = await database.run('DELETE FROM channels WHERE id = ?', [req.params.id]);
+    
+    if (result.changes === 0) {
+      return res.status(404).json({ error: 'Channel not found' });
+    }
+
+    // Clear channel lineup cache
+    await cacheService.del('lineup:channels');
+    
+    logger.info('Channel deleted', { id: req.params.id });
+    res.json({ message: 'Channel deleted successfully' });
+  } catch (error) {
+    logger.error('Channel delete error:', error);
+    res.status(500).json({ error: 'Failed to delete channel' });
   }
 });
 
