@@ -102,7 +102,7 @@ function SortableChannelRow({ channel, index, ...props }) {
   const rowStyles = {
     ...props.sx,
     ...style,
-    cursor: 'default',
+    cursor: isDragging ? 'grabbing !important' : 'grab !important', // Make entire row draggable with !important
     opacity: isDragging ? 0.6 : 1, // Less jarring opacity
     backgroundColor: isDragging ? 'rgba(99, 102, 241, 0.04)' : 'transparent',
     // Smooth single transition for all properties
@@ -111,10 +111,15 @@ function SortableChannelRow({ channel, index, ...props }) {
       : 'opacity 200ms ease-out, background-color 200ms ease-out, transform 250ms cubic-bezier(0.4, 0.0, 0.2, 1)',
     '&:hover': {
       backgroundColor: !isDragging ? 'rgba(99, 102, 241, 0.02)' : undefined,
+      cursor: isDragging ? 'grabbing !important' : 'grab !important', // Ensure hover state also shows grab
       '& .drag-handle': {
         opacity: 1,
         color: 'primary.main',
       },
+    },
+    // Ensure all child elements don't override cursor
+    '& *:not(.drag-handle):not(button):not(input):not([role="checkbox"])': {
+      cursor: 'inherit !important',
     },
   };
 
@@ -122,8 +127,23 @@ function SortableChannelRow({ channel, index, ...props }) {
     <TableRow 
       ref={setNodeRef}
       {...attributes}
+      {...listeners} // Apply listeners to entire row
       {...props}
-      sx={rowStyles}
+      sx={{
+        ...rowStyles,
+        // Force cursor with highest specificity
+        '&&': {
+          cursor: isDragging ? 'grabbing' : 'grab',
+        },
+        '&&:hover': {
+          cursor: isDragging ? 'grabbing' : 'grab',
+        },
+        // Ensure draggable attribute is set
+        '&[draggable="true"]': {
+          cursor: isDragging ? 'grabbing' : 'grab',
+        },
+      }}
+      draggable={true}
     >
       {props.children(listeners, isDragging)}
     </TableRow>
@@ -294,6 +314,7 @@ function ChannelManager() {
 
   // Enhanced drag end handler with improved automatic channel numbering and visual feedback
   const handleDragEnd = async (event) => {
+    console.log('=== DRAG END HANDLER CALLED ===');
     console.log('handleDragEnd called with event:', event);
     const { active, over } = event;
     console.log('Drag event - active:', active?.id, 'over:', over?.id);
@@ -305,22 +326,69 @@ function ChannelManager() {
       return;
     }
 
-    const oldIndex = sortedChannels.findIndex((channel) => channel.id === active.id);
-    const newIndex = sortedChannels.findIndex((channel) => channel.id === over.id);
-    console.log(`Drag indices - oldIndex: ${oldIndex}, newIndex: ${newIndex}`);
-
-    if (oldIndex !== newIndex) {
-      console.log('Performing reorder operation...');
-      const draggedChannel = sortedChannels.find(ch => ch.id === active.id);
-      const reorderedChannels = arrayMove(sortedChannels, oldIndex, newIndex);
+    // CRITICAL FIX: For drag and drop to work correctly, we must ensure we're working
+    // within the visible paginated channels but applying changes to the global sorted list
+    
+    // First, validate that both active and over items exist in the current page
+    const paginatedActiveIndex = paginatedChannels.findIndex((channel) => channel.id === active.id);
+    const paginatedOverIndex = paginatedChannels.findIndex((channel) => channel.id === over.id);
+    
+    console.log(`Paginated indices - active: ${paginatedActiveIndex}, over: ${paginatedOverIndex}`);
+    
+    if (paginatedActiveIndex === -1 || paginatedOverIndex === -1) {
+      console.log('One or both drag items not found in current page, canceling');
+      setActiveId(null);
+      setIsDragReordering(false);
+      return;
+    }
+    
+    // Only proceed if the drag actually changed position within the visible page
+    if (paginatedActiveIndex !== paginatedOverIndex) {
+      console.log('Performing reorder operation within paginated view...');
       
-      // Simple and reliable sequential numbering starting from 1
-      const updatedChannels = reorderedChannels.map((channel, index) => ({
+      // Get the channels that are being reordered within the paginated view
+      const draggedChannel = paginatedChannels[paginatedActiveIndex];
+      const targetChannel = paginatedChannels[paginatedOverIndex];
+      
+      console.log(`Dragging "${draggedChannel?.name}" from index ${paginatedActiveIndex} to index ${paginatedOverIndex}`);
+      
+      // Create a new order for the paginated channels using arrayMove
+      const reorderedPaginatedChannels = arrayMove(paginatedChannels, paginatedActiveIndex, paginatedOverIndex);
+      
+      console.log('Original paginated order:', paginatedChannels.map(ch => `${ch.name}(#${ch.number})`));
+      console.log('Reordered paginated order:', reorderedPaginatedChannels.map(ch => `${ch.name}(#${ch.number})`));
+      
+      // Now we need to update the global channels array to reflect this new order
+      // We'll keep all channels not in the current page unchanged, and replace the 
+      // paginated section with the reordered channels
+      
+      const startIndex = page * rowsPerPage;
+      
+      console.log(`Updating global array starting at index ${startIndex}`);
+      
+      // Create new global sorted array
+      const newSortedChannels = [...sortedChannels];
+      
+      // Replace the paginated section with reordered channels
+      for (let i = 0; i < reorderedPaginatedChannels.length; i++) {
+        const globalIndex = startIndex + i;
+        if (globalIndex < newSortedChannels.length) {
+          console.log(`Setting global index ${globalIndex} to channel: ${reorderedPaginatedChannels[i].name}`);
+          newSortedChannels[globalIndex] = reorderedPaginatedChannels[i];
+        }
+      }
+      
+      console.log('New global sorted order:', newSortedChannels.map(ch => `${ch.name}(#${ch.number})`));
+      
+      // Apply sequential numbering to the entire array
+      const updatedChannels = newSortedChannels.map((channel, index) => ({
         ...channel,
         number: index + 1
       }));
       
-      // Update UI optimistically with smooth animation
+      console.log('Updated channel order:', updatedChannels.map(ch => `${ch.name} (#${ch.number})`));
+      
+      // Update UI optimistically
       const newChannelsState = channels.map(channel => {
         const updated = updatedChannels.find(uc => uc.id === channel.id);
         return updated || channel;
@@ -331,7 +399,7 @@ function ChannelManager() {
       
       // Show immediate feedback
       enqueueSnackbar(
-        `Moving "${draggedChannel.name}" to position ${newIndex + 1}...`,
+        `Moving "${draggedChannel.name}" within current page...`,
         { 
           variant: 'info',
           autoHideDuration: 2000,
@@ -339,17 +407,17 @@ function ChannelManager() {
       );
       
       try {
-        // Send bulk update to backend with only the changed numbers
+        // Send bulk update to backend
+        console.log('Sending bulk update to backend...');
         await handleBulkReorder(updatedChannels);
         
         const oldNumber = draggedChannel.number;
         const newNumber = updatedChannels.find(ch => ch.id === active.id).number;
-        const affectedChannels = updatedChannels.filter(ch => 
-          ch.number !== sortedChannels.find(sc => sc.id === ch.id)?.number
-        ).length;
+        
+        console.log(`Channel moved from #${oldNumber} to #${newNumber}`);
         
         enqueueSnackbar(
-          `✅ Channel "${draggedChannel.name}" moved from #${oldNumber} to #${newNumber}! ${affectedChannels > 1 ? `${affectedChannels} channels renumbered` : 'No other channels affected'}`, 
+          `✅ Channel "${draggedChannel.name}" moved from #${oldNumber} to #${newNumber}!`, 
           { 
             variant: 'success',
             autoHideDuration: 4000,
@@ -367,7 +435,13 @@ function ChannelManager() {
         setActiveId(null);
         setIsDragReordering(false);
       }
+    } else {
+      console.log('No position change detected, clearing drag state');
+      setActiveId(null);
+      setIsDragReordering(false);
     }
+    
+    console.log('=== DRAG END HANDLER COMPLETED ===');
   };
 
   // Handle drag start for better visual feedback
@@ -403,8 +477,11 @@ function ChannelManager() {
     easing: 'cubic-bezier(0.4, 0.0, 0.2, 1)',
   };
 
-  // Get the active dragged channel for DragOverlay
-  const activeChannel = activeId ? sortedChannels.find(ch => ch.id === activeId) : null;
+  // Get the active dragged channel for DragOverlay - use paginatedChannels for immediate lookup
+  const activeChannel = activeId ? (
+    paginatedChannels.find(ch => ch.id === activeId) || 
+    sortedChannels.find(ch => ch.id === activeId)
+  ) : null;
 
   // Handle bulk channel reordering
   const handleBulkReorder = async (reorderedChannels) => {
@@ -786,150 +863,150 @@ function ChannelManager() {
       >
         <CardContent sx={{ p: { xs: 2, sm: 3 } }}>
           {loading ? renderSkeletonTable() : (
-            <TableContainer 
-              component={Paper} 
-              sx={{ 
-                maxHeight: isMobile ? '70vh' : 'none',
-                overflowX: 'auto',
-              }}
+            <DndContext 
+              sensors={sensors}
+              collisionDetection={closestCenter}
+              onDragStart={handleDragStart}
+              onDragEnd={handleDragEnd}
+              onDragCancel={handleDragCancel}
+              modifiers={[restrictToVerticalAxis, restrictToParentElement]}
             >
-              <Table stickyHeader={isMobile}>
-                <TableHead>
-                  <TableRow>
-                    <TableCell 
-                      padding="none" 
-                      sx={{ 
-                        width: 44, 
-                        textAlign: 'center',
-                        borderBottom: '2px solid rgba(99, 102, 241, 0.1)'
-                      }}
-                    >
-                      <Tooltip title="Drag rows to reorder">
-                        <Box
-                          sx={{
-                            display: 'flex',
-                            alignItems: 'center',
-                            justifyContent: 'center',
-                            width: 28,
-                            height: 28,
-                            borderRadius: 1.5,
-                            backgroundColor: 'rgba(0, 0, 0, 0.04)',
-                            margin: '0 auto',
-                            opacity: 0.7,
+              <SortableContext 
+                items={paginatedChannels.map(ch => ch.id)}
+                strategy={verticalListSortingStrategy}
+              >
+                <TableContainer 
+                  component={Paper} 
+                  sx={{ 
+                    maxHeight: isMobile ? '70vh' : 'none',
+                    overflowX: 'auto',
+                  }}
+                >
+                  <Table stickyHeader={isMobile}>
+                    <TableHead>
+                      <TableRow>
+                        <TableCell 
+                          padding="none" 
+                          sx={{ 
+                            width: 44, 
+                            textAlign: 'center',
+                            borderBottom: '2px solid rgba(99, 102, 241, 0.1)'
                           }}
                         >
-                          <DragHandleIcon 
-                            sx={{ 
-                              fontSize: 16, 
-                              color: 'text.secondary',
-                            }} 
+                          <Tooltip title="Drag rows to reorder">
+                            <Box
+                              sx={{
+                                display: 'flex',
+                                alignItems: 'center',
+                                justifyContent: 'center',
+                                width: 28,
+                                height: 28,
+                                borderRadius: 1.5,
+                                backgroundColor: 'rgba(0, 0, 0, 0.04)',
+                                margin: '0 auto',
+                                opacity: 0.7,
+                              }}
+                            >
+                              <DragHandleIcon 
+                                sx={{ 
+                                  fontSize: 16, 
+                                  color: 'text.secondary',
+                                }} 
+                              />
+                            </Box>
+                          </Tooltip>
+                        </TableCell>
+                        <TableCell 
+                          padding="checkbox"
+                          sx={{ borderBottom: '2px solid rgba(99, 102, 241, 0.1)' }}
+                        >
+                          <Checkbox
+                            indeterminate={selectedChannels.length > 0 && selectedChannels.length < channels.length}
+                            checked={channels.length > 0 && selectedChannels.length === channels.length}
+                            onChange={handleSelectAll}
+                            data-testid="select-all-channels"
                           />
-                        </Box>
-                      </Tooltip>
-                    </TableCell>
-                    <TableCell 
-                      padding="checkbox"
-                      sx={{ borderBottom: '2px solid rgba(99, 102, 241, 0.1)' }}
-                    >
-                      <Checkbox
-                        indeterminate={selectedChannels.length > 0 && selectedChannels.length < channels.length}
-                        checked={channels.length > 0 && selectedChannels.length === channels.length}
-                        onChange={handleSelectAll}
-                        data-testid="select-all-channels"
-                      />
-                    </TableCell>
-                    <TableCell 
-                      sx={{ 
-                        minWidth: 60,
-                        borderBottom: '2px solid rgba(99, 102, 241, 0.1)'
-                      }}
-                    >
-                      <TableSortLabel
-                        active={sortConfig.key === 'number'}
-                        direction={sortConfig.key === 'number' ? sortConfig.direction : 'asc'}
-                        onClick={() => handleSort('number')}
-                        data-testid="sort-by-number"
-                      >
-                        Number
-                      </TableSortLabel>
-                    </TableCell>
-                    <TableCell 
-                      sx={{ 
-                        minWidth: 150,
-                        borderBottom: '2px solid rgba(99, 102, 241, 0.1)'
-                      }}
-                    >
-                      <TableSortLabel
-                        active={sortConfig.key === 'name'}
-                        direction={sortConfig.key === 'name' ? sortConfig.direction : 'asc'}
-                        onClick={() => handleSort('name')}
-                        data-testid="sort-by-name"
-                      >
-                        Name
-                      </TableSortLabel>
-                    </TableCell>
-                    <TableCell 
-                      sx={{ 
-                        minWidth: 100, 
-                        display: { xs: 'none', sm: 'table-cell' },
-                        borderBottom: '2px solid rgba(99, 102, 241, 0.1)'
-                      }}
-                    >
-                      EPG ID
-                    </TableCell>
-                    <TableCell 
-                      sx={{ 
-                        minWidth: 80,
-                        borderBottom: '2px solid rgba(99, 102, 241, 0.1)'
-                      }}
-                    >
-                      <TableSortLabel
-                        active={sortConfig.key === 'stream_count'}
-                        direction={sortConfig.key === 'stream_count' ? sortConfig.direction : 'asc'}
-                        onClick={() => handleSort('stream_count')}
-                        data-testid="sort-by-streams"
-                      >
-                        Streams
-                      </TableSortLabel>
-                    </TableCell>
-                    <TableCell 
-                      sx={{ 
-                        minWidth: 100,
-                        borderBottom: '2px solid rgba(99, 102, 241, 0.1)'
-                      }}
-                    >
-                      <TableSortLabel
-                        active={sortConfig.key === 'enabled'}
-                        direction={sortConfig.key === 'enabled' ? sortConfig.direction : 'asc'}
-                        onClick={() => handleSort('enabled')}
-                        data-testid="sort-by-status"
-                      >
-                        Status
-                      </TableSortLabel>
-                    </TableCell>
-                    <TableCell 
-                      sx={{ 
-                        minWidth: 120,
-                        borderBottom: '2px solid rgba(99, 102, 241, 0.1)'
-                      }}
-                    >
-                      Actions
-                    </TableCell>
-                  </TableRow>
-                </TableHead>
-                <TableBody>
-                  <DndContext 
-                    sensors={sensors}
-                    collisionDetection={closestCenter}
-                    onDragStart={handleDragStart}
-                    onDragEnd={handleDragEnd}
-                    onDragCancel={handleDragCancel}
-                    modifiers={[restrictToVerticalAxis, restrictToParentElement]}
-                  >
-                    <SortableContext 
-                      items={paginatedChannels.map(ch => ch.id)}
-                      strategy={verticalListSortingStrategy}
-                    >
+                        </TableCell>
+                        <TableCell 
+                          sx={{ 
+                            minWidth: 60,
+                            borderBottom: '2px solid rgba(99, 102, 241, 0.1)'
+                          }}
+                        >
+                          <TableSortLabel
+                            active={sortConfig.key === 'number'}
+                            direction={sortConfig.key === 'number' ? sortConfig.direction : 'asc'}
+                            onClick={() => handleSort('number')}
+                            data-testid="sort-by-number"
+                          >
+                            Number
+                          </TableSortLabel>
+                        </TableCell>
+                        <TableCell 
+                          sx={{ 
+                            minWidth: 150,
+                            borderBottom: '2px solid rgba(99, 102, 241, 0.1)'
+                          }}
+                        >
+                          <TableSortLabel
+                            active={sortConfig.key === 'name'}
+                            direction={sortConfig.key === 'name' ? sortConfig.direction : 'asc'}
+                            onClick={() => handleSort('name')}
+                            data-testid="sort-by-name"
+                          >
+                            Name
+                          </TableSortLabel>
+                        </TableCell>
+                        <TableCell 
+                          sx={{ 
+                            minWidth: 100, 
+                            display: { xs: 'none', sm: 'table-cell' },
+                            borderBottom: '2px solid rgba(99, 102, 241, 0.1)'
+                          }}
+                        >
+                          EPG ID
+                        </TableCell>
+                        <TableCell 
+                          sx={{ 
+                            minWidth: 80,
+                            borderBottom: '2px solid rgba(99, 102, 241, 0.1)'
+                          }}
+                        >
+                          <TableSortLabel
+                            active={sortConfig.key === 'stream_count'}
+                            direction={sortConfig.key === 'stream_count' ? sortConfig.direction : 'asc'}
+                            onClick={() => handleSort('stream_count')}
+                            data-testid="sort-by-streams"
+                          >
+                            Streams
+                          </TableSortLabel>
+                        </TableCell>
+                        <TableCell 
+                          sx={{ 
+                            minWidth: 100,
+                            borderBottom: '2px solid rgba(99, 102, 241, 0.1)'
+                          }}
+                        >
+                          <TableSortLabel
+                            active={sortConfig.key === 'enabled'}
+                            direction={sortConfig.key === 'enabled' ? sortConfig.direction : 'asc'}
+                            onClick={() => handleSort('enabled')}
+                            data-testid="sort-by-status"
+                          >
+                            Status
+                          </TableSortLabel>
+                        </TableCell>
+                        <TableCell 
+                          sx={{ 
+                            minWidth: 120,
+                            borderBottom: '2px solid rgba(99, 102, 241, 0.1)'
+                          }}
+                        >
+                          Actions
+                        </TableCell>
+                      </TableRow>
+                    </TableHead>
+                    <TableBody>
                       {paginatedChannels.map((channel, index) => (
                         <SortableChannelRow 
                           key={channel.id}
@@ -959,7 +1036,6 @@ function ChannelManager() {
                                   padding: '12px 8px',
                                   textAlign: 'center'
                                 }}
-                                {...listeners}
                               >
                                 <Tooltip title="Drag to reorder" placement="top">
                                   <Box
@@ -998,9 +1074,10 @@ function ChannelManager() {
                               {/* Checkbox Column */}
                               <TableCell 
                                 padding="checkbox"
-                                sx={{ cursor: 'default' }}
+                                sx={{ cursor: 'default !important' }}
                                 onMouseDown={(e) => e.stopPropagation()}
                                 onPointerDown={(e) => e.stopPropagation()}
+                                onClick={(e) => e.stopPropagation()}
                               >
                                 <Checkbox
                                   checked={selectedChannels.includes(channel.id)}
@@ -1149,9 +1226,10 @@ function ChannelManager() {
                                 />
                               </TableCell>
                               <TableCell 
-                                sx={{ cursor: 'default' }}
+                                sx={{ cursor: 'default !important' }}
                                 onMouseDown={(e) => e.stopPropagation()}
                                 onPointerDown={(e) => e.stopPropagation()}
+                                onClick={(e) => e.stopPropagation()}
                               >
                                 <Box display="flex" gap={1}>
                                   <Tooltip title="Edit Channel">
@@ -1222,97 +1300,97 @@ function ChannelManager() {
                           )}
                         </SortableChannelRow>
                       ))}
-                    </SortableContext>
-                    
-                    {/* Clean and Professional Drag Overlay */}
-                    <DragOverlay 
-                      dropAnimation={dropAnimationConfig}
-                      style={{
-                        zIndex: 1000,
-                      }}
-                    >
-                      {activeChannel ? (
-                        <Paper
-                          elevation={8}
-                          sx={{
-                            p: 1.5,
-                            backgroundColor: 'background.paper',
-                            border: '2px solid',
-                            borderColor: 'primary.main',
-                            borderRadius: 2,
-                            minWidth: 250,
-                            cursor: 'grabbing',
-                            transform: 'rotate(2deg)',
-                            opacity: 0.95,
+                      {channels.length === 0 && !loading && (
+                        <TableRow>
+                          <TableCell colSpan={8} align="center" sx={{ py: 8 }}>
+                            <Box display="flex" flexDirection="column" alignItems="center" gap={2}>
+                              <TvIcon sx={{ fontSize: 64, color: 'text.disabled' }} />
+                              <Typography variant="h6" color="text.secondary">
+                                No channels found
+                              </Typography>
+                              <Typography variant="body2" color="text.disabled">
+                                Get started by adding your first channel
+                              </Typography>
+                            </Box>
+                          </TableCell>
+                        </TableRow>
+                      )}
+                    </TableBody>
+                  </Table>
+                </TableContainer>
+              </SortableContext>
+              
+              {/* Clean and Professional Drag Overlay */}
+              <DragOverlay 
+                dropAnimation={dropAnimationConfig}
+                style={{
+                  zIndex: 1000,
+                }}
+              >
+                {activeChannel ? (
+                  <Paper
+                    elevation={8}
+                    sx={{
+                      p: 1.5,
+                      backgroundColor: 'background.paper',
+                      border: '2px solid',
+                      borderColor: 'primary.main',
+                      borderRadius: 2,
+                      minWidth: 250,
+                      cursor: 'grabbing',
+                      transform: 'rotate(2deg)',
+                      opacity: 0.95,
+                    }}
+                  >
+                    <Box display="flex" alignItems="center" gap={1.5}>
+                      <DragHandleIcon 
+                        sx={{ 
+                          color: 'primary.main', 
+                          fontSize: 20 
+                        }} 
+                      />
+                      <Box 
+                        sx={{ 
+                          width: 28, 
+                          height: 28,
+                          borderRadius: 1.5,
+                          background: 'linear-gradient(135deg, #6366f1 0%, #8b5cf6 100%)',
+                          display: 'flex',
+                          alignItems: 'center',
+                          justifyContent: 'center',
+                          color: 'white',
+                          fontWeight: 700,
+                          fontSize: '0.75rem'
+                        }}
+                      >
+                        {activeChannel.number}
+                      </Box>
+                      <Box>
+                        <Typography 
+                          variant="body2" 
+                          sx={{ 
+                            fontWeight: 600,
+                            color: 'text.primary',
+                            lineHeight: 1.2
                           }}
                         >
-                          <Box display="flex" alignItems="center" gap={1.5}>
-                            <DragHandleIcon 
-                              sx={{ 
-                                color: 'primary.main', 
-                                fontSize: 20 
-                              }} 
-                            />
-                            <Box 
-                              sx={{ 
-                                width: 28, 
-                                height: 28,
-                                borderRadius: 1.5,
-                                background: 'linear-gradient(135deg, #6366f1 0%, #8b5cf6 100%)',
-                                display: 'flex',
-                                alignItems: 'center',
-                                justifyContent: 'center',
-                                color: 'white',
-                                fontWeight: 700,
-                                fontSize: '0.75rem'
-                              }}
-                            >
-                              {activeChannel.number}
-                            </Box>
-                            <Box>
-                              <Typography 
-                                variant="body2" 
-                                sx={{ 
-                                  fontWeight: 600,
-                                  color: 'text.primary',
-                                  lineHeight: 1.2
-                                }}
-                              >
-                                {activeChannel.name}
-                              </Typography>
-                              <Typography 
-                                variant="caption" 
-                                sx={{ 
-                                  color: 'text.secondary',
-                                  lineHeight: 1.2
-                                }}
-                              >
-                                Dragging channel...
-                              </Typography>
-                            </Box>
-                          </Box>
-                        </Paper>
-                      ) : null}
-                    </DragOverlay>
-                  </DndContext>
-                  {channels.length === 0 && !loading && (
-                    <TableRow>
-                      <TableCell colSpan={8} align="center" sx={{ py: 8 }}>
-                        <Box display="flex" flexDirection="column" alignItems="center" gap={2}>
-                          <TvIcon sx={{ fontSize: 64, color: 'text.disabled' }} />
-                          <Typography variant="h6" color="text.secondary">
-                            No channels found
-                          </Typography>
-                          <Typography variant="body2" color="text.disabled">
-                            Get started by adding your first channel
-                          </Typography>
-                        </Box>
-                      </TableCell>
-                    </TableRow>
-                  )}
-                </TableBody>
-              </Table>
-            </TableContainer>
+                          {activeChannel.name}
+                        </Typography>
+                        <Typography 
+                          variant="caption" 
+                          sx={{ 
+                            color: 'text.secondary',
+                            lineHeight: 1.2
+                          }}
+                        >
+                          Dragging channel...
+                        </Typography>
+                      </Box>
+                    </Box>
+                  </Paper>
+                ) : null}
+              </DragOverlay>
+            </DndContext>
           )}
           
           {!loading && channels.length > 0 && (
