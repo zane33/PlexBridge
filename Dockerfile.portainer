@@ -39,6 +39,7 @@ RUN addgroup -g 1001 -S plextv && \
 
 # Create data directories with correct permissions
 RUN mkdir -p /data/database /data/cache /data/logs /data/logos /app/config && \
+    chmod -R 755 /data && \
     chown -R plextv:plextv /data /app
 
 # Copy package files for server

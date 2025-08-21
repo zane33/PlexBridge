@@ -66,15 +66,13 @@ const consoleFormat = winston.format.combine(
 // Create transports
 const transports = [];
 
-// Console transport for development
-if (process.env.NODE_ENV !== 'production') {
-  transports.push(
-    new winston.transports.Console({
-      level: 'debug',
-      format: consoleFormat
-    })
-  );
-}
+// Console transport for all environments (for debugging file logging issues)
+transports.push(
+  new winston.transports.Console({
+    level: process.env.NODE_ENV === 'production' ? 'info' : 'debug',
+    format: consoleFormat
+  })
+);
 
 // File transports for all environments
 const logDir = config.logging.path || path.join(__dirname, '../../data/logs');
@@ -92,20 +90,29 @@ try {
 }
 
 if (fileLoggingEnabled) {
+  console.log('Winston: Initializing file logging to', logDir);
   // Application log file
-  transports.push(
-    new DailyRotateFile({
-      filename: path.join(logDir, 'app-%DATE%.log'),
-      datePattern: 'YYYY-MM-DD',
-      level: config.logging.level,
-      format: customFormat,
-      maxFiles: config.logging.maxFiles,
-      maxSize: config.logging.maxSize,
-      zippedArchive: true,
-      handleExceptions: false,
-      handleRejections: false
-    })
-  );
+  const fileTransport = new DailyRotateFile({
+    filename: path.join(logDir, 'app-%DATE%.log'),
+    datePattern: 'YYYY-MM-DD',
+    level: config.logging.level,
+    format: customFormat,
+    maxFiles: config.logging.maxFiles,
+    maxSize: config.logging.maxSize,
+    zippedArchive: true,
+    handleExceptions: false,
+    handleRejections: false
+  });
+  
+  fileTransport.on('new', (filename) => {
+    console.log('Winston: New log file created:', filename);
+  });
+  
+  fileTransport.on('error', (error) => {
+    console.error('Winston file transport error:', error);
+  });
+  
+  transports.push(fileTransport);
 
   // Error log file
   transports.push(

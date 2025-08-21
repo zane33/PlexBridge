@@ -57,11 +57,11 @@ router.get('/health', async (req, res) => {
     // Check cache service
     try {
       const cacheService = require('../services/cacheService');
-      if (cacheService && cacheService.isConnected) {
-        const cacheConnected = await cacheService.isConnected();
+      if (cacheService && typeof cacheService.isConnected !== 'undefined') {
+        const cacheHealth = await cacheService.healthCheck();
         health.services.cache = {
-          status: cacheConnected ? 'healthy' : 'unhealthy',
-          type: cacheService.cacheType || 'memory',
+          status: cacheHealth.status === 'healthy' ? 'healthy' : 'degraded',
+          type: cacheHealth.type || 'memory',
           timestamp: new Date().toISOString()
         };
       } else {
