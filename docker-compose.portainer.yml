@@ -40,9 +40,12 @@ services:
       - "8080:8080"
       - "1900:1900/udp"
     volumes:
-      # Use named volumes for all persistent data
+      # Use named volumes for all persistent data (recommended for Portainer)
       - plextv_data:/data
       - plextv_config:/app/config
+      # Alternative: Use bind mounts (uncomment and create directories first)
+      # - ./data:/data
+      # - ./config:/app/config
     environment:
       # Application environment
       - NODE_ENV=production
