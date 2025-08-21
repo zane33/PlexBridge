@@ -137,6 +137,7 @@ function StreamManager() {
   const isMobile = useMediaQuery(theme.breakpoints.down('md'));
 
   const handleInputChange = useCallback((field, value) => {
+    console.log(`handleInputChange: ${field} = ${value}`);
     setFormData(prev => ({
       ...prev,
       [field]: value
@@ -416,6 +417,30 @@ function StreamManager() {
       return;
     }
 
+    // Validate required fields before submitting
+    const isM3UPlaylist = formData.type === 'm3u_playlist';
+    
+    console.log('Pre-submit validation - formData:', formData);
+    console.log('isM3UPlaylist:', isM3UPlaylist);
+    console.log('channel_id:', formData.channel_id);
+    console.log('channel_id type:', typeof formData.channel_id);
+    console.log('channel_id empty check:', !formData.channel_id);
+    
+    if (!formData.name.trim()) {
+      enqueueSnackbar('Stream name is required', { variant: 'error' });
+      return;
+    }
+    
+    if (!formData.url.trim()) {
+      enqueueSnackbar('Stream URL is required', { variant: 'error' });
+      return;
+    }
+    
+    if (!isM3UPlaylist && !formData.channel_id) {
+      enqueueSnackbar('Please select a channel for this stream', { variant: 'error' });
+      return;
+    }
+
     setSaving(true);
     try {
       const data = {
@@ -423,6 +448,9 @@ function StreamManager() {
         name: formData.name.trim(),
         url: formData.url.trim(),
       };
+      
+      console.log('Submitting stream data:', data);
+      console.log('Original formData:', formData);
 
       if (editingStream) {
         await api.put(`/api/streams/${editingStream.id}`, data);
@@ -435,7 +463,19 @@ function StreamManager() {
       setDialogOpen(false);
       fetchStreams();
     } catch (error) {
-      const errorMessage = error.response?.data?.error || 'Failed to save stream';
+      console.error('Stream save error:', error.response?.data);
+      
+      let errorMessage = 'Failed to save stream';
+      
+      if (error.response?.data) {
+        if (error.response.data.details && Array.isArray(error.response.data.details)) {
+          // Show detailed validation errors
+          errorMessage = error.response.data.details.join(', ');
+        } else if (error.response.data.error) {
+          errorMessage = error.response.data.error;
+        }
+      }
+      
       enqueueSnackbar(errorMessage, { variant: 'error' });
     } finally {
       setSaving(false);

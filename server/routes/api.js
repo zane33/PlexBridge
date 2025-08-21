@@ -27,8 +27,8 @@ const streamSchema = Joi.object({
   url: Joi.string().uri().required(),
   type: Joi.string().valid('hls', 'dash', 'rtsp', 'rtmp', 'udp', 'http', 'mms', 'srt').required(),
   backup_urls: Joi.array().items(Joi.string().uri()).default([]),
-  auth_username: Joi.string().allow(null).max(255),
-  auth_password: Joi.string().allow(null).max(255),
+  auth_username: Joi.string().allow(null, '').max(255),
+  auth_password: Joi.string().allow(null, '').max(255),
   headers: Joi.object().default({}),
   protocol_options: Joi.object().default({}),
   enabled: Joi.boolean().default(true)
@@ -439,12 +439,12 @@ router.post('/streams', validate(streamSchema), async (req, res) => {
       data.name,
       data.url,
       data.type,
-      JSON.stringify(data.backup_urls),
-      data.auth_username,
-      data.auth_password,
-      JSON.stringify(data.headers),
-      JSON.stringify(data.protocol_options),
-      data.enabled
+      JSON.stringify(data.backup_urls || []),
+      data.auth_username || null,
+      data.auth_password || null,
+      JSON.stringify(data.headers || {}),
+      JSON.stringify(data.protocol_options || {}),
+      data.enabled ? 1 : 0  // Convert boolean to integer for SQLite
     ]);
 
     const stream = await database.get('SELECT * FROM streams WHERE id = ?', [id]);
@@ -452,8 +452,26 @@ router.post('/streams', validate(streamSchema), async (req, res) => {
     logger.info('Stream created', { id, name: data.name, url: data.url });
     res.status(201).json(stream);
   } catch (error) {
-    logger.error('Stream create error:', error);
-    res.status(500).json({ error: 'Failed to create stream' });
+    logger.error('Stream create error:', {
+      message: error.message,
+      code: error.code,
+      errno: error.errno
+    });
+    
+    if (error.code === 'SQLITE_CONSTRAINT_FOREIGNKEY') {
+      res.status(400).json({ 
+        error: 'Validation failed', 
+        details: ['Channel ID does not exist. Please select a valid channel.']
+      });
+    } else if (error.message && error.message.includes('FOREIGN KEY constraint failed')) {
+      res.status(400).json({ 
+        error: 'Validation failed', 
+        details: ['Channel ID does not exist. Please select a valid channel.']
+      });
+    } else {
+      logger.error('Stream create error:', error);
+      res.status(500).json({ error: 'Failed to create stream' });
+    }
   }
 });
 
@@ -471,12 +489,12 @@ router.put('/streams/:id', validate(streamSchema), async (req, res) => {
       data.name,
       data.url,
       data.type,
-      JSON.stringify(data.backup_urls),
-      data.auth_username,
-      data.auth_password,
-      JSON.stringify(data.headers),
-      JSON.stringify(data.protocol_options),
-      data.enabled,
+      JSON.stringify(data.backup_urls || []),
+      data.auth_username || null,
+      data.auth_password || null,
+      JSON.stringify(data.headers || {}),
+      JSON.stringify(data.protocol_options || {}),
+      data.enabled ? 1 : 0,  // Convert boolean to integer for SQLite
       req.params.id
     ]);
 
@@ -492,8 +510,26 @@ router.put('/streams/:id', validate(streamSchema), async (req, res) => {
     logger.info('Stream updated', { id: req.params.id, name: data.name });
     res.json(stream);
   } catch (error) {
-    logger.error('Stream update error:', error);
-    res.status(500).json({ error: 'Failed to update stream' });
+    logger.error('Stream update error:', {
+      message: error.message,
+      code: error.code,
+      errno: error.errno
+    });
+    
+    if (error.code === 'SQLITE_CONSTRAINT_FOREIGNKEY') {
+      res.status(400).json({ 
+        error: 'Validation failed', 
+        details: ['Channel ID does not exist. Please select a valid channel.']
+      });
+    } else if (error.message && error.message.includes('FOREIGN KEY constraint failed')) {
+      res.status(400).json({ 
+        error: 'Validation failed', 
+        details: ['Channel ID does not exist. Please select a valid channel.']
+      });
+    } else {
+      logger.error('Stream update error:', error);
+      res.status(500).json({ error: 'Failed to update stream' });
+    }
   }
 });
 
