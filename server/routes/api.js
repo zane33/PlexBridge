@@ -11,6 +11,7 @@ const Joi = require('joi');
 const fs = require('fs');
 const path = require('path');
 const config = require('../config');
+const axios = require('axios');
 
 // Input validation schemas
 const channelSchema = Joi.object({
@@ -821,6 +822,42 @@ router.post('/epg/sources', validate(epgSourceSchema), async (req, res) => {
     const id = uuidv4();
     const data = req.validatedBody;
 
+    // Validate URL accessibility before saving
+    try {
+      const response = await axios.head(data.url, {
+        timeout: 10000, // 10 second timeout for validation
+        maxRedirects: 5,
+        validateStatus: function (status) {
+          return status >= 200 && status < 400; // Accept 2xx and 3xx status codes
+        }
+      });
+      
+      logger.info('EPG URL validation successful', { 
+        url: data.url, 
+        status: response.status,
+        contentType: response.headers['content-type']
+      });
+    } catch (urlError) {
+      logger.error('EPG URL validation failed', { 
+        url: data.url, 
+        error: urlError.message,
+        status: urlError.response?.status
+      });
+      
+      let errorMessage = 'EPG source URL is not accessible';
+      if (urlError.response?.status === 404) {
+        errorMessage = 'EPG source URL not found (404 error) - check if the URL is correct';
+      } else if (urlError.code === 'ECONNABORTED') {
+        errorMessage = 'EPG source URL timeout - server may be slow or unresponsive';
+      } else if (urlError.code === 'ENOTFOUND') {
+        errorMessage = 'EPG source URL could not be resolved - check the URL';
+      } else if (urlError.response?.status >= 500) {
+        errorMessage = `EPG source server error (${urlError.response.status}) - try again later`;
+      }
+      
+      return res.status(400).json({ error: errorMessage });
+    }
+
     await epgService.addSource({ id, ...data });
     
     const source = await database.get('SELECT * FROM epg_sources WHERE id = ?', [id]);
@@ -837,11 +874,47 @@ router.put('/epg/sources/:id', validate(epgSourceSchema), async (req, res) => {
   try {
     const data = req.validatedBody;
     
+    // Validate URL accessibility before saving
+    try {
+      const response = await axios.head(data.url, {
+        timeout: 10000, // 10 second timeout for validation
+        maxRedirects: 5,
+        validateStatus: function (status) {
+          return status >= 200 && status < 400; // Accept 2xx and 3xx status codes
+        }
+      });
+      
+      logger.info('EPG URL validation successful', { 
+        url: data.url, 
+        status: response.status,
+        contentType: response.headers['content-type']
+      });
+    } catch (urlError) {
+      logger.error('EPG URL validation failed', { 
+        url: data.url, 
+        error: urlError.message,
+        status: urlError.response?.status
+      });
+      
+      let errorMessage = 'EPG source URL is not accessible';
+      if (urlError.response?.status === 404) {
+        errorMessage = 'EPG source URL not found (404 error) - check if the URL is correct';
+      } else if (urlError.code === 'ECONNABORTED') {
+        errorMessage = 'EPG source URL timeout - server may be slow or unresponsive';
+      } else if (urlError.code === 'ENOTFOUND') {
+        errorMessage = 'EPG source URL could not be resolved - check the URL';
+      } else if (urlError.response?.status >= 500) {
+        errorMessage = `EPG source server error (${urlError.response.status}) - try again later`;
+      }
+      
+      return res.status(400).json({ error: errorMessage });
+    }
+    
     const result = await database.run(`
       UPDATE epg_sources 
       SET name = ?, url = ?, refresh_interval = ?, enabled = ?
       WHERE id = ?
-    `, [data.name, data.url, data.refresh_interval, data.enabled, req.params.id]);
+    `, [data.name, data.url, data.refresh_interval, data.enabled ? 1 : 0, req.params.id]);
 
     if (result.changes === 0) {
       return res.status(404).json({ error: 'EPG source not found' });
@@ -2632,6 +2705,102 @@ router.get('/settings/metadata', (req, res) => {
   } catch (error) {
     logger.error('Settings metadata error:', error);
     res.status(500).json({ error: 'Failed to fetch settings metadata' });
+  }
+});
+
+// Test EPG URL endpoint
+router.post('/epg/test-url', async (req, res) => {
+  try {
+    const { url } = req.body;
+    
+    if (!url) {
+      return res.status(400).json({ error: 'URL is required' });
+    }
+
+    // Validate URL format
+    try {
+      new URL(url);
+    } catch (urlError) {
+      return res.status(400).json({ error: 'Invalid URL format' });
+    }
+
+    try {
+      // First try HEAD request for efficiency
+      const headResponse = await axios.head(url, {
+        timeout: 15000,
+        maxRedirects: 5,
+        validateStatus: function (status) {
+          return status >= 200 && status < 400;
+        }
+      });
+
+      // If HEAD succeeds, try to get a small sample of the content
+      const sampleResponse = await axios.get(url, {
+        timeout: 30000,
+        maxRedirects: 5,
+        responseType: 'arraybuffer',
+        maxContentLength: 1024 * 1024, // 1MB sample
+        headers: {
+          'User-Agent': 'PlexBridge/1.0 (EPG URL Tester)',
+          'Accept': 'application/xml, text/xml, */*'
+        }
+      });
+
+      const sampleData = sampleResponse.data.toString('utf8').substring(0, 1000);
+      
+      // Check if it looks like XMLTV
+      const isXMLTV = sampleData.includes('<tv') || sampleData.includes('<programme') || sampleData.includes('<?xml');
+      
+      res.json({
+        success: true,
+        message: 'EPG URL is accessible and appears to be valid XMLTV format',
+        details: {
+          status: sampleResponse.status,
+          contentType: sampleResponse.headers['content-type'],
+          contentLength: sampleResponse.headers['content-length'],
+          finalUrl: sampleResponse.request?.res?.responseUrl || url,
+          isXMLTV: isXMLTV,
+          sampleContent: sampleData.substring(0, 200) + '...'
+        }
+      });
+
+    } catch (error) {
+      let errorMessage = 'EPG URL is not accessible';
+      let details = {};
+
+      if (error.response) {
+        details.status = error.response.status;
+        details.statusText = error.response.statusText;
+        
+        if (error.response.status === 404) {
+          errorMessage = 'EPG URL not found (404 error) - check if the URL is correct';
+        } else if (error.response.status === 403) {
+          errorMessage = 'EPG URL access forbidden (403) - check if authentication is required';
+        } else if (error.response.status >= 500) {
+          errorMessage = `EPG server error (${error.response.status}) - try again later`;
+        } else {
+          errorMessage = `HTTP ${error.response.status}: ${error.response.statusText}`;
+        }
+      } else if (error.code === 'ECONNABORTED') {
+        errorMessage = 'EPG URL timeout - server may be slow or unresponsive';
+      } else if (error.code === 'ENOTFOUND') {
+        errorMessage = 'EPG URL could not be resolved - check the URL';
+      } else if (error.code === 'ECONNREFUSED') {
+        errorMessage = 'Connection refused - EPG source may be down';
+      } else if (error.code === 'ETIMEDOUT') {
+        errorMessage = 'Connection timeout - EPG source may be unreachable';
+      }
+
+      res.status(400).json({
+        success: false,
+        error: errorMessage,
+        details: details
+      });
+    }
+
+  } catch (error) {
+    logger.error('EPG URL test error:', error);
+    res.status(500).json({ error: 'Failed to test EPG URL' });
   }
 });
 

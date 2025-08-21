@@ -320,7 +320,8 @@ class EPGService {
         contentType: response.headers['content-type'],
         contentEncoding: response.headers['content-encoding'],
         contentLength: response.headers['content-length'],
-        dataSize: response.data.length
+        dataSize: response.data.length,
+        finalUrl: response.request?.res?.responseUrl || source.url // Log the final URL after redirects
       });
 
       let data = response.data;
@@ -394,13 +395,23 @@ class EPGService {
       });
 
       if (error.response) {
-        throw new Error(`HTTP ${error.response.status}: ${error.response.statusText}`);
+        if (error.response.status === 404) {
+          throw new Error(`EPG source not found (404) - URL may be incorrect or the source may have moved`);
+        } else if (error.response.status === 403) {
+          throw new Error(`EPG source access forbidden (403) - check if authentication is required`);
+        } else if (error.response.status >= 500) {
+          throw new Error(`EPG source server error (${error.response.status}) - try again later`);
+        } else {
+          throw new Error(`HTTP ${error.response.status}: ${error.response.statusText}`);
+        }
       } else if (error.code === 'ECONNABORTED') {
         throw new Error('Download timeout - EPG source may be slow or unresponsive');
       } else if (error.code === 'ENOTFOUND') {
         throw new Error('EPG source URL could not be resolved - check the URL');
       } else if (error.code === 'ECONNREFUSED') {
         throw new Error('Connection refused - EPG source may be down');
+      } else if (error.code === 'ETIMEDOUT') {
+        throw new Error('Connection timeout - EPG source may be unreachable');
       } else {
         throw error;
       }

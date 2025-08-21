@@ -2,7 +2,7 @@ import axios from 'axios';
 
 // Create axios instance with default config
 const api = axios.create({
-  baseURL: process.env.NODE_ENV === 'production' ? '' : 'http://localhost:8080',
+  baseURL: process.env.NODE_ENV === 'production' ? '' : 'http://localhost:3000',
   timeout: 30000, // Default timeout
   headers: {
     'Content-Type': 'application/json',
@@ -11,7 +11,7 @@ const api = axios.create({
 
 // Create special instance for long-running operations like M3U parsing
 const longRunningApi = axios.create({
-  baseURL: process.env.NODE_ENV === 'production' ? '' : 'http://localhost:8080',
+  baseURL: process.env.NODE_ENV === 'production' ? '' : 'http://localhost:3000',
   timeout: 300000, // 5 minutes for M3U parsing
   headers: {
     'Content-Type': 'application/json',

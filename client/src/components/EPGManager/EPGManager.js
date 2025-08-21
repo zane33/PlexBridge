@@ -122,6 +122,8 @@ function EPGManager() {
   const [availableEpgIds, setAvailableEpgIds] = useState([]);
   const [editingChannelEpg, setEditingChannelEpg] = useState(null);
   const [tempEpgId, setTempEpgId] = useState('');
+  const [testingUrl, setTestingUrl] = useState(false);
+  const [urlTestResult, setUrlTestResult] = useState(null);
   const [formData, setFormData] = useState({
     name: '',
     url: '',
@@ -283,6 +285,7 @@ function EPGManager() {
       refresh_interval: '4h',
       enabled: true,
     });
+    setUrlTestResult(null);
     setDialogOpen(true);
   };
 
@@ -294,6 +297,7 @@ function EPGManager() {
       refresh_interval: source.refresh_interval || '4h',
       enabled: source.enabled !== 0,
     });
+    setUrlTestResult(null);
     setDialogOpen(true);
   };
 
@@ -327,6 +331,36 @@ function EPGManager() {
       enqueueSnackbar(errorMessage, { variant: 'error' });
     } finally {
       setSaving(false);
+    }
+  };
+
+  const handleTestUrl = async () => {
+    if (!formData.url.trim()) {
+      enqueueSnackbar('Please enter a URL to test', { variant: 'warning' });
+      return;
+    }
+
+    setTestingUrl(true);
+    setUrlTestResult(null);
+    
+    try {
+      const response = await api.post('/api/epg/test-url', { url: formData.url.trim() });
+      setUrlTestResult({
+        success: true,
+        message: response.data.message,
+        details: response.data.details
+      });
+      enqueueSnackbar('URL test successful! ✅', { variant: 'success' });
+    } catch (error) {
+      const errorMessage = error.response?.data?.error || 'Failed to test URL';
+      setUrlTestResult({
+        success: false,
+        message: errorMessage,
+        details: error.response?.data?.details || {}
+      });
+      enqueueSnackbar(errorMessage, { variant: 'error' });
+    } finally {
+      setTestingUrl(false);
     }
   };
 
@@ -1072,7 +1106,12 @@ function EPGManager() {
       {/* EPG Source Dialog */}
       <Dialog 
         open={dialogOpen} 
-        onClose={() => !saving && setDialogOpen(false)}
+        onClose={() => {
+          if (!saving) {
+            setDialogOpen(false);
+            setUrlTestResult(null);
+          }
+        }}
         maxWidth="sm" 
         fullWidth
         fullScreen={isMobile}
@@ -1112,6 +1151,49 @@ function EPGManager() {
                 disabled={saving}
                 placeholder="https://example.com/epg.xml"
               />
+            </Grid>
+            
+            <Grid item xs={12}>
+              <Button
+                variant="outlined"
+                startIcon={testingUrl ? <CircularProgress size={20} /> : <LinkIcon />}
+                onClick={handleTestUrl}
+                disabled={testingUrl || !formData.url.trim() || saving}
+                fullWidth
+                sx={{ mb: 2 }}
+              >
+                {testingUrl ? 'Testing URL...' : 'Test URL'}
+              </Button>
+              
+              {urlTestResult && (
+                <Alert 
+                  severity={urlTestResult.success ? 'success' : 'error'} 
+                  sx={{ mb: 2 }}
+                  onClose={() => setUrlTestResult(null)}
+                >
+                  <Typography variant="body2" fontWeight="bold">
+                    {urlTestResult.success ? '✅ URL Test Successful' : '❌ URL Test Failed'}
+                  </Typography>
+                  <Typography variant="body2" sx={{ mt: 1 }}>
+                    {urlTestResult.message}
+                  </Typography>
+                  {urlTestResult.details && urlTestResult.success && (
+                    <Box sx={{ mt: 1, p: 1, bgcolor: 'background.paper', borderRadius: 1 }}>
+                      <Typography variant="caption" display="block">
+                        <strong>Status:</strong> {urlTestResult.details.status}
+                      </Typography>
+                      <Typography variant="caption" display="block">
+                        <strong>Content Type:</strong> {urlTestResult.details.contentType || 'Not specified'}
+                      </Typography>
+                      {urlTestResult.details.isXMLTV && (
+                        <Typography variant="caption" display="block" color="success.main">
+                          <strong>✓ Valid XMLTV format detected</strong>
+                        </Typography>
+                      )}
+                    </Box>
+                  )}
+                </Alert>
+              )}
             </Grid>
             
             <Grid item xs={12}>
@@ -1161,7 +1243,10 @@ function EPGManager() {
         
         <DialogActions sx={{ p: 3, gap: 1 }}>
           <Button 
-            onClick={() => setDialogOpen(false)}
+            onClick={() => {
+              setDialogOpen(false);
+              setUrlTestResult(null);
+            }}
             disabled={saving}
             startIcon={<CancelIcon />}
             color="inherit"
