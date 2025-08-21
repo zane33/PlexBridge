@@ -34,9 +34,10 @@ services:
       options:
         max-size: "10m"
         max-file: "3"
-    ports:
-      - "8080:8080"
-      - "1900:1900/udp"
+    network_mode: "container:transmission-openvpn"
+    #ports:
+    #  - "3000:3000"
+    #  - "1900:1900/udp"
     volumes:
       # Use named volume for data persistence with fallback to bind mount
       - plextv_data:/data
@@ -52,11 +53,11 @@ services:
       
       # Network configuration - customize these for your deployment
       - HOST_IP=0.0.0.0                    # Bind address (0.0.0.0 for all interfaces)
-      - HTTP_PORT=8080                     # Main HTTP server port
-      - STREAM_PORT=8080                   # Streaming port (usually same as HTTP_PORT)
+      - HTTP_PORT=3000                     # Main HTTP server port
+      - STREAM_PORT=3000                   # Streaming port (usually same as HTTP_PORT)
       - DISCOVERY_PORT=1900                # SSDP discovery port
-      - ADVERTISED_HOST=192.168.4.56      # Hostname/IP that clients should connect to
-      - BASE_URL=http://192.168.4.56:8080 # Complete base URL for the service
+      - ADVERTISED_HOST=192.168.4.5      # Hostname/IP that clients should connect to
+      - BASE_URL=http://192.168.4.5:3000 # Complete base URL for the service
       # - IPV6_ENABLED=false               # Enable/disable IPv6 support
       
       # Storage paths
@@ -91,9 +92,9 @@ services:
       # - TUNER_COUNT=4
       
       # Optional: Legacy PORT support (HTTP_PORT takes precedence)
-      - PORT=8080
+      - PORT=3000
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      test: ["CMD", "curl", "-f", "http://localhost:3000/health"]
       interval: 30s
       timeout: 10s
       retries: 3
