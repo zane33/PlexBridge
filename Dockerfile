@@ -39,8 +39,11 @@ RUN npm config set registry https://registry.npmjs.org/ && \
 COPY server/ ./server/
 COPY config/ ./config/
 
-# Copy pre-built client
-COPY client/build/ ./client/build/
+# Copy client source and build it (works for both local and Portainer deployment)
+COPY client/ ./client/
+WORKDIR /app/client
+RUN npm ci --only=production && npm run build
+WORKDIR /app
 
 # Copy configuration files
 COPY supervisord.conf /etc/supervisord.conf
