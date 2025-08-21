@@ -39,10 +39,16 @@ RUN npm config set registry https://registry.npmjs.org/ && \
 COPY server/ ./server/
 COPY config/ ./config/
 
+# Copy client package files first for better caching
+COPY client/package*.json ./client/
+
+# Install client dependencies
+WORKDIR /app/client
+RUN npm ci --only=production
+
 # Copy client source and build it
 COPY client/ ./client/
-WORKDIR /app/client
-RUN npm ci --only=production && npm run build
+RUN npm run build
 WORKDIR /app
 
 # Copy configuration files

@@ -1,0 +1,110 @@
+# PlexBridge Docker Compose Configuration
+# 
+# Network Configuration Examples:
+# 
+# 1. Default configuration (bind to all interfaces on port 8080):
+#    - HOST_IP=0.0.0.0
+#    - HTTP_PORT=8080
+#
+# 2. Custom port configuration:
+#    - HTTP_PORT=9090
+#    - ports: ["9090:9090", "1900:1900/udp"]
+#
+# 3. Specific interface binding:
+#    - HOST_IP=192.168.1.100
+#    - ADVERTISED_HOST=192.168.1.100
+#
+# 4. External hostname/domain:
+#    - ADVERTISED_HOST=plextv.yourdomain.com
+#    - BASE_URL=http://plextv.yourdomain.com:8080
+#
+# 5. Different streaming and HTTP ports:
+#    - HTTP_PORT=8080
+#    - STREAM_PORT=8081
+
+services:
+  plextv:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: plextv
+    restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+    #network_mode: "container:transmission-openvpn"
+    ports:
+      - "3000:3000"
+      - "1900:1900/udp"
+    volumes:
+      # Use named volume for data persistence with fallback to bind mount
+      - plextv_data:/data
+      # Config as read-only bind mount for easy editing
+      - ./config:/app/config:ro
+      # Additional bind mount for easy access to data (optional)
+      - ./data:/host-data
+      # Server code bind mount for development
+      - ./server:/app/server
+    environment:
+      # Application environment
+      - NODE_ENV=production
+      
+      # Network configuration - customize these for your deployment
+      - HOST_IP=0.0.0.0                    # Bind address (0.0.0.0 for all interfaces)
+      - HTTP_PORT=3000                     # Main HTTP server port
+      - STREAM_PORT=3000                   # Streaming port (usually same as HTTP_PORT)
+      - DISCOVERY_PORT=1900                # SSDP discovery port
+      - ADVERTISED_HOST=192.168.4.56      # Hostname/IP that clients should connect to
+      - BASE_URL=http://192.168.4.56:3000 # Complete base URL for the service
+      # - IPV6_ENABLED=false               # Enable/disable IPv6 support
+      
+      # Storage paths
+      - DB_PATH=/data/database/plextv.db
+      - LOG_PATH=/data/logs
+      - CACHE_PATH=/data/cache
+      - LOGOS_PATH=/data/logos
+      
+      # Redis configuration (internal Redis)
+      - REDIS_HOST=localhost
+      - REDIS_PORT=6379
+      
+      # Database configuration for production
+      - DB_POOL_SIZE=5                    # Connection pool size
+      - DB_BUSY_TIMEOUT=5000               # Wait up to 5s for locks
+      - DB_WAL_MODE=true                  # Enable WAL mode
+      - DB_CHECKPOINT_INTERVAL=1000       # WAL checkpoint interval
+      
+      # WebSocket configuration
+      - WS_PING_INTERVAL=25000             # Ping clients every 25s
+      - WS_PING_TIMEOUT=20000              # Wait 20s for pong response
+      - WS_RECONNECT_DELAY=1000            # Initial reconnect delay
+      - WS_MAX_RECONNECT_DELAY=5000       # Max reconnect delay
+      
+      # Health monitoring
+      - HEALTH_CHECK_INTERVAL=60000       # Check health every minute
+      - DB_HEALTH_CHECK_INTERVAL=60000    # Database health check interval
+      
+      # Optional: Device identification
+      # - DEVICE_NAME=PlexTV
+      # - DEVICE_ID=PLEXTV001
+      # - TUNER_COUNT=4
+      
+      # Optional: Legacy PORT support (HTTP_PORT takes precedence)
+      - PORT=3000
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+# Named volumes for persistent data storage
+volumes:
+  plextv_data:
+    driver: local
+    driver_opts:
+      type: none
+      o: bind
+      device: ./data
