@@ -337,8 +337,17 @@ router.put('/channels/:id', validate(channelSchema), async (req, res) => {
     if (error.code === 'SQLITE_CONSTRAINT_UNIQUE') {
       res.status(400).json({ error: 'Channel number already exists' });
     } else {
-      logger.error('Channel update error:', error);
-      res.status(500).json({ error: 'Failed to update channel' });
+      logger.error('Channel update error:', { 
+        error: error.message, 
+        stack: error.stack,
+        channelId: req.params.id,
+        requestBody: req.body,
+        validatedData: req.validatedBody
+      });
+      res.status(500).json({ 
+        error: 'Failed to update channel',
+        details: process.env.NODE_ENV === 'development' ? error.message : undefined
+      });
     }
   }
 });

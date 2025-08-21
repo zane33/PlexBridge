@@ -397,6 +397,12 @@ function EPGManager() {
   const handleEpgIdSave = async (channelId) => {
     try {
       const channel = channels.find(c => c.id === channelId);
+      
+      if (!channel) {
+        enqueueSnackbar('Channel not found in current data', { variant: 'error' });
+        return;
+      }
+
       await api.put(`/api/channels/${channelId}`, {
         ...channel,
         epg_id: tempEpgId.trim() || null
@@ -407,7 +413,9 @@ function EPGManager() {
       setTempEpgId('');
       fetchChannels();
     } catch (error) {
-      enqueueSnackbar('Failed to update EPG ID', { variant: 'error' });
+      console.error('EPG ID update error:', error);
+      const errorMessage = error.response?.data?.error || error.response?.data?.details?.[0] || 'Failed to update EPG ID';
+      enqueueSnackbar(errorMessage, { variant: 'error' });
     }
   };
 

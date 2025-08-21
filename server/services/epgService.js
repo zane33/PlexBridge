@@ -907,14 +907,11 @@ class EPGService {
     try {
       // Cancel refresh job
       if (this.refreshJobs.has(sourceId)) {
-        this.refreshJobs.get(sourceId).destroy();
+        this.refreshJobs.get(sourceId).stop();
         this.refreshJobs.delete(sourceId);
       }
 
-      // Remove from database
-      await database.run('DELETE FROM epg_sources WHERE id = ?', [sourceId]);
-
-      // Remove associated EPG channels and programs
+      // Remove associated EPG channels and programs first (foreign key dependencies)
       await database.run('DELETE FROM epg_channels WHERE source_id = ?', [sourceId]);
       
       await database.run(`
@@ -923,6 +920,9 @@ class EPGService {
           SELECT id FROM channels WHERE epg_id LIKE ?
         )
       `, [`%${sourceId}%`]);
+
+      // Remove from database (parent table last)
+      await database.run('DELETE FROM epg_sources WHERE id = ?', [sourceId]);
 
       logger.epg('EPG source removed', { sourceId });
       return true;
