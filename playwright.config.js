@@ -12,7 +12,7 @@ module.exports = defineConfig({
   ],
   
   use: {
-    baseURL: 'http://localhost:8080',
+    baseURL: 'http://localhost:8085',
     trace: 'on',
     screenshot: 'on',
     video: 'on',

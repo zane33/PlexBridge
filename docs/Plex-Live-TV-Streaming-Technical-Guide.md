@@ -182,7 +182,13 @@ For HLS streams (.m3u8), additional FFmpeg parameters ensure compatibility:
 
 ```bash
 -allowed_extensions ALL \
--protocol_whitelist file,http,https,tcp,tls
+-protocol_whitelist file,http,https,tcp,tls,pipe
+```
+
+**CRITICAL**: The `pipe` protocol must be included in the whitelist to allow FFmpeg to output to stdout (`pipe:1`). Without this, FFmpeg will fail with the error:
+```
+[pipe @ 0x...] Protocol 'pipe' not on whitelist 'file,http,https,tcp,tls'!
+Error opening output file pipe:1: Invalid argument
 ```
 
 ## Network Configuration
@@ -214,8 +220,14 @@ Critical for Plex discovery - PlexBridge must advertise the correct IP address:
 
 #### 2. "Invalid data found when processing input"
 **Symptoms:** Plex connects but can't process stream
-**Cause:** Malformed MPEG-TS packets or missing program tables
-**Solution:** Check FFmpeg PID allocation and program table generation
+**Causes:** 
+- FFmpeg protocol whitelist missing 'pipe' protocol
+- Malformed MPEG-TS packets or missing program tables
+- HLS protocol arguments in wrong order
+**Solutions:** 
+- Ensure protocol whitelist includes: `file,http,https,tcp,tls,pipe`
+- Place HLS arguments BEFORE input URL: `[hls-args] -i [url]`
+- Check FFmpeg PID allocation and program table generation
 
 #### 3. Discovery Issues
 **Symptoms:** Plex doesn't find the tuner
@@ -319,8 +331,37 @@ PlexBridge replicates this format to ensure Plex compatibility.
 ## Advanced Configuration
 
 ### Custom FFmpeg Parameters
-For special stream sources, FFmpeg parameters can be customized:
+FFmpeg parameters can be customized through the Settings UI or configuration files:
 
+**Settings UI Path:** Settings → Transcoding → MPEG-TS Configuration
+
+**Database Storage:** Parameters are persisted with priority order:
+1. Environment variables
+2. Settings UI values (database)
+3. Configuration file defaults
+4. Built-in fallbacks
+
+**Example Custom Command:**
+```bash
+-hide_banner -loglevel error -i [URL] -c:a libmp3lame -vcodec copy -f mpegts pipe:1
+```
+
+**Configuration Structure:**
+```json
+{
+  "plexlive": {
+    "transcoding": {
+      "mpegts": {
+        "enabled": true,
+        "ffmpegArgs": "-hide_banner -loglevel error -i [URL] -c:v copy -c:a copy -f mpegts pipe:1",
+        "hlsProtocolArgs": "-allowed_extensions ALL -protocol_whitelist file,http,https,tcp,tls,pipe"
+      }
+    }
+  }
+}
+```
+
+**Advanced Options:**
 ```javascript
 // Video transcoding (if needed)
 '-c:v', 'libx264', '-preset', 'ultrafast'
@@ -331,6 +372,8 @@ For special stream sources, FFmpeg parameters can be customized:
 // Custom MPEG-TS options
 '-mpegts_service_type', '0x01'  // Digital TV service
 ```
+
+**URL Placeholder:** Use `[URL]` in FFmpeg command - it will be replaced with the resolved stream URL.
 
 ### EPG Integration
 Electronic Program Guide data enhances Plex Live TV:
@@ -374,6 +417,112 @@ grep "FFmpeg.*started" /data/logs/plextv.log
 
 # Plex detection
 grep "isPlexRequest: true" /data/logs/plextv.log
+
+# FFmpeg errors (protocol issues)
+grep "Protocol.*not on whitelist" /data/logs/plextv.log
+
+# MPEG-TS output verification
+grep "FFmpeg MPEG-TS stdout data received" /data/logs/plextv.log
+```
+
+## Detailed Debugging Guide
+
+### FFmpeg Protocol Whitelist Issue (RESOLVED)
+
+**Problem:** Stream endpoint returns 0 bytes to Plex with error:
+```
+[pipe @ 0x...] Protocol 'pipe' not on whitelist 'file,http,https,tcp,tls'!
+[out#0/mpegts @ 0x...] Error opening output pipe:1: Invalid argument
+Error opening output file pipe:1.
+```
+
+**Root Cause Analysis:**
+1. HLS protocol arguments were missing `pipe` protocol in whitelist
+2. Protocol arguments were placed AFTER input URL instead of BEFORE
+3. FFmpeg couldn't output to stdout (`pipe:1`) due to security restrictions
+
+**Correct FFmpeg Command Structure:**
+```bash
+# CORRECT ORDER:
+ffmpeg -allowed_extensions ALL -protocol_whitelist file,http,https,tcp,tls,pipe -i [URL] [other-args] pipe:1
+
+# INCORRECT ORDER (causes failure):
+ffmpeg -i [URL] -allowed_extensions ALL -protocol_whitelist file,http,https,tcp,tls [other-args] pipe:1
+```
+
+**Implementation Fix:**
+1. **Configuration Update:**
+```json
+{
+  "hlsProtocolArgs": "-allowed_extensions ALL -protocol_whitelist file,http,https,tcp,tls,pipe"
+}
+```
+
+2. **Code Logic Fix:**
+```javascript
+// BEFORE (broken):
+ffmpegCommand.replace('-i ' + finalStreamUrl, '-i ' + finalStreamUrl + ' ' + hlsArgs);
+
+// AFTER (working):
+ffmpegCommand.replace('-i ' + finalStreamUrl, hlsArgs + ' -i ' + finalStreamUrl);
+```
+
+**Verification Steps:**
+1. Check logs for "FFmpeg MPEG-TS stdout data received" with byte counts
+2. Test stream endpoint: `curl -A "Plex/1.0" http://localhost:8080/stream/CHANNEL_ID`
+3. Verify binary MPEG-TS data flows (not 0 bytes)
+
+### Stream Request Flow Debugging
+
+**Complete Request Trace:**
+```
+1. Plex sends request: GET /stream/CHANNEL_ID
+   User-Agent: Contains 'plex', 'pms', 'lavf', or 'ffmpeg'
+
+2. PlexBridge detects Plex request:
+   isPlexRequest = true → proxyPlexCompatibleStream()
+
+3. URL resolution (for redirects):
+   Original: https://i.mjh.nz/.r/discovery-hgtv.m3u8
+   Resolved: https://mediapackage-hgtv-source.fullscreen.nz/index.m3u8
+
+4. FFmpeg command assembly:
+   Base: -hide_banner -loglevel error -i [URL] -c:v copy -c:a copy -f mpegts pipe:1
+   HLS: -allowed_extensions ALL -protocol_whitelist file,http,https,tcp,tls,pipe
+   Final: [HLS-args] -i [resolved-URL] [base-args] pipe:1
+
+5. FFmpeg execution:
+   Process starts → PID logged
+   stdout pipe → MPEG-TS data to Plex
+   stderr → Error logging (if any)
+
+6. Data flow verification:
+   "FFmpeg MPEG-TS stdout data received" with dataSize: 65536 bytes
+```
+
+**Debug Commands for Each Step:**
+```bash
+# 1. Test Plex request detection
+curl -A "Plex/1.0" -v http://localhost:8080/stream/CHANNEL_ID
+
+# 2. Verify redirect resolution  
+curl -v https://i.mjh.nz/.r/discovery-hgtv.m3u8 2>&1 | grep -i location
+
+# 3. Check FFmpeg command construction
+grep "Executing FFmpeg command" /data/logs/plextv.log | tail -1
+
+# 4. Monitor real-time FFmpeg output
+grep "FFmpeg MPEG-TS stdout" /data/logs/plextv.log | tail -5
+
+# 5. Verify MPEG-TS packet structure
+curl -A "Plex/1.0" http://localhost:8080/stream/CHANNEL_ID | hexdump -C | head -10
+```
+
+**Expected MPEG-TS Output Pattern:**
+```
+47 xx xx xx  [sync byte 0x47 + packet header]
+...188 bytes total per packet...
+47 xx xx xx  [next packet starts with sync byte]
 ```
 
 ## Future Enhancements
