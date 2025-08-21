@@ -438,13 +438,15 @@ function EPGManager() {
       }
 
       // Only send the fields that the API validation expects
-      await api.put(`/api/channels/${channelId}`, {
+      const updatePayload = {
         name: channel.name,
         number: channel.number,
         enabled: Boolean(channel.enabled), // Convert number to boolean for validation
         logo: channel.logo || null,
         epg_id: tempEpgId.trim() || null
-      });
+      };
+      
+      await api.put(`/api/channels/${channelId}`, updatePayload);
       
       enqueueSnackbar('EPG ID updated successfully! 🎉', { variant: 'success' });
       setEditingChannelEpg(null);
@@ -495,9 +497,12 @@ function EPGManager() {
           try {
             const channel = channels.find(c => c.id === suggestion.channel.id);
             if (channel) {
+              // Only send the fields that the API validation expects
               await api.put(`/api/channels/${channel.id}`, {
-                ...channel,
+                name: channel.name,
+                number: channel.number,
                 enabled: Boolean(channel.enabled), // Convert number to boolean for validation
+                logo: channel.logo || null,
                 epg_id: bestMatch.epg_id
               });
               mappedCount++;
