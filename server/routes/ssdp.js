@@ -6,9 +6,9 @@ const database = require('../services/database');
 const logger = require('../utils/logger');
 
 // HDHomeRun discovery endpoint
-router.get('/discover.json', (req, res) => {
+router.get('/discover.json', async (req, res) => {
   try {
-    const discovery = ssdpService.generateDiscoveryResponse();
+    const discovery = await ssdpService.generateDiscoveryResponse();
     logger.debug('HDHomeRun discovery request', { userAgent: req.get('User-Agent') });
     res.json(discovery);
   } catch (error) {
@@ -18,9 +18,9 @@ router.get('/discover.json', (req, res) => {
 });
 
 // Device description XML
-router.get('/device.xml', (req, res) => {
+router.get('/device.xml', async (req, res) => {
   try {
-    const deviceXml = ssdpService.generateDeviceDescription();
+    const deviceXml = await ssdpService.generateDeviceDescription();
     res.set('Content-Type', 'application/xml');
     res.send(deviceXml);
   } catch (error) {
@@ -45,11 +45,41 @@ router.get('/lineup_status.json', async (req, res) => {
       }
     });
 
+    // Get local IP and port for EPG URLs
+    const networkInterfaces = require('os').networkInterfaces();
+    let localIP = '127.0.0.1';
+    for (const interfaceName in networkInterfaces) {
+      const addresses = networkInterfaces[interfaceName];
+      for (const address of addresses) {
+        if (address.family === 'IPv4' && !address.internal) {
+          localIP = address.address;
+          break;
+        }
+      }
+      if (localIP !== '127.0.0.1') break;
+    }
+    
+    // Get port from request host or use default
+    const hostHeader = req.get('host') || 'localhost:8080';
+    const port = hostHeader.split(':')[1] || '8080';
+    const baseURL = `http://${localIP}:${port}`;
+
     const status = {
       ScanInProgress: 0,
       ScanPossible: 1,
       Source: 'Cable',
-      SourceList: ['Cable']
+      SourceList: ['Cable'],
+      
+      // EPG Status Information for Plex
+      EPGAvailable: true,
+      EPGSource: `${baseURL}/epg/xmltv.xml`,
+      EPGURL: `${baseURL}/epg/xmltv.xml`,
+      GuideURL: `${baseURL}/epg/xmltv.xml`,
+      XMLTVGuideDataURL: `${baseURL}/epg/xmltv.xml`,
+      EPGDataURL: `${baseURL}/epg/xmltv.xml`,
+      EPGDays: 7,
+      EPGLastUpdate: new Date().toISOString(),
+      SupportsEPG: true
     };
 
     res.json(status);
@@ -71,13 +101,23 @@ router.get('/lineup.json', async (req, res) => {
       ORDER BY c.number
     `);
 
+    // Get base URL for EPG references
+    const hostHeader = req.get('host') || 'localhost:8080';
+    
     const lineup = channels.map(channel => ({
       GuideNumber: channel.number.toString(),
       GuideName: channel.name,
-      URL: `http://${req.get('host')}/stream/${channel.id}`,
+      URL: `http://${hostHeader}/stream/${channel.id}`,
       HD: 1, // Assume HD for all channels
       DRM: 0, // No DRM
-      Favorite: 0
+      Favorite: 0,
+      
+      // EPG Information for this channel
+      EPGAvailable: true,
+      EPGSource: `http://${hostHeader}/epg/xmltv.xml`,
+      EPGURL: `http://${hostHeader}/epg/xmltv.xml`,
+      GuideURL: `http://${hostHeader}/epg/xmltv/${channel.id}`,
+      EPGChannelID: channel.epg_id || channel.id
     }));
 
     logger.debug('Channel lineup request', { 
@@ -104,12 +144,12 @@ router.get('/tuner.json', (req, res) => {
 });
 
 // Auto-discovery endpoint (alternative)
-router.get('/auto/:device', (req, res) => {
+router.get('/auto/:device', async (req, res) => {
   try {
     const device = req.params.device;
     
     if (device === 'hdhr') {
-      const discovery = ssdpService.generateDiscoveryResponse();
+      const discovery = await ssdpService.generateDiscoveryResponse();
       res.json(discovery);
     } else {
       res.status(404).json({ error: 'Device not found' });
@@ -246,6 +286,28 @@ router.post('/contentdirectory/control', (req, res) => {
 
   res.set('Content-Type', 'text/xml');
   res.send(soapResponse);
+});
+
+// Guide endpoint - redirect to XMLTV endpoint for Plex compatibility
+router.get('/guide', (req, res) => {
+  try {
+    const hostHeader = req.get('host') || 'localhost:8080';
+    res.redirect(`http://${hostHeader}/epg/xmltv.xml`);
+  } catch (error) {
+    logger.error('Guide redirect error:', error);
+    res.status(500).json({ error: 'Guide redirect failed' });
+  }
+});
+
+// Guide.xml endpoint - some Plex versions look for this
+router.get('/guide.xml', (req, res) => {
+  try {
+    const hostHeader = req.get('host') || 'localhost:8080';
+    res.redirect(`http://${hostHeader}/epg/xmltv.xml`);
+  } catch (error) {
+    logger.error('Guide.xml redirect error:', error);
+    res.status(500).json({ error: 'Guide.xml redirect failed' });
+  }
 });
 
 // Status endpoint for monitoring

@@ -94,10 +94,18 @@ function SortableChannelRow({ channel, index, ...props }) {
     <TableRow 
       ref={setNodeRef}
       style={style}
+      {...attributes}
+      {...listeners}
       {...props}
       sx={{
         ...props.sx,
         cursor: isDragging ? 'grabbing' : 'grab',
+        touchAction: 'none',
+        '&:hover': {
+          backgroundColor: 'rgba(99, 102, 241, 0.08)',
+          transform: 'scale(1.01)',
+          boxShadow: '0 4px 12px rgba(99, 102, 241, 0.15)',
+        },
         '&:hover .drag-handle': {
           opacity: 1,
         },
@@ -139,6 +147,32 @@ function ChannelManager() {
       activationConstraint: {
         distance: 8,
       },
+      // Allow dragging on the entire row except for interactive elements
+      shouldHandleEvent: (event) => {
+        // Get the target element
+        let element = event.target;
+        
+        // Traverse up the DOM to check if we're inside an interactive element
+        while (element && element !== event.currentTarget) {
+          // Prevent drag on buttons, inputs, checkboxes, and their containers
+          if (
+            element.tagName === 'BUTTON' ||
+            element.tagName === 'INPUT' ||
+            element.type === 'checkbox' ||
+            element.role === 'button' ||
+            element.closest('[role="button"]') ||
+            element.closest('button') ||
+            element.closest('input') ||
+            element.closest('.MuiIconButton-root') ||
+            element.closest('.MuiCheckbox-root')
+          ) {
+            return false;
+          }
+          element = element.parentElement;
+        }
+        
+        return true;
+      }
     }),
     useSensor(KeyboardSensor, {
       coordinateGetter: sortableKeyboardCoordinates,
@@ -283,47 +317,11 @@ function ChannelManager() {
       const draggedChannel = sortedChannels.find(ch => ch.id === active.id);
       const reorderedChannels = arrayMove(sortedChannels, oldIndex, newIndex);
       
-      // Enhanced automatic numbering with gap detection and intelligent placement
-      let updatedChannels;
-      
-      if (newIndex === 0) {
-        // Dragged to top - assign starting from 1
-        updatedChannels = reorderedChannels.map((channel, index) => ({
-          ...channel,
-          number: index + 1
-        }));
-      } else if (newIndex === reorderedChannels.length - 1) {
-        // Dragged to bottom - maintain existing numbers for others, assign next available
-        const maxNumber = Math.max(...reorderedChannels.slice(0, -1).map(ch => ch.number));
-        updatedChannels = reorderedChannels.map((channel, index) => {
-          if (index === reorderedChannels.length - 1) {
-            return { ...channel, number: maxNumber + 1 };
-          }
-          return channel;
-        });
-      } else {
-        // Dragged to middle - smart gap filling or sequential numbering
-        const prevChannel = reorderedChannels[newIndex - 1];
-        const nextChannel = reorderedChannels[newIndex + 1];
-        
-        if (prevChannel && nextChannel && (nextChannel.number - prevChannel.number) > 1) {
-          // There's a gap, place in between
-          const newNumber = prevChannel.number + 1;
-          updatedChannels = reorderedChannels.map((channel, index) => {
-            if (index === newIndex) {
-              return { ...channel, number: newNumber };
-            }
-            return channel;
-          });
-        } else {
-          // No gap, renumber sequentially from the target position
-          const startNumber = prevChannel?.number || 1;
-          updatedChannels = reorderedChannels.map((channel, index) => ({
-            ...channel,
-            number: startNumber + index
-          }));
-        }
-      }
+      // Simple and reliable sequential numbering starting from 1
+      const updatedChannels = reorderedChannels.map((channel, index) => ({
+        ...channel,
+        number: index + 1
+      }));
       
       // Update UI optimistically
       const newChannelsState = channels.map(channel => {
@@ -352,6 +350,7 @@ function ChannelManager() {
           }
         );
       } catch (error) {
+        console.error('Drag and drop error:', error);
         // Revert optimistic update on error
         fetchChannels();
         enqueueSnackbar('Failed to reorder channels. Changes reverted.', { 
@@ -414,18 +413,45 @@ function ChannelManager() {
         name: formData.name.trim(),
       };
 
+      // Check if channel number conflicts and handle reordering
+      const targetNumber = data.number;
+      const conflictingChannel = channels.find(ch => 
+        ch.number === targetNumber && ch.id !== editingChannel?.id
+      );
+
       if (editingChannel) {
         await api.put(`/api/channels/${editingChannel.id}`, data);
-        enqueueSnackbar('Channel updated successfully! 🎉', { 
-          variant: 'success',
-          autoHideDuration: 3000,
-        });
+        
+        // If there's a conflict, reorder channels automatically
+        if (conflictingChannel) {
+          await handleAutomaticReordering(editingChannel.id, targetNumber);
+          enqueueSnackbar(`Channel updated and other channels reordered automatically! 🎉`, { 
+            variant: 'success',
+            autoHideDuration: 4000,
+          });
+        } else {
+          enqueueSnackbar('Channel updated successfully! 🎉', { 
+            variant: 'success',
+            autoHideDuration: 3000,
+          });
+        }
       } else {
         await api.post('/api/channels', data);
-        enqueueSnackbar('Channel created successfully! 🎉', { 
-          variant: 'success',
-          autoHideDuration: 3000,
-        });
+        
+        // If there's a conflict, reorder channels automatically
+        if (conflictingChannel) {
+          // Get the newly created channel ID from response if available
+          await fetchChannels(); // Refresh to get the new channel
+          enqueueSnackbar(`Channel created and existing channels reordered automatically! 🎉`, { 
+            variant: 'success',
+            autoHideDuration: 4000,
+          });
+        } else {
+          enqueueSnackbar('Channel created successfully! 🎉', { 
+            variant: 'success',
+            autoHideDuration: 3000,
+          });
+        }
       }
 
       setDialogOpen(false);
@@ -438,6 +464,42 @@ function ChannelManager() {
       });
     } finally {
       setSaving(false);
+    }
+  };
+
+  // Handle automatic reordering when channel numbers conflict
+  const handleAutomaticReordering = async (updatedChannelId, targetNumber) => {
+    try {
+      // Get fresh channel data
+      const response = await api.get('/api/channels');
+      const allChannels = response.data;
+      
+      // Sort by current numbers and handle the reordering
+      const sortedChannels = [...allChannels].sort((a, b) => a.number - b.number);
+      
+      // Create new numbering scheme
+      const reorderedChannels = [];
+      let currentNumber = 1;
+      
+      // First pass: assign target number to the updated channel
+      sortedChannels.forEach(channel => {
+        if (channel.id === updatedChannelId) {
+          reorderedChannels.push({ ...channel, number: targetNumber });
+        } else {
+          // Skip the target number for other channels
+          if (currentNumber === targetNumber) {
+            currentNumber++;
+          }
+          reorderedChannels.push({ ...channel, number: currentNumber });
+          currentNumber++;
+        }
+      });
+      
+      // Send bulk update
+      await handleBulkReorder(reorderedChannels);
+    } catch (error) {
+      console.error('Auto-reordering failed:', error);
+      // Don't throw, just log - the main save operation succeeded
     }
   };
 
@@ -689,11 +751,6 @@ function ChannelManager() {
                         data-testid="select-all-channels"
                       />
                     </TableCell>
-                    <TableCell sx={{ minWidth: 40 }} data-testid="drag-column-header">
-                      <Tooltip title="Drag to reorder channels">
-                        <DragHandleIcon sx={{ color: 'text.secondary', fontSize: 18 }} />
-                      </Tooltip>
-                    </TableCell>
                     <TableCell sx={{ minWidth: 60 }}>
                       <TableSortLabel
                         active={sortConfig.key === 'number'}
@@ -777,7 +834,10 @@ function ChannelManager() {
                         >
                           {(attributes, listeners, isDragging) => (
                             <>
-                              <TableCell padding="checkbox">
+                              <TableCell 
+                                padding="checkbox"
+                                sx={{ cursor: 'default' }}
+                              >
                                 <Checkbox
                                   checked={selectedChannels.includes(channel.id)}
                                   onChange={() => handleSelectChannel(channel.id)}
@@ -789,28 +849,6 @@ function ChannelManager() {
                                     }
                                   }}
                                 />
-                              </TableCell>
-                              <TableCell>
-                                <Box 
-                                  {...attributes}
-                                  {...listeners}
-                                  className="drag-handle"
-                                  sx={{ 
-                                    display: 'flex',
-                                    alignItems: 'center',
-                                    justifyContent: 'center',
-                                    cursor: isDragging ? 'grabbing' : 'grab',
-                                    opacity: 0.6,
-                                    transition: 'opacity 0.2s ease',
-                                    '&:hover': {
-                                      opacity: 1,
-                                    },
-                                    touchAction: 'none',
-                                  }}
-                                  data-testid={`drag-handle-${channel.id}`}
-                                >
-                                  <DragHandleIcon sx={{ fontSize: 18, color: 'text.secondary' }} />
-                                </Box>
                               </TableCell>
                               <TableCell>
                                 <Box 
@@ -946,11 +984,16 @@ function ChannelManager() {
                                   size="small"
                                 />
                               </TableCell>
-                              <TableCell>
+                              <TableCell 
+                                sx={{ cursor: 'default' }}
+                              >
                                 <Box display="flex" gap={1}>
                                   <Tooltip title="Edit Channel">
                                     <IconButton 
-                                      onClick={() => handleEdit(channel)} 
+                                      onClick={(e) => {
+                                        e.stopPropagation();
+                                        handleEdit(channel);
+                                      }} 
                                       size="small"
                                       data-testid={`edit-channel-${channel.id}`}
                                       sx={{
@@ -969,7 +1012,10 @@ function ChannelManager() {
                                   </Tooltip>
                                   <Tooltip title="Delete Channel">
                                     <IconButton
-                                      onClick={() => handleDelete(channel)}
+                                      onClick={(e) => {
+                                        e.stopPropagation();
+                                        handleDelete(channel);
+                                      }}
                                       size="small"
                                       disabled={deleting === channel.id}
                                       data-testid={`delete-channel-${channel.id}`}
@@ -1014,7 +1060,7 @@ function ChannelManager() {
                   </DndContext>
                   {channels.length === 0 && !loading && (
                     <TableRow>
-                      <TableCell colSpan={8} align="center" sx={{ py: 8 }}>
+                      <TableCell colSpan={7} align="center" sx={{ py: 8 }}>
                         <Box display="flex" flexDirection="column" alignItems="center" gap={2}>
                           <TvIcon sx={{ fontSize: 64, color: 'text.disabled' }} />
                           <Typography variant="h6" color="text.secondary">

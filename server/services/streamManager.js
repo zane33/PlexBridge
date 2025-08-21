@@ -1280,30 +1280,78 @@ class StreamManager {
         'Accept-Ranges': 'bytes'
       });
 
-      // For HLS/DASH, we can try direct streaming first
+      // For HLS/DASH, fetch the content and potentially rewrite URLs
       const response = await axios.get(streamUrl, {
         timeout: 30000,
-        responseType: 'stream',
+        responseType: streamType === 'hls' ? 'text' : 'stream', // Get text for HLS to rewrite URLs
         headers: {
           'User-Agent': config.protocols.http.userAgent || 'PlexBridge/1.0'
         }
       });
 
-      // Pipe the response directly
-      response.data.pipe(res);
-      
-      response.data.on('error', (error) => {
-        logger.error('Stream pipe error with channel context', { 
+      if (streamType === 'hls') {
+        // For HLS, rewrite relative URLs in the playlist to proxy through our server
+        let playlistContent = response.data;
+        
+        logger.info('Processing HLS playlist for URL rewriting', {
           channelId: channel.id,
           channelName: channel.name,
-          url: streamUrl, 
-          clientIP: req.ip,
-          error: error.message 
+          hasM3u8: playlistContent.includes('.m3u8'),
+          hasTS: playlistContent.includes('.ts'),
+          contentLength: playlistContent.length
         });
-        if (!res.headersSent) {
-          res.status(500).end();
+        
+        // Only rewrite if this is a master playlist (contains stream references)
+        if (playlistContent.includes('.m3u8') || playlistContent.includes('.ts')) {
+          const baseUrl = `http://${req.get('host')}/stream/${channel.id}/`;
+          
+          logger.info('Before URL rewriting', { 
+            sampleContent: playlistContent.substring(0, 500),
+            baseUrl 
+          });
+          
+          // Rewrite relative URLs in HLS playlists
+          const originalContent = playlistContent;
+          playlistContent = playlistContent.replace(
+            /^(?!https?:\/\/)([^\r\n#]+\.(?:m3u8|ts))$/gm,
+            baseUrl + '$1'
+          );
+          
+          logger.info('URL rewrite details', {
+            hasChanges: originalContent !== playlistContent,
+            originalLength: originalContent.length,
+            newLength: playlistContent.length
+          });
+          
+          logger.info('After URL rewriting', { 
+            sampleContent: playlistContent.substring(0, 500)
+          });
+          
+          logger.info('Rewrote HLS playlist URLs for proxy', {
+            channelId: channel.id,
+            channelName: channel.name,
+            originalUrl: streamUrl
+          });
         }
-      });
+        
+        res.send(playlistContent);
+      } else {
+        // For non-HLS, pipe directly  
+        response.data.pipe(res);
+        
+        response.data.on('error', (error) => {
+          logger.error('Stream pipe error with channel context', { 
+            channelId: channel.id,
+            channelName: channel.name,
+            url: streamUrl, 
+            clientIP: req.ip,
+            error: error.message 
+          });
+          if (!res.headersSent) {
+            res.status(500).end();
+          }
+        });
+      }
 
     } catch (error) {
       // If direct streaming fails, fall back to transcoding

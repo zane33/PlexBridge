@@ -614,6 +614,21 @@ class SettingsService {
         }
       }
 
+      // Apply device settings to SSDP service (refresh device announcements)
+      if (plexliveSettings.device) {
+        try {
+          const ssdpService = require('./ssdpService');
+          if (typeof ssdpService.refreshDevice === 'function') {
+            await ssdpService.refreshDevice();
+            logger.info('Applied device settings to SSDP service', {
+              deviceName: plexliveSettings.device.name
+            });
+          }
+        } catch (ssdpError) {
+          logger.warn('SSDP service not available for settings update:', ssdpError.message);
+        }
+      }
+
       // Apply EPG localization settings
       if (plexliveSettings.localization) {
         try {

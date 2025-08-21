@@ -393,7 +393,8 @@ class DatabaseService {
       const defaultSettings = [
         ['plexlive.streaming.maxConcurrentStreams', '5', 'Maximum number of concurrent streams'],
         ['plexlive.localization.timezone', 'UTC', 'Default timezone'],
-        ['plexlive.localization.locale', 'en-US', 'Default locale']
+        ['plexlive.localization.locale', 'en-US', 'Default locale'],
+        ['plexlive.device.name', 'PlexBridge HDHomeRun', 'Device name displayed in Plex']
       ];
 
       const insertSetting = this.db.prepare(`

@@ -5,11 +5,11 @@ const streamManager = require('../services/streamManager');
 const streamPreviewService = require('../services/streamPreviewService');
 const logger = require('../utils/logger');
 
-// Stream proxy endpoint for Plex with sub-path support for HLS/DASH segments
-router.get('/stream/:channelId/*', async (req, res) => {
+// Stream proxy endpoint for Plex with sub-path support for HLS/DASH segments  
+router.get('/stream/:channelId/:filename', async (req, res) => {
   try {
-    const { channelId } = req.params;
-    const subPath = req.params[0]; // This captures everything after channelId
+    const { channelId, filename } = req.params;
+    const subPath = filename; // This is the filename/subpath being requested
     
     logger.info(`Stream request for channel with subpath: ${channelId}/${subPath}`, { 
       clientIP: req.ip,
@@ -55,7 +55,7 @@ router.get('/stream/:channelId/*', async (req, res) => {
 router.get('/stream/:channelId', async (req, res) => {
   try {
     const { channelId } = req.params;
-    logger.info(`Stream request for channel: ${channelId}`, { 
+    logger.info(`Main stream request for channel: ${channelId}`, { 
       clientIP: req.ip,
       userAgent: req.get('User-Agent')
     });
