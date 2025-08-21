@@ -1,0 +1,125 @@
+# Multi-stage build for optimized production image
+# Stage 1: Build the client
+FROM node:20-alpine AS client-builder
+
+WORKDIR /app/client
+
+# Copy client package files
+COPY client/package*.json ./
+
+# Install client dependencies
+RUN npm ci --only=production && \
+    npm cache clean --force
+
+# Copy client source
+COPY client/ ./
+
+# Build the client
+RUN npm run build
+
+# Stage 2: Production image
+FROM node:20-alpine
+
+# Set working directory
+WORKDIR /app
+
+# Install system dependencies
+RUN apk update && apk add --no-cache \
+    curl \
+    bash \
+    tini \
+    sqlite \
+    ffmpeg \
+    supervisor && \
+    rm -rf /var/cache/apk/*
+
+# Create non-root user
+RUN addgroup -g 1001 -S plextv && \
+    adduser -S plextv -u 1001 -G plextv
+
+# Create data directories with correct permissions
+RUN mkdir -p /data/database /data/cache /data/logs /data/logos /app/config && \
+    chown -R plextv:plextv /data /app
+
+# Copy package files for server
+COPY package*.json ./
+
+# Install server dependencies
+USER plextv
+RUN npm ci --only=production && \
+    npm cache clean --force
+USER root
+
+# Copy application code
+COPY --chown=plextv:plextv server/ ./server/
+
+# Copy built client from builder stage
+COPY --from=client-builder --chown=plextv:plextv /app/client/build ./client/build
+
+# Create default config directory structure
+RUN mkdir -p /app/config && \
+    echo '{}' > /app/config/default.json && \
+    chown -R plextv:plextv /app/config
+
+# Copy startup scripts if they exist (with fallback)
+COPY --chown=plextv:plextv supervisord.conf* start.sh* run-server.sh* /app/
+
+# Create minimal startup script if none exists
+RUN if [ ! -f /app/start.sh ]; then \
+    echo '#!/bin/sh\n\
+cd /app\n\
+node server/index.js' > /app/start.sh; \
+    fi && \
+    chmod +x /app/*.sh 2>/dev/null || true
+
+# Create minimal supervisord config if none exists
+RUN if [ ! -f /app/supervisord.conf ]; then \
+    echo '[supervisord]\n\
+nodaemon=true\n\
+user=root\n\
+logfile=/data/logs/supervisord.log\n\
+pidfile=/tmp/supervisord.pid\n\
+\n\
+[program:plextv]\n\
+command=/app/start.sh\n\
+directory=/app\n\
+user=plextv\n\
+autostart=true\n\
+autorestart=true\n\
+stdout_logfile=/data/logs/plextv.log\n\
+stderr_logfile=/data/logs/plextv.error.log\n\
+environment=NODE_ENV="production"' > /etc/supervisord.conf; \
+    fi
+
+# Environment variables with sensible defaults
+ENV NODE_ENV=production \
+    HOST_IP=0.0.0.0 \
+    HTTP_PORT=8080 \
+    STREAM_PORT=8080 \
+    DISCOVERY_PORT=1900 \
+    PORT=8080 \
+    DB_PATH=/data/database/plextv.db \
+    LOG_PATH=/data/logs \
+    CACHE_PATH=/data/cache \
+    LOGOS_PATH=/data/logos \
+    REDIS_HOST=localhost \
+    REDIS_PORT=6379
+
+# Health check
+HEALTHCHECK --interval=30s --timeout=10s --start-period=45s --retries=3 \
+    CMD curl -f http://localhost:${HTTP_PORT:-8080}/health || exit 1
+
+# Expose ports
+EXPOSE 8080 1900/udp
+
+# Volume for persistent data
+VOLUME ["/data", "/app/config"]
+
+# Switch to non-root user
+USER plextv
+
+# Use tini as init system
+ENTRYPOINT ["/sbin/tini", "--"]
+
+# Start the application directly or via supervisor
+CMD ["sh", "-c", "if [ -f /etc/supervisord.conf ]; then exec /usr/bin/supervisord -c /etc/supervisord.conf; else exec node /app/server/index.js; fi"]

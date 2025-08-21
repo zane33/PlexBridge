@@ -1,0 +1,106 @@
+# PlexBridge Docker Compose Configuration - Portainer Optimized
+# 
+# This configuration is optimized for deployment via Portainer
+# It uses named volumes instead of bind mounts for better portability
+#
+# Network Configuration Examples:
+# 
+# 1. Default configuration (bind to all interfaces on port 8080):
+#    - HOST_IP=0.0.0.0
+#    - HTTP_PORT=8080
+#
+# 2. Custom port configuration:
+#    - HTTP_PORT=9090
+#    - ports: ["9090:9090", "1900:1900/udp"]
+#
+# 3. Specific interface binding:
+#    - HOST_IP=192.168.1.100
+#    - ADVERTISED_HOST=192.168.1.100
+#
+# 4. External hostname/domain:
+#    - ADVERTISED_HOST=plextv.yourdomain.com
+#    - BASE_URL=http://plextv.yourdomain.com:8080
+
+version: '3.8'
+
+services:
+  plextv:
+    image: ghcr.io/yourusername/plexbridge:latest  # Update with your image repository
+    # Or build from source (requires Dockerfile in same directory):
+    # build:
+    #   context: .
+    #   dockerfile: Dockerfile
+    container_name: plextv
+    restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+    ports:
+      - "8080:8080"
+      - "1900:1900/udp"
+    volumes:
+      # Use named volumes for all persistent data
+      - plextv_data:/data
+      - plextv_config:/app/config
+    environment:
+      # Application environment
+      - NODE_ENV=production
+      
+      # Network configuration - customize these for your deployment
+      - HOST_IP=0.0.0.0                    # Bind address (0.0.0.0 for all interfaces)
+      - HTTP_PORT=8080                     # Main HTTP server port
+      - STREAM_PORT=8080                   # Streaming port (usually same as HTTP_PORT)
+      - DISCOVERY_PORT=1900                # SSDP discovery port
+      # Set ADVERTISED_HOST to your Docker host IP or domain
+      - ADVERTISED_HOST=${DOCKER_HOST_IP:-localhost}
+      - BASE_URL=http://${DOCKER_HOST_IP:-localhost}:8080
+      
+      # Storage paths (inside container)
+      - DB_PATH=/data/database/plextv.db
+      - LOG_PATH=/data/logs
+      - CACHE_PATH=/data/cache
+      - LOGOS_PATH=/data/logos
+      
+      # Redis configuration (internal Redis)
+      - REDIS_HOST=localhost
+      - REDIS_PORT=6379
+      
+      # Database configuration for production
+      - DB_POOL_SIZE=5                    # Connection pool size
+      - DB_BUSY_TIMEOUT=5000               # Wait up to 5s for locks
+      - DB_WAL_MODE=true                  # Enable WAL mode
+      - DB_CHECKPOINT_INTERVAL=1000       # WAL checkpoint interval
+      
+      # WebSocket configuration
+      - WS_PING_INTERVAL=25000             # Ping clients every 25s
+      - WS_PING_TIMEOUT=20000              # Wait 20s for pong response
+      - WS_RECONNECT_DELAY=1000            # Initial reconnect delay
+      - WS_MAX_RECONNECT_DELAY=5000       # Max reconnect delay
+      
+      # Health monitoring
+      - HEALTH_CHECK_INTERVAL=60000       # Check health every minute
+      - DB_HEALTH_CHECK_INTERVAL=60000    # Database health check interval
+      
+      # Optional: Device identification
+      - DEVICE_NAME=PlexBridge
+      - DEVICE_ID=PLEXBRIDGE001
+      - TUNER_COUNT=4
+      
+      # Optional: Legacy PORT support (HTTP_PORT takes precedence)
+      - PORT=8080
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+# Named volumes for persistent data storage
+# These will be created automatically by Docker
+volumes:
+  plextv_data:
+    driver: local
+  plextv_config:
+    driver: local

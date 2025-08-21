@@ -437,8 +437,12 @@ function EPGManager() {
         return;
       }
 
+      // Only send the fields that the API validation expects
       await api.put(`/api/channels/${channelId}`, {
-        ...channel,
+        name: channel.name,
+        number: channel.number,
+        enabled: Boolean(channel.enabled), // Convert number to boolean for validation
+        logo: channel.logo || null,
         epg_id: tempEpgId.trim() || null
       });
       
@@ -493,6 +497,7 @@ function EPGManager() {
             if (channel) {
               await api.put(`/api/channels/${channel.id}`, {
                 ...channel,
+                enabled: Boolean(channel.enabled), // Convert number to boolean for validation
                 epg_id: bestMatch.epg_id
               });
               mappedCount++;
