@@ -47,7 +47,8 @@ WORKDIR /app/client
 RUN npm ci --only=production
 
 # Copy client source and build it
-COPY client/ ./client/
+COPY client/src/ ./src/
+COPY client/public/ ./public/
 RUN npm run build
 WORKDIR /app
 
