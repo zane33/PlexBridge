@@ -6,18 +6,31 @@ This guide provides instructions for deploying PlexBridge using Portainer.
 
 ## Method 1: Docker Compose Stack (Recommended)
 
-1. **In Portainer, go to Stacks → Add Stack**
+1. **Create Required Directories First**:
+   - In Portainer, navigate to your stack directory
+   - Create the following directory structure:
+     ```
+     data/
+     ├── database/
+     ├── logs/
+     ├── cache/
+     └── logos/
+     config/
+     ```
+   - Alternatively, upload and run the `portainer-setup.sh` script
 
-2. **Name your stack**: `plexbridge`
+2. **In Portainer, go to Stacks → Add Stack**
 
-3. **Copy the contents of `docker-compose.portainer.yml` into the Web Editor**
+3. **Name your stack**: `plexbridge`
 
-4. **Add Environment Variables** (optional):
+4. **Copy the contents of `docker-compose.portainer.yml` into the Web Editor**
+
+5. **Add Environment Variables** (optional):
    ```
    DOCKER_HOST_IP=192.168.1.100  # Your Docker host IP
    ```
 
-5. **Click "Deploy the stack"**
+6. **Click "Deploy the stack"**
 
 ## Method 2: Using Pre-built Image
 
@@ -69,13 +82,33 @@ If you have a pre-built image in a registry:
 
 ## Troubleshooting
 
-### Volume Mount Errors
+### Volume Mount Errors ("no such file or directory")
 
-If you encounter volume mount errors:
+If you encounter this error:
+```
+failed to populate volume: error while mounting volume: failed to mount local volume: mount /data/compose/88/data: no such file or directory
+```
 
-1. **Use named volumes** instead of bind mounts
-2. **Ensure volumes are created** before deployment
-3. **Check Portainer has permissions** to create volumes
+**Solution:**
+
+1. **Create directories manually** in your Portainer stack location:
+   - Use Portainer's file manager to create `data/` and `config/` folders
+   - Or upload and run the `portainer-setup.sh` script
+
+2. **Alternative: Use named volumes** by editing the compose file:
+   ```yaml
+   volumes:
+     - plextv_data:/data    # Instead of ./data:/data
+     - plextv_config:/app/config
+   ```
+
+3. **For Synology NAS users**: Ensure Docker has access to the volume location
+
+### Dockerfile Case Sensitivity
+
+If build fails with "Dockerfile not found":
+- Ensure the dockerfile is named exactly `dockerfile.portainer` (lowercase)
+- Check the compose file references the correct filename
 
 ### Network Issues
 

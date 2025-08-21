@@ -1,7 +1,11 @@
 # PlexBridge Docker Compose Configuration - Portainer Optimized
 # 
 # This configuration is optimized for deployment via Portainer
-# It uses named volumes instead of bind mounts for better portability
+# It uses bind mounts for better compatibility with Synology/Portainer
+#
+# IMPORTANT: Before deploying, create these directories in Portainer's file manager:
+# - data/
+# - config/
 #
 # Network Configuration Examples:
 # 
@@ -28,7 +32,7 @@ services:
     # Or build from source with docker-compose.yml (requires Dockerfile in same directory):
     build:
        context: .
-       dockerfile: Dockerfile.portainer
+       dockerfile: dockerfile.portainer
     container_name: plextv
     restart: unless-stopped
     logging:
@@ -40,12 +44,12 @@ services:
       - "8080:8080"
       - "1900:1900/udp"
     volumes:
-      # Use named volumes for all persistent data (recommended for Portainer)
-      - plextv_data:/data
-      - plextv_config:/app/config
-      # Alternative: Use bind mounts (uncomment and create directories first)
-      # - ./data:/data
-      # - ./config:/app/config
+      # Use bind mounts for Synology/Portainer compatibility
+      - ./data:/data
+      - ./config:/app/config
+      # Alternative: Use named volumes (may not work in all Portainer environments)
+      # - plextv_data:/data
+      # - plextv_config:/app/config
     environment:
       # Application environment
       - NODE_ENV=production
@@ -99,10 +103,9 @@ services:
       retries: 3
       start_period: 40s
 
-# Named volumes for persistent data storage
-# These will be created automatically by Docker
-volumes:
-  plextv_data:
-    driver: local
-  plextv_config:
-    driver: local
+# Named volumes (commented out - using bind mounts instead for Portainer compatibility)
+# volumes:
+#   plextv_data:
+#     driver: local
+#   plextv_config:
+#     driver: local
