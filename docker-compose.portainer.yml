@@ -25,11 +25,10 @@ version: '3.8'
 
 services:
   plextv:
-    image: ghcr.io/yourusername/plexbridge:latest  # Update with your image repository
-    # Or build from source (requires Dockerfile in same directory):
-    # build:
-    #   context: .
-    #   dockerfile: Dockerfile
+    # Or build from source with docker-compose.yml (requires Dockerfile in same directory):
+    build:
+       context: .
+       dockerfile: Dockerfile.portainer
     container_name: plextv
     restart: unless-stopped
     logging:
