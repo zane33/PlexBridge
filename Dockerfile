@@ -39,13 +39,19 @@ RUN npm config set registry https://registry.npmjs.org/ && \
 COPY server/ ./server/
 COPY config/ ./config/
 
-# Copy client source and build it (works for both local and Portainer deployment)
-COPY client/ ./client/
+# Copy client package files first for better caching
+COPY client/package*.json ./client/
+
+# Install client dependencies
 WORKDIR /app/client
 RUN npm config set registry https://registry.npmjs.org/ && \
     npm config set strict-ssl false && \
-    npm ci --only=production && \
-    npm run build
+    npm ci --only=production
+
+# Copy client source and build it
+COPY client/src/ ./src/
+COPY client/public/ ./public/
+RUN npm run build
 WORKDIR /app
 
 # Copy configuration files
