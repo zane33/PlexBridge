@@ -90,5 +90,5 @@ VOLUME ["/data"]
 # Use tini as init system
 ENTRYPOINT ["/sbin/tini", "--"]
 
-# Start supervisord
-CMD ["/usr/bin/supervisord", "-c", "/etc/supervisord.conf"]
+# Start application via startup script
+CMD ["/app/start.sh"]

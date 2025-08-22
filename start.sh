@@ -2,7 +2,9 @@
 
 # Set environment variables
 export NODE_ENV=production
-export PORT=8080
+export PORT=3000
+export HOST_IP=0.0.0.0
+export HTTP_PORT=3000
 export DB_PATH=/data/database/plextv.db
 export LOG_PATH=/data/logs
 export CACHE_PATH=/data/cache
@@ -25,12 +27,6 @@ cleanup_db_path &
 
 chown -R plextv:plextv /data /var/lib/redis
 
-# Start Redis in background as root (simple approach)
-redis-server --bind 127.0.0.1 --port 6379 --appendonly yes --maxmemory 256mb --maxmemory-policy allkeys-lru --dir /var/lib/redis --daemonize yes
-
-# Wait for Redis to start
-sleep 3
-
-# Change to plextv user and start the Node.js application
-cd /app
-exec su -s /bin/sh plextv -c "node server/index.js"
+# Start supervisord with proper configuration
+echo "Starting PlexBridge with supervisord..."
+exec /usr/bin/supervisord -c /etc/supervisord.conf
