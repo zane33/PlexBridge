@@ -26,7 +26,9 @@ import {
   Grid,
   Switch,
   FormControlLabel,
-  Pagination
+  Pagination,
+  useTheme,
+  useMediaQuery
 } from '@mui/material';
 import {
   Refresh as RefreshIcon,
@@ -63,6 +65,9 @@ function LogViewer() {
   const [error, setError] = useState(null);
   const [autoRefresh, setAutoRefresh] = useState(false);
   const [refreshInterval, setRefreshInterval] = useState(null);
+  const theme = useTheme();
+  const isMobile = useMediaQuery(theme.breakpoints.down('md'));
+  const isSmallScreen = useMediaQuery(theme.breakpoints.down('sm'));
   
   // Filters
   const [filters, setFilters] = useState({
@@ -238,9 +243,40 @@ function LogViewer() {
   
   return (
     <Box>
-      <Typography variant="h4" gutterBottom>
-        Log Viewer
-      </Typography>
+      <Box 
+        display="flex" 
+        justifyContent="space-between" 
+        alignItems={isMobile ? 'flex-start' : 'center'} 
+        mb={3}
+        flexDirection={isMobile ? 'column' : 'row'}
+        gap={isMobile ? 2 : 0}
+      >
+        <Typography 
+          variant={isMobile ? "h5" : "h4"} 
+          sx={{ 
+            fontWeight: 700,
+            background: 'linear-gradient(135deg, #6366f1 0%, #8b5cf6 100%)',
+            backgroundClip: 'text',
+            WebkitBackgroundClip: 'text',
+            WebkitTextFillColor: 'transparent',
+            letterSpacing: '-0.025em',
+            mb: isMobile ? 1 : 0
+          }}
+        >
+          Log Viewer
+        </Typography>
+        {isMobile && (
+          <Typography 
+            variant="body2" 
+            sx={{ 
+              color: 'text.secondary',
+              fontWeight: 500,
+            }}
+          >
+            Monitor application logs and system activity
+          </Typography>
+        )}
+      </Box>
       
       {error && (
         <Alert severity="error" sx={{ mb: 2 }} onClose={() => setError(null)}>
@@ -250,9 +286,9 @@ function LogViewer() {
       
       {/* Controls */}
       <Card sx={{ mb: 2 }}>
-        <CardContent>
-          <Grid container spacing={2} alignItems="center">
-            <Grid item xs={12} md={2}>
+        <CardContent sx={{ p: isMobile ? 2 : 3 }}>
+          <Grid container spacing={isMobile ? 1 : 2} alignItems="center">
+            <Grid item xs={12} sm={6} md={2}>
               <FormControl fullWidth size="small">
                 <InputLabel>Level</InputLabel>
                 <Select
@@ -268,7 +304,7 @@ function LogViewer() {
               </FormControl>
             </Grid>
             
-            <Grid item xs={12} md={2}>
+            <Grid item xs={12} sm={6} md={2}>
               <FormControl fullWidth size="small">
                 <InputLabel>Category</InputLabel>
                 <Select
@@ -297,7 +333,7 @@ function LogViewer() {
               />
             </Grid>
             
-            <Grid item xs={12} md={2}>
+            <Grid item xs={12} sm={6} md={2}>
               <TextField
                 fullWidth
                 size="small"
@@ -309,7 +345,7 @@ function LogViewer() {
               />
             </Grid>
             
-            <Grid item xs={12} md={2}>
+            <Grid item xs={12} sm={6} md={2}>
               <TextField
                 fullWidth
                 size="small"
@@ -322,17 +358,37 @@ function LogViewer() {
             </Grid>
             
             <Grid item xs={12} md={1}>
-              <Stack direction="row" spacing={1}>
+              <Stack 
+                direction={isMobile ? "row" : "row"} 
+                spacing={1}
+                sx={{ 
+                  width: '100%',
+                  justifyContent: isMobile ? 'space-around' : 'center'
+                }}
+              >
                 <Tooltip title="Refresh">
-                  <IconButton onClick={loadLogs} disabled={loading}>
-                    {loading ? <CircularProgress size={20} /> : <RefreshIcon />}
-                  </IconButton>
+                  <Button
+                    variant="outlined"
+                    onClick={loadLogs} 
+                    disabled={loading}
+                    size={isMobile ? "small" : "medium"}
+                    startIcon={loading ? <CircularProgress size={20} /> : <RefreshIcon />}
+                    sx={{ flex: isMobile ? 1 : 'initial' }}
+                  >
+                    {isMobile && !loading ? 'Refresh' : ''}
+                  </Button>
                 </Tooltip>
                 
                 <Tooltip title="Clear Filters">
-                  <IconButton onClick={clearFilters}>
-                    <ClearIcon />
-                  </IconButton>
+                  <Button
+                    variant="outlined"
+                    onClick={clearFilters}
+                    size={isMobile ? "small" : "medium"}
+                    startIcon={<ClearIcon />}
+                    sx={{ flex: isMobile ? 1 : 'initial' }}
+                  >
+                    {isMobile ? 'Clear' : ''}
+                  </Button>
                 </Tooltip>
               </Stack>
             </Grid>

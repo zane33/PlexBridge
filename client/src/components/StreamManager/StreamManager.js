@@ -135,6 +135,8 @@ function StreamManager() {
   const { enqueueSnackbar } = useSnackbar();
   const theme = useTheme();
   const isMobile = useMediaQuery(theme.breakpoints.down('md'));
+  const isSmallScreen = useMediaQuery(theme.breakpoints.down('sm'));
+  const isExtraSmall = useMediaQuery(theme.breakpoints.down('xs'));
 
   const handleInputChange = useCallback((field, value) => {
     console.log(`handleInputChange: ${field} = ${value}`);
@@ -1066,11 +1068,30 @@ function StreamManager() {
               <TableContainer 
                 component={Paper} 
                 sx={{ 
-                  maxHeight: isMobile ? '70vh' : 'none',
+                  maxHeight: isMobile ? '60vh' : 'none',
                   overflowX: 'auto',
+                  overflowY: 'auto',
+                  // Improve touch scrolling on mobile
+                  WebkitOverflowScrolling: 'touch',
+                  // Add mobile-specific styling
+                  ...(isMobile && {
+                    '& .MuiTable-root': {
+                      minWidth: '700px', // Ensure table doesn't get too cramped
+                    },
+                    '& .MuiTableCell-root': {
+                      padding: '8px 4px', // Reduce padding on mobile
+                      fontSize: '0.875rem',
+                    },
+                    '& .MuiTableCell-head': {
+                      backgroundColor: 'background.paper',
+                      position: 'sticky',
+                      top: 0,
+                      zIndex: 1,
+                    }
+                  })
                 }}
               >
-                <Table stickyHeader={isMobile}>
+                <Table stickyHeader={isMobile} size={isSmallScreen ? 'small' : 'medium'}>
                   <TableHead>
                     <TableRow>
                       <TableCell padding="checkbox">
@@ -1080,7 +1101,18 @@ function StreamManager() {
                           onChange={handleSelectAll}
                         />
                       </TableCell>
-                      <TableCell sx={{ minWidth: 150 }}>Name</TableCell>
+                      <TableCell 
+                        sx={{ 
+                          minWidth: 150,
+                          position: isMobile ? 'sticky' : 'static',
+                          left: isMobile ? 0 : 'auto',
+                          backgroundColor: isMobile ? 'background.paper' : 'transparent',
+                          zIndex: isMobile ? 2 : 'auto',
+                          borderRight: isMobile ? '1px solid rgba(224, 224, 224, 1)' : 'none'
+                        }}
+                      >
+                        Name
+                      </TableCell>
                       <TableCell sx={{ minWidth: 120, display: { xs: 'none', sm: 'table-cell' } }}>Channel</TableCell>
                       <TableCell sx={{ minWidth: 80 }}>Type</TableCell>
                       <TableCell sx={{ minWidth: 200, display: { xs: 'none', md: 'table-cell' } }}>URL</TableCell>
@@ -1097,8 +1129,26 @@ function StreamManager() {
                             onChange={() => handleSelectStream(stream.id)}
                           />
                         </TableCell>
-                        <TableCell>
-                          <Typography variant="body2" fontWeight="bold">
+                        <TableCell
+                          sx={{
+                            position: isMobile ? 'sticky' : 'static',
+                            left: isMobile ? 0 : 'auto',
+                            backgroundColor: isMobile ? 'background.paper' : 'transparent',
+                            zIndex: isMobile ? 1 : 'auto',
+                            borderRight: isMobile ? '1px solid rgba(224, 224, 224, 1)' : 'none'
+                          }}
+                        >
+                          <Typography 
+                            variant="body2" 
+                            fontWeight="bold"
+                            sx={{
+                              overflow: 'hidden',
+                              textOverflow: 'ellipsis',
+                              whiteSpace: 'nowrap',
+                              maxWidth: isMobile ? 120 : 'none'
+                            }}
+                            title={stream.name}
+                          >
                             {stream.name}
                           </Typography>
                         </TableCell>
@@ -1160,15 +1210,26 @@ function StreamManager() {
                           />
                         </TableCell>
                         <TableCell>
-                          <Box display="flex" gap={1}>
+                          <Box 
+                            display="flex" 
+                            gap={isMobile ? 0.5 : 1}
+                            sx={{
+                              flexWrap: isMobile ? 'wrap' : 'nowrap',
+                              justifyContent: isMobile ? 'flex-start' : 'flex-start'
+                            }}
+                          >
                             <Tooltip title="Edit Stream">
                               <IconButton 
                                 onClick={() => handleEdit(stream)} 
-                                size="small"
+                                size={isMobile ? "small" : "small"}
                                 color="primary"
                                 data-testid="edit-stream-button"
+                                sx={{
+                                  minWidth: isMobile ? 32 : 40,
+                                  height: isMobile ? 32 : 40
+                                }}
                               >
-                                <EditIcon />
+                                <EditIcon sx={{ fontSize: isMobile ? 14 : 18 }} />
                               </IconButton>
                             </Tooltip>
                             <Tooltip title="Preview Stream in Player" arrow>
@@ -1177,11 +1238,13 @@ function StreamManager() {
                                   console.log('Preview button clicked for stream:', stream);
                                   handleTestStream(stream);
                                 }}
-                                size="small"
+                                size={isMobile ? "small" : "small"}
                                 color="info"
                                 data-testid="preview-stream-button"
                                 sx={{
                                   transition: 'all 0.2s ease-in-out',
+                                  minWidth: isMobile ? 32 : 40,
+                                  height: isMobile ? 32 : 40,
                                   '&:hover': {
                                     transform: 'scale(1.1)',
                                     bgcolor: 'info.main',
@@ -1189,21 +1252,25 @@ function StreamManager() {
                                   }
                                 }}
                               >
-                                <PreviewIcon />
+                                <PreviewIcon sx={{ fontSize: isMobile ? 14 : 18 }} />
                               </IconButton>
                             </Tooltip>
                             <Tooltip title="Delete Stream">
                               <IconButton
                                 onClick={() => handleDelete(stream)}
-                                size="small"
+                                size={isMobile ? "small" : "small"}
                                 color="error"
                                 disabled={deleting === stream.id}
                                 data-testid="delete-stream-button"
+                                sx={{
+                                  minWidth: isMobile ? 32 : 40,
+                                  height: isMobile ? 32 : 40
+                                }}
                               >
                                 {deleting === stream.id ? (
-                                  <CircularProgress size={20} />
+                                  <CircularProgress size={isMobile ? 14 : 20} />
                                 ) : (
-                                  <DeleteIcon />
+                                  <DeleteIcon sx={{ fontSize: isMobile ? 14 : 18 }} />
                                 )}
                               </IconButton>
                             </Tooltip>
@@ -1240,7 +1307,28 @@ function StreamManager() {
                   setRowsPerPage(parseInt(event.target.value, 10));
                   setPage(0);
                 }}
-                rowsPerPageOptions={[5, 10, 25, 50]}
+                rowsPerPageOptions={isMobile ? [5, 10, 25] : [5, 10, 25, 50]}
+                sx={{
+                  // Responsive pagination styling
+                  '& .MuiTablePagination-toolbar': {
+                    flexDirection: isMobile ? 'column' : 'row',
+                    gap: isMobile ? 1 : 0,
+                    padding: isMobile ? '8px' : '16px',
+                    alignItems: isMobile ? 'stretch' : 'center',
+                  },
+                  '& .MuiTablePagination-selectLabel, & .MuiTablePagination-displayedRows': {
+                    fontSize: isMobile ? '0.875rem' : '1rem',
+                    margin: 0,
+                    textAlign: isMobile ? 'center' : 'left',
+                  },
+                  '& .MuiTablePagination-select': {
+                    fontSize: isMobile ? '0.875rem' : '1rem',
+                  },
+                  '& .MuiTablePagination-actions': {
+                    marginLeft: isMobile ? 0 : 'auto',
+                    justifyContent: isMobile ? 'center' : 'flex-end',
+                  }
+                }}
               />
             </>
           )}
@@ -1960,7 +2048,7 @@ function StreamManager() {
                       }
                     );
                   }}
-                  maxHeight={isMobile ? 300 : 400}
+                  maxHeight={isMobile ? 250 : 400}
                   searchQuery={searchQuery}
                   groupFilter={groupFilter}
                 />

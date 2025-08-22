@@ -175,6 +175,8 @@ function ChannelManager() {
   const { enqueueSnackbar } = useSnackbar();
   const theme = useTheme();
   const isMobile = useMediaQuery(theme.breakpoints.down('md'));
+  const isSmallScreen = useMediaQuery(theme.breakpoints.down('sm'));
+  const isExtraSmall = useMediaQuery(theme.breakpoints.down('xs'));
 
   // Configure drag sensors with better activation
   const sensors = useSensors(
@@ -878,11 +880,30 @@ function ChannelManager() {
                 <TableContainer 
                   component={Paper} 
                   sx={{ 
-                    maxHeight: isMobile ? '70vh' : 'none',
+                    maxHeight: isMobile ? '60vh' : 'none',
                     overflowX: 'auto',
+                    overflowY: 'auto',
+                    // Improve touch scrolling on mobile
+                    WebkitOverflowScrolling: 'touch',
+                    // Add mobile-specific styling
+                    ...(isMobile && {
+                      '& .MuiTable-root': {
+                        minWidth: '800px', // Ensure table doesn't get too cramped
+                      },
+                      '& .MuiTableCell-root': {
+                        padding: '8px 4px', // Reduce padding on mobile
+                        fontSize: '0.875rem',
+                      },
+                      '& .MuiTableCell-head': {
+                        backgroundColor: 'background.paper',
+                        position: 'sticky',
+                        top: 0,
+                        zIndex: 1,
+                      }
+                    })
                   }}
                 >
-                  <Table stickyHeader={isMobile}>
+                  <Table stickyHeader={isMobile} size={isSmallScreen ? 'small' : 'medium'}>
                     <TableHead>
                       <TableRow>
                         <TableCell 
@@ -1231,18 +1252,26 @@ function ChannelManager() {
                                 onPointerDown={(e) => e.stopPropagation()}
                                 onClick={(e) => e.stopPropagation()}
                               >
-                                <Box display="flex" gap={1}>
+                                <Box 
+                                  display="flex" 
+                                  gap={isMobile ? 0.5 : 1}
+                                  sx={{
+                                    minWidth: isMobile ? 'auto' : 'inherit'
+                                  }}
+                                >
                                   <Tooltip title="Edit Channel">
                                     <IconButton 
                                       onClick={(e) => {
                                         e.stopPropagation();
                                         handleEdit(channel);
                                       }} 
-                                      size="small"
+                                      size={isMobile ? "small" : "small"}
                                       data-testid={`edit-channel-${channel.id}`}
                                       sx={{
                                         background: 'linear-gradient(135deg, rgba(99, 102, 241, 0.1) 0%, rgba(139, 92, 246, 0.1) 100%)',
                                         transition: 'all 0.2s ease',
+                                        minWidth: isMobile ? 36 : 40,
+                                        height: isMobile ? 36 : 40,
                                         '&:hover': {
                                           background: 'linear-gradient(135deg, #6366f1 0%, #8b5cf6 100%)',
                                           color: 'white',
@@ -1251,7 +1280,7 @@ function ChannelManager() {
                                         }
                                       }}
                                     >
-                                      <EditIcon sx={{ fontSize: 16 }} />
+                                      <EditIcon sx={{ fontSize: isMobile ? 14 : 16 }} />
                                     </IconButton>
                                   </Tooltip>
                                   <Tooltip title="Delete Channel">
@@ -1260,12 +1289,14 @@ function ChannelManager() {
                                         e.stopPropagation();
                                         handleDelete(channel);
                                       }}
-                                      size="small"
+                                      size={isMobile ? "small" : "small"}
                                       disabled={deleting === channel.id}
                                       data-testid={`delete-channel-${channel.id}`}
                                       sx={{
                                         background: 'linear-gradient(135deg, rgba(239, 68, 68, 0.1) 0%, rgba(220, 38, 38, 0.1) 100%)',
                                         transition: 'all 0.2s ease',
+                                        minWidth: isMobile ? 36 : 40,
+                                        height: isMobile ? 36 : 40,
                                         '&:hover:not(:disabled)': {
                                           background: 'linear-gradient(135deg, #ef4444 0%, #dc2626 100%)',
                                           color: 'white',
@@ -1279,7 +1310,7 @@ function ChannelManager() {
                                     >
                                       {deleting === channel.id ? (
                                         <CircularProgress 
-                                          size={16} 
+                                          size={isMobile ? 14 : 16} 
                                           sx={{ 
                                             color: 'primary.main',
                                             animation: 'spin 1s linear infinite',
@@ -1290,7 +1321,7 @@ function ChannelManager() {
                                           }} 
                                         />
                                       ) : (
-                                        <DeleteIcon sx={{ fontSize: 16 }} />
+                                        <DeleteIcon sx={{ fontSize: isMobile ? 14 : 16 }} />
                                       )}
                                     </IconButton>
                                   </Tooltip>
@@ -1404,8 +1435,29 @@ function ChannelManager() {
                 setRowsPerPage(parseInt(event.target.value, 10));
                 setPage(0);
               }}
-              rowsPerPageOptions={[5, 10, 25, 50]}
+              rowsPerPageOptions={isMobile ? [5, 10, 25] : [5, 10, 25, 50]}
               data-testid="channel-pagination"
+              sx={{
+                // Responsive pagination styling
+                '& .MuiTablePagination-toolbar': {
+                  flexDirection: isMobile ? 'column' : 'row',
+                  gap: isMobile ? 1 : 0,
+                  padding: isMobile ? '8px' : '16px',
+                  alignItems: isMobile ? 'stretch' : 'center',
+                },
+                '& .MuiTablePagination-selectLabel, & .MuiTablePagination-displayedRows': {
+                  fontSize: isMobile ? '0.875rem' : '1rem',
+                  margin: 0,
+                  textAlign: isMobile ? 'center' : 'left',
+                },
+                '& .MuiTablePagination-select': {
+                  fontSize: isMobile ? '0.875rem' : '1rem',
+                },
+                '& .MuiTablePagination-actions': {
+                  marginLeft: isMobile ? 0 : 'auto',
+                  justifyContent: isMobile ? 'center' : 'flex-end',
+                }
+              }}
             />
           )}
         </CardContent>

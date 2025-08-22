@@ -133,6 +133,8 @@ function EPGManager() {
   const { enqueueSnackbar } = useSnackbar();
   const theme = useTheme();
   const isMobile = useMediaQuery(theme.breakpoints.down('md'));
+  const isSmallScreen = useMediaQuery(theme.breakpoints.down('sm'));
+  const isExtraSmall = useMediaQuery(theme.breakpoints.down('xs'));
 
   const handleInputChange = useCallback((field, value) => {
     setFormData(prev => ({
@@ -1102,10 +1104,36 @@ function EPGManager() {
       </Box>
 
       <Box sx={{ borderBottom: 1, borderColor: 'divider', mb: 3 }}>
-        <Tabs value={activeTab} onChange={(e, newValue) => setActiveTab(newValue)}>
-          <Tab label="EPG Sources" icon={<LinkIcon />} />
-          <Tab label="Program Guide" icon={<ScheduleIcon />} />
-          <Tab label="Channel Mapping" icon={<TvIcon />} />
+        <Tabs 
+          value={activeTab} 
+          onChange={(e, newValue) => setActiveTab(newValue)}
+          variant={isMobile ? "fullWidth" : "standard"}
+          scrollButtons={isMobile ? "auto" : false}
+          allowScrollButtonsMobile={isMobile}
+          sx={{
+            '& .MuiTab-root': {
+              minHeight: isMobile ? 48 : 72,
+              fontSize: isMobile ? '0.875rem' : '1rem',
+              textTransform: 'none',
+              fontWeight: 600,
+            },
+            '& .MuiTab-iconWrapper': {
+              marginBottom: isMobile ? '2px' : '4px',
+            }
+          }}
+        >
+          <Tab 
+            label={isMobile ? "Sources" : "EPG Sources"} 
+            icon={<LinkIcon sx={{ fontSize: isMobile ? 18 : 24 }} />} 
+          />
+          <Tab 
+            label={isMobile ? "Programs" : "Program Guide"} 
+            icon={<ScheduleIcon sx={{ fontSize: isMobile ? 18 : 24 }} />} 
+          />
+          <Tab 
+            label={isMobile ? "Mapping" : "Channel Mapping"} 
+            icon={<TvIcon sx={{ fontSize: isMobile ? 18 : 24 }} />} 
+          />
         </Tabs>
       </Box>
 
