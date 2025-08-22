@@ -899,20 +899,60 @@ class StreamManager {
       logger.warn('Failed to resolve redirect, using original URL', { url, error: error.message });
     }
 
-    const args = [
-      '-y',
-      '-reconnect', '1',
-      '-reconnect_streamed', '1',
-      '-reconnect_delay_max', '5',
-      '-i', finalUrl,
-      '-c', 'copy',
-      '-f', 'mpegts',
-      '-'
-    ];
-
-    if (auth && auth.username) {
-      args.splice(2, 0, '-headers', `Authorization: Basic ${Buffer.from(`${auth.username}:${auth.password}`).toString('base64')}`);
+    // Get FFmpeg arguments from settings for proper transcoding
+    const settingsService = require('./settingsService');
+    let settings;
+    try {
+      settings = await settingsService.getSettings();
+    } catch (error) {
+      logger.warn('Failed to get settings, using default transcoding args', { error: error.message });
     }
+    
+    // Get configurable FFmpeg command line with proper transcoding
+    let ffmpegCommand = settings?.plexlive?.transcoding?.mpegts?.ffmpegArgs || 
+                       config.plexlive?.transcoding?.mpegts?.ffmpegArgs ||
+                       '-hide_banner -loglevel error -i [URL] -c:v libx264 -c:a aac -preset veryfast -profile:v main -level 3.1 -f mpegts -avoid_negative_ts make_zero -fflags +genpts pipe:1';
+    
+    // Replace [URL] placeholder with actual stream URL
+    ffmpegCommand = ffmpegCommand.replace('[URL]', finalUrl);
+    
+    // Add HLS-specific arguments if needed
+    if (finalUrl.includes('.m3u8')) {
+      let hlsArgs = settings?.plexlive?.transcoding?.mpegts?.hlsProtocolArgs || 
+                   config.plexlive?.transcoding?.mpegts?.hlsProtocolArgs ||
+                   '-allowed_extensions ALL -protocol_whitelist file,http,https,tcp,tls,pipe,crypto';
+      
+      // For redirected streams (like TVNZ), add additional HLS options for better compatibility
+      if (finalUrl !== url) {
+        hlsArgs += ' -http_seekable 0 -multiple_requests 1 -http_persistent 0';
+        logger.stream('Added HLS compatibility options for redirected stream', {
+          originalUrl: url,
+          finalUrl: finalUrl
+        });
+      }
+      
+      // Insert HLS args BEFORE the input URL for proper protocol handling
+      ffmpegCommand = ffmpegCommand.replace('-i ' + finalUrl, hlsArgs + ' -i ' + finalUrl);
+    }
+    
+    // Parse command line into arguments array
+    const args = ffmpegCommand.split(' ').filter(arg => arg.trim() !== '');
+
+    // Add authentication if needed
+    if (auth && auth.username) {
+      const authHeader = `Authorization: Basic ${Buffer.from(`${auth.username}:${auth.password}`).toString('base64')}`;
+      // Insert headers before the input URL
+      const inputIndex = args.indexOf('-i');
+      if (inputIndex > -1) {
+        args.splice(inputIndex, 0, '-headers', authHeader);
+      }
+    }
+
+    logger.stream('Creating HTTP stream proxy with transcoding', { 
+      originalUrl: url, 
+      finalUrl: finalUrl,
+      command: args.join(' ')
+    });
 
     return spawn(config.streams.ffmpegPath, args);
   }
