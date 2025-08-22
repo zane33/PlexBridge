@@ -39,12 +39,9 @@ services:
     #  - "3000:3000"
     #  - "1900:1900/udp"
     volumes:
-      # Direct bind mount for data persistence
-      - ./data:/data
-      # Config as read-only bind mount for easy editing
-      - ./config:/app/config:ro
-      # Server code bind mount removed for production deployment
-      # - ./server:/app/server
+      # Named volumes for persistent data storage
+      - plextv_data:/data
+      - plextv_config:/app/config
     environment:
       # Application environment
       - NODE_ENV=production
@@ -98,11 +95,9 @@ services:
       retries: 3
       start_period: 40s
 
-# Named volumes for persistent data storage (not needed with direct bind mounts)
-# volumes:
-#   plextv_data:
-#     driver: local
-#     driver_opts:
-#       type: none
-#       o: bind
-#       device: ./data
+# Named volumes for persistent data storage
+volumes:
+  plextv_data:
+    driver: local
+  plextv_config:
+    driver: local
