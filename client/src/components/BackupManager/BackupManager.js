@@ -63,7 +63,7 @@ function BackupManager() {
   const [exportDialogOpen, setExportDialogOpen] = useState(false);
   const [importDialogOpen, setImportDialogOpen] = useState(false);
   const [exportOptions, setExportOptions] = useState({
-    includeSettings: true,
+    includeSettings: false,
     includePasswords: false,
     includeEpgData: false,
     includeLogs: false,

@@ -2176,7 +2176,7 @@ router.post('/settings/reset', async (req, res) => {
 // BACKUP/RESTORE API
 router.get('/backup/export', async (req, res) => {
   try {
-    const { format = 'json', includeSettings = true, includePasswords = false, includeEpgData = false, includeLogs = false } = req.query;
+    const { format = 'json', includeSettings = false, includePasswords = false, includeEpgData = false, includeLogs = false } = req.query;
     
     // Get all configuration data
     const channels = await database.all('SELECT * FROM channels ORDER BY number');
