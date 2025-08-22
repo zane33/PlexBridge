@@ -9,7 +9,7 @@ if (!process.env.DB_PATH || !process.env.DB_PATH.startsWith('/')) {
 
 console.log('Starting PlexBridge in minimal mode for deployment stability...');
 console.log('Environment:', process.env.NODE_ENV);
-console.log('Port:', process.env.HTTP_PORT || process.env.PORT || 8080);
+console.log('Port:', process.env.HTTP_PORT || process.env.PORT || 3000);
 
 // Start the minimal server
 require('./minimal-start.js');

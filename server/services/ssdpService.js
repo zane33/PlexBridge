@@ -327,6 +327,33 @@ class SSDPService {
   generateTunerStatus() {
     const status = [];
     
+    // Use the same IP resolution logic as discovery response
+    let localIP = this.advertisedHost ||
+                 process.env.ADVERTISED_HOST ||
+                 config.plexlive?.network?.advertisedHost ||
+                 config.network?.advertisedHost;
+    
+    if (!localIP) {
+      try {
+        const networkInterfaces = os.networkInterfaces();
+        localIP = '127.0.0.1';
+        
+        for (const interfaceName in networkInterfaces) {
+          const addresses = networkInterfaces[interfaceName];
+          for (const address of addresses) {
+            if (address.family === 'IPv4' && !address.internal) {
+              localIP = address.address;
+              break;
+            }
+          }
+          if (localIP !== '127.0.0.1') break;
+        }
+      } catch (networkError) {
+        logger.warn('Network interface detection failed, using localhost', { error: networkError.message });
+        localIP = '127.0.0.1';
+      }
+    }
+    
     for (let i = 0; i < config.streams.maxConcurrent; i++) {
       status.push({
         Resource: `tuner${i}`,
@@ -341,7 +368,7 @@ class SSDPService {
         SignalQuality: 100,
         SymbolQuality: 100,
         NetworkRate: 19392636,
-        TargetIP: '0.0.0.0:0'
+        TargetIP: `${localIP}:5004`
       });
     }
 

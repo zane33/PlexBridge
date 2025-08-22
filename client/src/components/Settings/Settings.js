@@ -1066,7 +1066,7 @@ function Settings() {
                   <TextField
                     fullWidth
                     label="Base URL"
-                    value={getSetting('plexlive.device.baseUrl', 'http://localhost:8080')}
+                    value={getSetting('plexlive.device.baseUrl', 'http://localhost:3000')}
                     onChange={(e) => updateSetting('plexlive.device.baseUrl', e.target.value)}
                     helperText="Base URL for device services (leave default unless needed)"
                   />
@@ -1094,7 +1094,7 @@ function Settings() {
               <Box display="flex" alignItems="center" gap={2}>
                 <Typography variant="h6">Network</Typography>
                 <Chip 
-                  label={`Port ${getSetting('plexlive.network.streamingPort', 8080)}`}
+                  label={`Port ${getSetting('plexlive.network.streamingPort', 3000)}`}
                   color="secondary"
                   size="small"
                 />
@@ -1127,7 +1127,7 @@ function Settings() {
                     fullWidth
                     label="Streaming Port"
                     type="number"
-                    value={getSetting('plexlive.network.streamingPort', 8080)}
+                    value={getSetting('plexlive.network.streamingPort', 3000)}
                     onChange={(e) => updateSetting('plexlive.network.streamingPort', parseInt(e.target.value))}
                     helperText="Port for streaming services"
                   />

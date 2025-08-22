@@ -8,7 +8,7 @@ const path = require('path');
 const app = express();
 const server = http.createServer(app);
 
-const PORT = process.env.PORT || 8080;
+const PORT = process.env.PORT || 3000;
 const HOST = process.env.HOST_IP || '0.0.0.0';
 
 console.log('Starting PlexBridge simple server...');

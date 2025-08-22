@@ -12,7 +12,7 @@ const io = socketIo(server, {
     methods: ["GET", "POST"]
   }
 });
-const PORT = 8080;
+const PORT = 3000;
 
 // Basic middleware
 app.use(express.json());
@@ -536,12 +536,12 @@ let savedSettings = {
       id: 'PLEXTV001',
       tunerCount: 4,
       firmware: '1.0.0',
-      baseUrl: 'http://localhost:8080'
+      baseUrl: 'http://localhost:3000'
     },
     network: {
       bindAddress: '0.0.0.0',
       advertisedHost: null,
-      streamingPort: 8080,
+      streamingPort: 3000,
       discoveryPort: 1900,
       ipv6Enabled: false
     },

@@ -1464,14 +1464,16 @@ class StreamManager {
 
       console.log('DEBUG: Redirect resolution complete', { finalStreamUrl });
       
-      // Set appropriate headers for MPEG-TS stream
+      // Set appropriate headers for MPEG-TS stream with Plex optimizations
       res.set({
         'Content-Type': 'video/mp2t',                 // MPEG-TS MIME type
         'Access-Control-Allow-Origin': '*',
         'Access-Control-Allow-Headers': 'Range, Content-Type, Authorization',
         'Access-Control-Expose-Headers': 'Content-Range, Content-Length, Accept-Ranges',
         'Cache-Control': 'no-cache, no-store, must-revalidate',
-        'Accept-Ranges': 'bytes'
+        'Accept-Ranges': 'none',                      // Disable range requests for live streams
+        'Connection': 'keep-alive',                   // Keep connection alive
+        'Transfer-Encoding': 'chunked'                // Use chunked encoding for streaming
       });
 
       // Get FFmpeg arguments from settings
@@ -1739,7 +1741,12 @@ class StreamManager {
       
       logger.stream('Plex MPEG-TS stream proxy created successfully', { sessionId, channelId: channel.id });
 
-      // Handle FFmpeg stdout with bandwidth tracking
+      // Create a buffered stream for smooth delivery to Plex
+      let packetBuffer = Buffer.alloc(0);
+      const MPEG_TS_PACKET_SIZE = 188;
+      const BUFFER_SIZE = MPEG_TS_PACKET_SIZE * 7; // Buffer 7 packets at a time for smooth delivery
+      
+      // Handle FFmpeg stdout with bandwidth tracking and MPEG-TS packet buffering
       ffmpegProcess.stdout.on('data', (chunk) => {
         const stats = this.streamStats.get(sessionId);
         if (stats) {
@@ -1781,9 +1788,36 @@ class StreamManager {
           }
         }
         
-        // Write to response
-        if (!res.headersSent && !res.destroyed) {
-          res.write(chunk);
+        // Buffer incoming MPEG-TS packets for smooth delivery
+        packetBuffer = Buffer.concat([packetBuffer, chunk]);
+        
+        // Process complete MPEG-TS packets
+        while (packetBuffer.length >= BUFFER_SIZE) {
+          const packetGroup = packetBuffer.slice(0, BUFFER_SIZE);
+          packetBuffer = packetBuffer.slice(BUFFER_SIZE);
+          
+          // Write buffered packets to response with error handling
+          if (!res.headersSent && !res.destroyed && !res.writableEnded) {
+            try {
+              const written = res.write(packetGroup);
+              if (!written) {
+                // Backpressure handling - pause and wait for drain
+                ffmpegProcess.stdout.pause();
+                res.once('drain', () => {
+                  if (!res.destroyed) {
+                    ffmpegProcess.stdout.resume();
+                  }
+                });
+              }
+            } catch (writeError) {
+              logger.warn('Error writing to Plex client', {
+                sessionId,
+                error: writeError.message
+              });
+              // Client likely disconnected, cleanup will be handled by req.on('close')
+              break;
+            }
+          }
         }
       });
 

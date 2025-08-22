@@ -30,7 +30,7 @@ app.get('/', (req, res) => {
 });
 
 // Start server
-const PORT = process.env.HTTP_PORT || process.env.PORT || 8080;
+const PORT = process.env.HTTP_PORT || process.env.PORT || 3000;
 const HOST = process.env.HOST_IP || '0.0.0.0';
 
 server.listen(PORT, HOST, (err) => {

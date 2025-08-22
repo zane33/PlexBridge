@@ -64,7 +64,7 @@ async function initializeApp() {
     console.log('Skipping SSDP service initialization...');
     
     // Start HTTP server
-    const PORT = config.server.port || 8080;
+    const PORT = config.server.port || 3000;
     const HOST = config.server.host || '0.0.0.0';
     
     server.listen(PORT, HOST, (err) => {
