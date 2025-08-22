@@ -34,9 +34,10 @@ services:
       options:
         max-size: "10m"
         max-file: "3"
-    ports:
-      - "3000:3000"
-      - "1900:1900/udp"
+    network_mode: "container:transmission-openvpn"
+    #ports:
+     # - "3000:3000"
+      #- "1900:1900/udp"
     volumes:
       # Named volumes for persistent data storage
       - plextv_data:/data
