@@ -94,7 +94,7 @@
       "defaultProfile": "medium",
       "mpegts": {
         "enabled": true,
-        "ffmpegArgs": "-hide_banner -loglevel error -i [URL] -c:v copy -c:a copy -f mpegts -mpegts_m2ts_mode 0 -mpegts_start_pid 0x100 -mpegts_copyts 1 -muxrate 0 -avoid_negative_ts make_zero -fflags +genpts+igndts -async 1 -mpegts_pmt_start_pid 0x1000 -mpegts_service_id 1 -max_muxing_queue_size 1024 pipe:1",
+        "ffmpegArgs": "-hide_banner -loglevel error -i [URL] -c:v libx264 -c:a aac -preset veryfast -profile:v main -level 3.1 -f mpegts -avoid_negative_ts make_zero -fflags +genpts pipe:1",
         "hlsProtocolArgs": "-allowed_extensions ALL -protocol_whitelist file,http,https,tcp,tls,pipe,crypto"
       }
     },
