@@ -133,7 +133,7 @@
     "level": "debug",
     "maxFiles": 14,
     "maxSize": "10m",
-    "path": "./data/logs"
+    "path": "/data/logs"
   },
   "security": {
     "sessionTimeout": 86400,

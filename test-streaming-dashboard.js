@@ -7,7 +7,7 @@
 
 const axios = require('axios');
 
-const BASE_URL = 'http://localhost:8080';
+const BASE_URL = 'http://localhost:3000';
 
 // Test configuration
 const TEST_CONFIG = {
@@ -235,7 +235,7 @@ class DashboardTester {
     console.log('\n📝 NEXT STEPS:');
     if (this.results.failed === 0) {
       console.log('   🎉 All tests passed! The streaming dashboard is ready for use.');
-      console.log('   📱 Access the dashboard at: http://localhost:8080');
+      console.log('   📱 Access the dashboard at: http://localhost:3000');
       console.log('   🔄 Real-time updates will show when users start streaming');
     } else {
       console.log('   🔧 Fix the failed tests above');

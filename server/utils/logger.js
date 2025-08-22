@@ -75,7 +75,7 @@ transports.push(
 );
 
 // File transports for all environments
-const logDir = config.logging.path || path.join(__dirname, '../../data/logs');
+const logDir = config.logging.path || (process.env.LOG_PATH || '/data/logs');
 
 // Ensure log directory exists and is writable
 let fileLoggingEnabled = true;
