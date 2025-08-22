@@ -39,12 +39,10 @@ services:
     #  - "3000:3000"
     #  - "1900:1900/udp"
     volumes:
-      # Use named volume for data persistence with fallback to bind mount
-      - plextv_data:/data
+      # Direct bind mount for data persistence
+      - ./data:/data
       # Config as read-only bind mount for easy editing
       - ./config:/app/config:ro
-      # Additional bind mount for easy access to data (optional)
-      - ./data:/host-data
       # Server code bind mount for development
       - ./server:/app/server
     environment:
@@ -100,11 +98,11 @@ services:
       retries: 3
       start_period: 40s
 
-# Named volumes for persistent data storage
-volumes:
-  plextv_data:
-    driver: local
-    driver_opts:
-      type: none
-      o: bind
-      device: ./data
+# Named volumes for persistent data storage (not needed with direct bind mounts)
+# volumes:
+#   plextv_data:
+#     driver: local
+#     driver_opts:
+#       type: none
+#       o: bind
+#       device: ./data
