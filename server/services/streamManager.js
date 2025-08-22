@@ -1326,10 +1326,10 @@ class StreamManager {
       const settingsService = require('./settingsService');
       const settings = await settingsService.getSettings();
       
-      // Get configurable FFmpeg command line
+      // Get configurable FFmpeg command line - use re-encoding by default for H.264 stability
       let ffmpegCommand = settings?.plexlive?.transcoding?.mpegts?.ffmpegArgs || 
                          config.plexlive?.transcoding?.mpegts?.ffmpegArgs ||
-                         '-hide_banner -loglevel error -i [URL] -c:v copy -c:a copy -f mpegts pipe:1';
+                         '-hide_banner -loglevel error -i [URL] -c:v libx264 -c:a aac -preset veryfast -profile:v main -level 3.1 -f mpegts -avoid_negative_ts make_zero -fflags +genpts pipe:1';
       
       // Replace [URL] placeholder with actual stream URL
       ffmpegCommand = ffmpegCommand.replace('[URL]', finalStreamUrl);
@@ -1388,11 +1388,27 @@ class StreamManager {
 
       ffmpegProcess.stderr.on('data', (data) => {
         const errorOutput = data.toString();
-        // Log all stderr output for debugging
-        logger.info('FFmpeg MPEG-TS stderr', { 
-          channelId: channel.id,
-          output: errorOutput.trim() 
-        });
+        
+        // Check for H.264 corruption indicators that require re-encoding
+        const hasH264Corruption = errorOutput.includes('non-existing PPS') || 
+                                 errorOutput.includes('decode_slice_header error') ||
+                                 errorOutput.includes('no frame!') ||
+                                 errorOutput.includes('mmco: unref short failure');
+        
+        if (hasH264Corruption) {
+          logger.warn('H.264 corruption detected in stream - this indicates source stream issues', { 
+            channelId: channel.id,
+            channelName: channel.name,
+            streamUrl: finalStreamUrl,
+            corruption: errorOutput.trim()
+          });
+        } else {
+          // Log all other stderr output for debugging
+          logger.info('FFmpeg MPEG-TS stderr', { 
+            channelId: channel.id,
+            output: errorOutput.trim() 
+          });
+        }
       });
 
       ffmpegProcess.stdout.on('data', (data) => {

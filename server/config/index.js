@@ -153,7 +153,12 @@ const defaultConfig = {
           bitrate: process.env.HIGH_BITRATE || '5000k'
         }
       },
-      defaultProfile: process.env.DEFAULT_QUALITY_PROFILE || 'medium'
+      defaultProfile: process.env.DEFAULT_QUALITY_PROFILE || 'medium',
+      mpegts: {
+        // FFmpeg args for Plex MPEG-TS output - forces re-encoding for H.264 stability
+        ffmpegArgs: process.env.PLEX_FFMPEG_ARGS || '-hide_banner -loglevel error -i [URL] -c:v libx264 -c:a aac -preset veryfast -profile:v main -level 3.1 -f mpegts -avoid_negative_ts make_zero -fflags +genpts pipe:1',
+        hlsProtocolArgs: process.env.HLS_PROTOCOL_ARGS || '-allowed_extensions ALL -protocol_whitelist file,http,https,tcp,tls,pipe'
+      }
     },
     caching: {
       enabled: process.env.CACHE_ENABLED !== 'false',
