@@ -348,6 +348,11 @@ class MemoryCache {
     return true;
   }
 
+  async setEx(key, ttl, value) {
+    // Redis-compatible setEx method
+    return this.set(key, value, ttl);
+  }
+
   async del(key) {
     if (this.timers.has(key)) {
       clearTimeout(this.timers.get(key));
