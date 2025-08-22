@@ -96,12 +96,12 @@ const plexliveSettingsSchema = Joi.object({
     id: Joi.string().alphanum().max(50).default('PLEXTV001'),
     tunerCount: Joi.number().integer().min(1).max(32).default(4),
     firmware: Joi.string().pattern(/^\d+\.\d+\.\d+$/).default('1.0.0'),
-    baseUrl: Joi.string().uri().default('http://localhost:8080')
+    baseUrl: Joi.string().uri().default('http://localhost:3000')
   }).default(),
   network: Joi.object({
     bindAddress: Joi.string().ip().default('0.0.0.0'),
     advertisedHost: Joi.string().hostname().allow(null).default(null),
-    streamingPort: Joi.number().integer().min(1024).max(65535).default(8080),
+    streamingPort: Joi.number().integer().min(1024).max(65535).default(3000),
     discoveryPort: Joi.number().integer().min(1024).max(65535).default(1900),
     ipv6Enabled: Joi.boolean().default(false)
   }).default(),
@@ -1470,7 +1470,7 @@ router.get('/server/info', (req, res) => {
     });
 
     // Get primary server host
-    const serverHost = req.get('host') || `${req.hostname}:${process.env.PORT || 8080}`;
+    const serverHost = req.get('host') || `${req.hostname}:${process.env.HTTP_PORT || process.env.PORT || 3000}`;
     const protocol = req.secure ? 'https' : 'http';
     const baseUrl = `${protocol}://${serverHost}`;
 
@@ -1479,7 +1479,7 @@ router.get('/server/info', (req, res) => {
       platform: os.platform(),
       arch: os.arch(),
       nodeVersion: process.version,
-      port: process.env.PORT || 8080,
+      port: process.env.HTTP_PORT || process.env.PORT || 3000,
       baseUrl,
       ipAddresses,
       urls: {

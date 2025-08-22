@@ -125,13 +125,22 @@ function BackupManager() {
 
       // Validate the backup
       const validationResult = await backupApi.validateBackup(data);
-      setValidation(validationResult);
+      
+      // Ensure validation result has proper structure
+      const validation = {
+        isValid: validationResult.isValid || false,
+        errors: validationResult.errors || [],
+        warnings: validationResult.warnings || [],
+        summary: validationResult.summary || null
+      };
+      
+      setValidation(validation);
 
-      if (validationResult.isValid) {
+      if (validation.isValid) {
         enqueueSnackbar('Backup file validated successfully ✅', { variant: 'success' });
       } else {
         enqueueSnackbar(
-          `Backup validation failed: ${validationResult.errors.join(', ')}`, 
+          `Backup validation failed: ${validation.errors.join(', ')}`, 
           { variant: 'error' }
         );
       }
@@ -527,7 +536,7 @@ function BackupManager() {
                     <Typography variant="body2"><strong>Includes Passwords:</strong> {validation.summary?.includesPasswords ? 'Yes' : 'No'}</Typography>
                   </Box>
 
-                  {validation.errors.length > 0 && (
+                  {validation.errors && validation.errors.length > 0 && (
                     <Alert severity="error" sx={{ mb: 1 }}>
                       <Typography variant="subtitle2" gutterBottom>Validation Errors:</Typography>
                       <ul style={{ margin: 0, paddingLeft: '20px' }}>
@@ -538,7 +547,7 @@ function BackupManager() {
                     </Alert>
                   )}
 
-                  {validation.warnings.length > 0 && (
+                  {validation.warnings && validation.warnings.length > 0 && (
                     <Alert severity="warning">
                       <Typography variant="subtitle2" gutterBottom>Warnings:</Typography>
                       <ul style={{ margin: 0, paddingLeft: '20px' }}>

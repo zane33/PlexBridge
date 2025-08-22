@@ -410,8 +410,20 @@ export const backupApi = {
     api.post('/api/backup/import', { backupData, options }),
   
   // Validate backup before import
-  validateBackup: (backupData) =>
-    api.post('/api/backup/validate', { backupData }),
+  validateBackup: async (backupData) => {
+    try {
+      const response = await api.post('/api/backup/validate', { backupData });
+      return response.data;
+    } catch (error) {
+      // Return a validation structure with error information
+      return {
+        isValid: false,
+        errors: [error.response?.data?.error || error.message || 'Validation failed'],
+        warnings: [],
+        summary: null
+      };
+    }
+  },
   
   // Parse backup file from file input
   parseBackupFile: (file) => {
