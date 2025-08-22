@@ -1966,16 +1966,25 @@ async function getRecentFileLogs(level = null, limit = 50) {
       }
     }
     
-    // Fallback: find the most recent app log file
+    // Fallback: find the most recent app log file (including rotated files)
     if (!appLogFile) {
       const files = fs.readdirSync(logDir);
       const appLogs = files
-        .filter(f => f.startsWith('app-') && f.endsWith('.log') && !f.includes('.gz'))
-        .sort()
-        .reverse();
+        .filter(f => {
+          // Include app-*.log, app-*.log.1, app-*.log.2, etc., but exclude gzipped files
+          return f.startsWith('app-') && 
+                 (f.endsWith('.log') || /\.log\.\d+$/.test(f)) && 
+                 !f.includes('.gz');
+        })
+        .map(f => {
+          const fullPath = path.join(logDir, f);
+          const stats = fs.statSync(fullPath);
+          return { filename: f, path: fullPath, mtime: stats.mtime };
+        })
+        .sort((a, b) => b.mtime - a.mtime); // Sort by modification time, newest first
       
       if (appLogs.length > 0) {
-        appLogFile = path.join(logDir, appLogs[0]);
+        appLogFile = appLogs[0].path;
       }
     }
     
