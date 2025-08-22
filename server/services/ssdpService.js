@@ -131,6 +131,29 @@ class SSDPService {
     logger.info('SSDP service shutdown completed');
   }
 
+  /**
+   * Update the advertised host at runtime
+   */
+  updateAdvertisedHost(newHost) {
+    try {
+      // Store the new advertised host
+      this.advertisedHost = newHost;
+      
+      // If SSDP is running, restart it with the new host
+      if (this.isRunning) {
+        logger.info('Restarting SSDP service with new advertised host:', newHost);
+        this.stop();
+        setTimeout(() => {
+          this.start(this.io);
+        }, 1000); // Small delay to ensure clean restart
+      }
+      
+      logger.info('Advertised host updated for SSDP service:', newHost);
+    } catch (error) {
+      logger.error('Failed to update advertised host:', error);
+    }
+  }
+
   // Generate HDHomeRun-compatible device description
   async generateDeviceDescription() {
     try {
@@ -138,9 +161,10 @@ class SSDPService {
       const settings = await settingsService.getSettings();
       const deviceName = settings?.plexlive?.device?.name || config.ssdp.friendlyName;
       
-      // Priority order: Environment variable > Settings > Config > Auto-detect
-      let localIP = process.env.ADVERTISED_HOST ||                              // Docker environment
+      // Priority order: Runtime update > Settings > Environment > Config > Auto-detect
+      let localIP = this.advertisedHost ||                                      // Runtime update
                    settings?.plexlive?.network?.advertisedHost ||              // Settings UI
+                   process.env.ADVERTISED_HOST ||                              // Docker environment
                    config.plexlive?.network?.advertisedHost ||                 // Config file  
                    config.network?.advertisedHost;                             // Legacy config
       
@@ -221,9 +245,10 @@ class SSDPService {
         legacyConfig: config.network?.advertisedHost
       });
       
-      // Priority order: Environment variable > Settings > Config > Auto-detect
-      let localIP = process.env.ADVERTISED_HOST ||                              // Docker environment
+      // Priority order: Runtime update > Settings > Environment > Config > Auto-detect
+      let localIP = this.advertisedHost ||                                      // Runtime update
                    settings?.plexlive?.network?.advertisedHost ||              // Settings UI
+                   process.env.ADVERTISED_HOST ||                              // Docker environment
                    config.plexlive?.network?.advertisedHost ||                 // Config file  
                    config.network?.advertisedHost;                             // Legacy config
       

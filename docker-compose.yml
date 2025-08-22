@@ -54,8 +54,8 @@ services:
       - HTTP_PORT=3000                     # Main HTTP server port
       - STREAM_PORT=3000                   # Streaming port (usually same as HTTP_PORT)
       - DISCOVERY_PORT=1900                # SSDP discovery port
-      - ADVERTISED_HOST=192.168.4.5      # Hostname/IP that clients should connect to
-      - BASE_URL=http://192.168.4.5:3000 # Complete base URL for the service
+      # - ADVERTISED_HOST=192.168.4.5      # Hostname/IP that clients should connect to (set via UI)
+      # - BASE_URL=http://192.168.4.5:3000 # Complete base URL for the service (set via UI)
       # - IPV6_ENABLED=false               # Enable/disable IPv6 support
       
       # Storage paths

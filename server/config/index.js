@@ -244,6 +244,8 @@ function loadCustomConfig() {
       network: {
         ...mergedConfig.plexlive.network,
         bindAddress: process.env.HOST_IP || process.env.BIND_ADDRESS || mergedConfig.plexlive.network.bindAddress,
+        // Priority: Environment variable (if set) > Config file > Auto-detect
+        // Note: Database settings will override this at runtime via settingsService
         advertisedHost: process.env.ADVERTISED_HOST || mergedConfig.plexlive.network.advertisedHost,
         streamingPort: parseInt(process.env.STREAM_PORT) || parseInt(process.env.STREAMING_PORT) || parseInt(process.env.HTTP_PORT) || parseInt(process.env.PORT) || mergedConfig.plexlive.network.streamingPort,
         discoveryPort: parseInt(process.env.DISCOVERY_PORT) || parseInt(process.env.SSDP_PORT) || mergedConfig.plexlive.network.discoveryPort,

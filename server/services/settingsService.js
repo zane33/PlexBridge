@@ -591,6 +591,38 @@ class SettingsService {
     try {
       const plexliveSettings = settings.plexlive || settings;
       
+      // Apply network settings to config (including advertisedHost)
+      if (plexliveSettings.network) {
+        const config = require('../config');
+        
+        // Update runtime config with network settings
+        if (plexliveSettings.network.advertisedHost !== undefined) {
+          config.plexlive.network.advertisedHost = plexliveSettings.network.advertisedHost;
+          
+          // Also update the device baseUrl to reflect the new advertised host
+          const port = config.plexlive.network.streamingPort || config.server.port;
+          config.plexlive.device.baseUrl = `http://${plexliveSettings.network.advertisedHost || 'localhost'}:${port}`;
+        }
+        
+        // Update SSDP service if it's running
+        try {
+          const ssdpService = require('./ssdpService');
+          if (ssdpService && typeof ssdpService.updateAdvertisedHost === 'function') {
+            ssdpService.updateAdvertisedHost(plexliveSettings.network.advertisedHost);
+            logger.info('Updated SSDP service with new advertised host', {
+              advertisedHost: plexliveSettings.network.advertisedHost
+            });
+          }
+        } catch (ssdpError) {
+          logger.warn('Failed to update SSDP service:', ssdpError);
+        }
+        
+        logger.info('Applied network settings to config', {
+          advertisedHost: plexliveSettings.network.advertisedHost,
+          baseUrl: config.plexlive.device.baseUrl
+        });
+      }
+      
       // Apply localization settings to logger
       if (plexliveSettings.localization) {
         logger.updateLocalizationSettings(plexliveSettings.localization);
