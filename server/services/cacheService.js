@@ -19,8 +19,10 @@ class CacheService {
     this.isConnected = true;
     console.log('Memory cache initialized successfully');
     
-    // Optionally try Redis connection in background (non-blocking)
-    this.tryRedisConnection();
+    // Skip Redis connection attempts in production/Docker
+    if (process.env.NODE_ENV !== 'production') {
+      this.tryRedisConnection();
+    }
     
     return this.client;
   }

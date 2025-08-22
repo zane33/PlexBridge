@@ -57,9 +57,10 @@ COPY start.sh /app/start.sh
 COPY run-server.sh /app/run-server.sh
 COPY verify-database.sh /app/verify-database.sh
 COPY fix-permissions.sh /app/fix-permissions.sh
+COPY debug-server.sh /app/debug-server.sh
 
 # Set permissions (optimized to avoid slow chown operations)
-RUN chmod +x /app/start.sh /app/run-server.sh /app/verify-database.sh /app/fix-permissions.sh && \
+RUN chmod +x /app/start.sh /app/run-server.sh /app/verify-database.sh /app/fix-permissions.sh /app/debug-server.sh && \
     chown -R plextv:plextv /app/server && \
     chown -R plextv:plextv /app/config && \
     chown plextv:plextv /app/client/build && \
