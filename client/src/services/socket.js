@@ -152,6 +152,19 @@ class SocketService {
     this.socket.on('streams:bandwidth:update', (data) => {
       this.notifyListeners('streams:bandwidth:update', data);
     });
+
+    // New streaming monitoring events
+    this.socket.on('session:started', (data) => {
+      this.notifyListeners('session:started', data);
+    });
+
+    this.socket.on('session:ended', (data) => {
+      this.notifyListeners('session:ended', data);
+    });
+
+    this.socket.on('monitoring:update', (data) => {
+      this.notifyListeners('monitoring:update', data);
+    });
   }
 
   disconnect() {

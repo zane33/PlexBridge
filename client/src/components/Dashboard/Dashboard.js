@@ -29,6 +29,12 @@ import {
   Divider,
   Button,
   Collapse,
+  Avatar,
+  Dialog,
+  DialogTitle,
+  DialogContent,
+  DialogActions,
+  DialogContentText,
 } from '@mui/material';
 import {
   Stream as StreamIcon,
@@ -45,6 +51,15 @@ import {
   ExpandLess as ExpandLessIcon,
   Star as StarIcon,
   Info as InfoIcon,
+  Computer as ComputerIcon,
+  PersonPin as PersonPinIcon,
+  NetworkCheck as NetworkCheckIcon,
+  PlayCircle as PlayCircleIcon,
+  Stop as StopIcon,
+  Timeline as TimelineIcon,
+  DataUsage as DataUsageIcon,
+  Warning as WarningIcon,
+  CheckCircle as CheckCircleIcon,
 } from '@mui/icons-material';
 import { Chart as ChartJS, CategoryScale, LinearScale, PointElement, LineElement, Title, Tooltip as ChartTooltip, Legend, ArcElement } from 'chart.js';
 import { Doughnut } from 'react-chartjs-2';
@@ -63,6 +78,13 @@ function Dashboard() {
   const [error, setError] = useState(null);
   const [showAdditionalUrls, setShowAdditionalUrls] = useState(false);
   const [currentSettings, setCurrentSettings] = useState(null);
+  
+  // New streaming monitoring state
+  const [streamingCapacity, setStreamingCapacity] = useState(null);
+  const [streamingSessions, setStreamingSessions] = useState([]);
+  const [streamingStats, setStreamingStats] = useState(null);
+  const [streamingBandwidth, setStreamingBandwidth] = useState(null);
+  const [terminateDialog, setTerminateDialog] = useState({ open: false, sessionId: null, sessionData: null });
   const theme = useTheme();
   const isMobile = useMediaQuery(theme.breakpoints.down('md'));
   const { enqueueSnackbar } = useSnackbar();
@@ -101,6 +123,7 @@ function Dashboard() {
     fetchActiveStreams();
     fetchServerInfo();
     fetchCurrentSettings();
+    fetchStreamingData();
     
     // Set up real-time updates via Socket.IO
     const unsubscribeMetrics = socketService.on('metrics:update', (data) => {
@@ -157,6 +180,29 @@ function Dashboard() {
       }
     });
 
+    // New streaming monitoring Socket.IO listeners
+    const unsubscribeSessionStarted = socketService.on('session:started', (data) => {
+      console.log('New streaming session started:', data);
+      fetchStreamingData();
+    });
+
+    const unsubscribeSessionEnded = socketService.on('session:ended', (data) => {
+      console.log('Streaming session ended:', data);
+      fetchStreamingData();
+    });
+
+    const unsubscribeMonitoringUpdate = socketService.on('monitoring:update', (data) => {
+      if (data.sessions) {
+        setStreamingSessions(data.sessions);
+      }
+      if (data.capacity) {
+        setStreamingCapacity(data.capacity);
+      }
+      if (data.bandwidth) {
+        setStreamingBandwidth(data.bandwidth);
+      }
+    });
+
     return () => {
       clearInterval(interval);
       unsubscribeMetrics();
@@ -165,6 +211,9 @@ function Dashboard() {
       unsubscribeBandwidthUpdate();
       unsubscribeSettingsChange();
       unsubscribeSettingsUpdate();
+      unsubscribeSessionStarted();
+      unsubscribeSessionEnded();
+      unsubscribeMonitoringUpdate();
     };
   }, []);
 
@@ -244,6 +293,94 @@ function Dashboard() {
     }
   };
 
+  const fetchStreamingData = async () => {
+    try {
+      // Use existing working API endpoint for now
+      const sessionsResponse = await api.get('/streams/active');
+      const sessions = sessionsResponse.data.streams || [];
+      setStreamingSessions(sessions);
+      
+      // Calculate capacity metrics from current settings and active sessions
+      const maxStreams = currentSettings?.plexlive?.streaming?.maxConcurrentStreams || 5;
+      const activeCount = sessions.length;
+      const utilizationPercentage = maxStreams > 0 ? Math.round((activeCount / maxStreams) * 100) : 0;
+      
+      const capacityData = {
+        totalActiveStreams: activeCount,
+        maxConcurrentStreams: maxStreams,
+        utilizationPercentage: utilizationPercentage,
+        availableStreams: Math.max(0, maxStreams - activeCount),
+        status: utilizationPercentage > 90 ? 'critical' : utilizationPercentage > 70 ? 'warning' : 'normal'
+      };
+      setStreamingCapacity(capacityData);
+      
+      // Calculate bandwidth stats from active sessions
+      const totalBandwidth = sessions.reduce((sum, session) => sum + (session.currentBitrate || 0), 0);
+      const peakBandwidth = Math.max(...sessions.map(s => s.peakBitrate || 0), 0);
+      const avgBandwidth = sessions.length > 0 ? totalBandwidth / sessions.length : 0;
+      const totalDataTransferred = sessions.reduce((sum, session) => sum + (session.bytesTransferred || 0), 0);
+      
+      const bandwidthData = {
+        totalBandwidthUsage: totalBandwidth,
+        peakBandwidthUsage: peakBandwidth,
+        averageBandwidthPerSession: avgBandwidth,
+        totalDataTransferred: totalDataTransferred,
+        activeSessionCount: sessions.length
+      };
+      setStreamingBandwidth(bandwidthData);
+      
+      // Calculate session statistics
+      const totalDuration = sessions.reduce((sum, session) => sum + (session.duration || 0), 0);
+      const avgDuration = sessions.length > 0 ? totalDuration / sessions.length : 0;
+      const channelCounts = {};
+      sessions.forEach(session => {
+        const key = session.channelName || 'Unknown';
+        channelCounts[key] = (channelCounts[key] || 0) + 1;
+      });
+      const mostPopularChannel = Object.keys(channelCounts).reduce((a, b) => 
+        channelCounts[a] > channelCounts[b] ? a : b, 'N/A'
+      );
+      
+      const statsData = {
+        totalSessions: sessions.length,
+        averageSessionDuration: avgDuration,
+        peakConcurrentSessions: sessions.length, // This would be tracked over time in real implementation
+        mostPopularChannel: mostPopularChannel,
+        sessionsByChannel: channelCounts
+      };
+      setStreamingStats(statsData);
+      
+    } catch (error) {
+      console.error('Failed to fetch streaming data:', error);
+      // Set empty/null fallbacks
+      setStreamingSessions([]);
+      setStreamingCapacity(null);
+      setStreamingStats(null);
+      setStreamingBandwidth(null);
+    }
+  };
+
+  const handleTerminateSession = async (sessionId) => {
+    try {
+      // Use existing API structure - check what endpoint is available
+      await api.delete(`/streams/active/${sessionId}`);
+      enqueueSnackbar('Session terminated successfully', { variant: 'success' });
+      setTerminateDialog({ open: false, sessionId: null, sessionData: null });
+      fetchStreamingData();
+    } catch (error) {
+      console.error('Failed to terminate session:', error);
+      enqueueSnackbar('Failed to terminate session. This feature may not be fully implemented yet.', { variant: 'warning' });
+    }
+  };
+
+  const openTerminateDialog = (session) => {
+    setTerminateDialog({ open: true, sessionId: session.sessionId, sessionData: session });
+  };
+
+  const closeTerminateDialog = () => {
+    setTerminateDialog({ open: false, sessionId: null, sessionData: null });
+  };
+
   const formatBytes = (bytes) => {
     if (bytes === 0) return '0 Bytes';
     const k = 1024;
@@ -274,7 +411,9 @@ function Dashboard() {
   };
 
   const formatDuration = (milliseconds) => {
-    const totalSeconds = Math.floor(milliseconds / 1000);
+    if (!milliseconds || isNaN(milliseconds)) return '0s';
+    
+    const totalSeconds = Math.floor(Math.abs(milliseconds) / 1000);
     const hours = Math.floor(totalSeconds / 3600);
     const minutes = Math.floor((totalSeconds % 3600) / 60);
     const seconds = totalSeconds % 60;
@@ -286,6 +425,24 @@ function Dashboard() {
     } else {
       return `${seconds}s`;
     }
+  };
+
+  const formatSessionDuration = (startTime) => {
+    if (!startTime) return '0s';
+    const duration = Date.now() - new Date(startTime).getTime();
+    return formatDuration(duration);
+  };
+
+  const getUtilizationColor = (percentage) => {
+    if (percentage <= 70) return 'success';
+    if (percentage <= 90) return 'warning';
+    return 'error';
+  };
+
+  const getUtilizationStatus = (percentage) => {
+    if (percentage <= 70) return 'normal';
+    if (percentage <= 90) return 'busy';
+    return 'critical';
   };
 
   // Format timestamp according to current locale settings
@@ -477,7 +634,7 @@ function Dashboard() {
         Dashboard
       </Typography>
 
-      {/* Key Metrics Cards */}
+      {/* Enhanced Key Metrics Cards with Live Streaming Capacity */}
       <Grid container spacing={isMobile ? 2 : 3} sx={{ mb: 3 }} data-testid="system-metrics">
         <Grid item xs={12} sm={6} md={3}>
           <Card 
@@ -523,10 +680,10 @@ function Dashboard() {
                       mb: 0.5
                     }}
                   >
-                    {metrics?.streams?.active || 0}
+                    {streamingCapacity?.totalActiveStreams || metrics?.streams?.active || 0}
                   </Typography>
                   <Typography variant="body2" sx={{ color: 'text.secondary', fontWeight: 500 }}>
-                    of {metrics?.streams?.maximum || 0} max capacity
+                    of {streamingCapacity?.maxConcurrentStreams || metrics?.streams?.maximum || 0} max capacity
                   </Typography>
                 </Box>
                 <Box 
@@ -554,20 +711,33 @@ function Dashboard() {
                   <Typography variant="caption" sx={{ color: 'text.secondary', fontWeight: 500 }}>
                     Utilization
                   </Typography>
-                  <Typography variant="caption" sx={{ color: 'primary.main', fontWeight: 600 }}>
-                    {metrics?.streams?.utilization || 0}%
-                  </Typography>
+                  <Box sx={{ display: 'flex', alignItems: 'center' }}>
+                    <Typography variant="caption" sx={{ color: 'primary.main', fontWeight: 600, mr: 1 }}>
+                      {streamingCapacity?.utilizationPercentage || metrics?.streams?.utilization || 0}%
+                    </Typography>
+                    <Chip
+                      label={getUtilizationStatus(streamingCapacity?.utilizationPercentage || metrics?.streams?.utilization || 0)}
+                      size="small"
+                      color={getUtilizationColor(streamingCapacity?.utilizationPercentage || metrics?.streams?.utilization || 0)}
+                      sx={{ fontSize: '0.7rem', height: '16px' }}
+                    />
+                  </Box>
                 </Box>
                 <LinearProgress
                   variant="determinate"
-                  value={metrics?.streams?.utilization || 0}
+                  value={streamingCapacity?.utilizationPercentage || metrics?.streams?.utilization || 0}
+                  color={getUtilizationColor(streamingCapacity?.utilizationPercentage || metrics?.streams?.utilization || 0)}
                   sx={{
                     height: 8,
                     borderRadius: 4,
                     backgroundColor: 'rgba(99, 102, 241, 0.1)',
                     '& .MuiLinearProgress-bar': {
                       borderRadius: 4,
-                      background: 'linear-gradient(90deg, #6366f1 0%, #8b5cf6 100%)',
+                      background: (streamingCapacity?.utilizationPercentage || 0) > 90 
+                        ? 'linear-gradient(90deg, #ef4444 0%, #dc2626 100%)'
+                        : (streamingCapacity?.utilizationPercentage || 0) > 70
+                        ? 'linear-gradient(90deg, #f59e0b 0%, #d97706 100%)'
+                        : 'linear-gradient(90deg, #6366f1 0%, #8b5cf6 100%)',
                     }
                   }}
                 />
@@ -943,7 +1113,7 @@ function Dashboard() {
         </Grid>
       </Grid>
 
-      {/* Active Streams Table */}
+      {/* Enhanced Live Streaming Sessions Table */}
       <Card 
         sx={{ 
           background: 'linear-gradient(135deg, rgba(99, 102, 241, 0.05) 0%, rgba(139, 92, 246, 0.05) 100%)',
@@ -952,79 +1122,128 @@ function Dashboard() {
         }}
       >
         <CardContent>
-          <Box sx={{ display: 'flex', alignItems: 'center', mb: 3 }}>
-            <Box 
-              sx={{ 
-                width: 40, 
-                height: 40,
-                borderRadius: 2,
-                background: 'linear-gradient(135deg, #6366f1 0%, #8b5cf6 100%)',
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'center',
-                mr: 2
-              }}
-            >
-              <StreamIcon sx={{ fontSize: 20, color: 'white' }} />
-            </Box>
-            <Box>
-              <Typography 
-                variant="h6" 
+          <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', mb: 3 }}>
+            <Box sx={{ display: 'flex', alignItems: 'center' }}>
+              <Box 
                 sx={{ 
-                  fontWeight: 700,
+                  width: 40, 
+                  height: 40,
+                  borderRadius: 2,
                   background: 'linear-gradient(135deg, #6366f1 0%, #8b5cf6 100%)',
-                  backgroundClip: 'text',
-                  WebkitBackgroundClip: 'text',
-                  WebkitTextFillColor: 'transparent',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  mr: 2
                 }}
               >
-                Active Streams
-              </Typography>
-              <Typography variant="body2" sx={{ color: 'text.secondary', fontWeight: 500 }}>
-                Currently active streaming sessions
+                <StreamIcon sx={{ fontSize: 20, color: 'white' }} />
+              </Box>
+              <Box>
+                <Typography 
+                  variant="h6" 
+                  sx={{ 
+                    fontWeight: 700,
+                    background: 'linear-gradient(135deg, #6366f1 0%, #8b5cf6 100%)',
+                    backgroundClip: 'text',
+                    WebkitBackgroundClip: 'text',
+                    WebkitTextFillColor: 'transparent',
+                  }}
+                >
+                  Live Streaming Sessions
+                </Typography>
+                <Typography variant="body2" sx={{ color: 'text.secondary', fontWeight: 500 }}>
+                  Real-time monitoring of active streaming sessions
+                </Typography>
+              </Box>
+            </Box>
+            
+            {/* Real-time update indicator */}
+            <Box sx={{ display: 'flex', alignItems: 'center' }}>
+              <Box
+                sx={{
+                  width: 8,
+                  height: 8,
+                  borderRadius: '50%',
+                  bgcolor: socketService.isConnected() ? 'success.main' : 'error.main',
+                  mr: 1,
+                  animation: socketService.isConnected() ? 'pulse 2s infinite' : 'none'
+                }}
+              />
+              <Typography variant="caption" sx={{ color: 'text.secondary' }}>
+                {socketService.isConnected() ? 'Live' : 'Offline'}
               </Typography>
             </Box>
           </Box>
-          {activeStreams.length === 0 ? (
-            <Typography color="textSecondary">
-              No active streams
-            </Typography>
+          
+          {streamingSessions.length === 0 ? (
+            <Box sx={{ textAlign: 'center', py: 4 }}>
+              <PlayCircleIcon sx={{ fontSize: 64, color: 'text.disabled', mb: 2 }} />
+              <Typography variant="h6" color="textSecondary" sx={{ mb: 1 }}>
+                No Active Streaming Sessions
+              </Typography>
+              <Typography variant="body2" color="textSecondary">
+                Streaming sessions will appear here when users start watching channels
+              </Typography>
+            </Box>
           ) : (
-            <TableContainer component={Paper} sx={{ mt: 2 }} data-testid="active-streams">
+            <TableContainer component={Paper} sx={{ mt: 2 }} data-testid="live-streaming-sessions">
               <Table>
                 <TableHead>
                   <TableRow>
+                    <TableCell>Client Info</TableCell>
                     <TableCell>Channel</TableCell>
-                    <TableCell>Client IP</TableCell>
-                    <TableCell>Current Bitrate</TableCell>
-                    <TableCell>Avg Bitrate</TableCell>
-                    <TableCell>Peak Bitrate</TableCell>
                     <TableCell>Duration</TableCell>
+                    <TableCell>Current Bitrate</TableCell>
                     <TableCell>Data Transferred</TableCell>
-                    <TableCell>Started</TableCell>
+                    <TableCell align="center">Actions</TableCell>
                   </TableRow>
                 </TableHead>
                 <TableBody>
-                  {activeStreams.map((stream) => (
-                    <TableRow key={stream.sessionId}>
+                  {streamingSessions.map((session) => (
+                    <TableRow key={session.sessionId}>
                       <TableCell>
                         <Box sx={{ display: 'flex', alignItems: 'center' }}>
-                          <TvIcon sx={{ mr: 1, color: 'primary.main' }} />
+                          <Avatar 
+                            sx={{ 
+                              bgcolor: 'primary.main', 
+                              width: 32, 
+                              height: 32, 
+                              mr: 2,
+                              fontSize: '0.875rem'
+                            }}
+                          >
+                            <ComputerIcon sx={{ fontSize: 16 }} />
+                          </Avatar>
                           <Box>
                             <Typography variant="body2" fontWeight="bold">
-                              Ch {stream.channelNumber || 'N/A'} - {stream.channelName || 'Unknown Channel'}
+                              {session.clientIP}
                             </Typography>
                             <Typography variant="caption" color="text.secondary">
-                              {stream.streamId}
+                              {session.hostname || 'Resolving...'}
                             </Typography>
                           </Box>
                         </Box>
                       </TableCell>
                       <TableCell>
-                        <Typography variant="body2">{stream.clientIP}</Typography>
-                        <Typography variant="caption" color="text.secondary">
-                          {stream.userAgent ? stream.userAgent.split(' ')[0] : 'Unknown'}
-                        </Typography>
+                        <Box sx={{ display: 'flex', alignItems: 'center' }}>
+                          <TvIcon sx={{ mr: 1, color: 'primary.main' }} />
+                          <Box>
+                            <Typography variant="body2" fontWeight="bold">
+                              {session.channelName || 'Unknown Channel'}
+                            </Typography>
+                            <Typography variant="caption" color="text.secondary">
+                              Channel {session.channelNumber || 'N/A'}
+                            </Typography>
+                          </Box>
+                        </Box>
+                      </TableCell>
+                      <TableCell>
+                        <Box sx={{ display: 'flex', alignItems: 'center' }}>
+                          <TimelineIcon sx={{ mr: 1, color: 'success.main', fontSize: 16 }} />
+                          <Typography variant="body2" fontWeight="bold">
+                            {formatSessionDuration(session.startTime)}
+                          </Typography>
+                        </Box>
                       </TableCell>
                       <TableCell>
                         <Box sx={{ display: 'flex', alignItems: 'center' }}>
@@ -1033,43 +1252,40 @@ function Dashboard() {
                               width: 8,
                               height: 8,
                               borderRadius: '50%',
-                              bgcolor: stream.currentBitrate > 0 ? 'success.main' : 'grey.400',
+                              bgcolor: session.currentBitrate > 0 ? 'success.main' : 'grey.400',
                               mr: 1,
-                              animation: stream.currentBitrate > 0 ? 'pulse 2s infinite' : 'none'
+                              animation: session.currentBitrate > 0 ? 'pulse 2s infinite' : 'none'
                             }}
                           />
                           <Typography variant="body2" fontWeight="bold">
-                            {formatBitrate(stream.currentBitrate)}
+                            {formatBitrate(session.currentBitrate)}
                           </Typography>
                         </Box>
                       </TableCell>
                       <TableCell>
-                        <Typography variant="body2">
-                          {formatBitrate(stream.avgBitrate)}
-                        </Typography>
+                        <Box sx={{ display: 'flex', alignItems: 'center' }}>
+                          <DataUsageIcon sx={{ mr: 1, color: 'info.main', fontSize: 16 }} />
+                          <Typography variant="body2">
+                            {formatBytes(session.bytesTransferred)}
+                          </Typography>
+                        </Box>
                       </TableCell>
-                      <TableCell>
-                        <Typography variant="body2" color="primary.main" fontWeight="bold">
-                          {formatBitrate(stream.peakBitrate)}
-                        </Typography>
-                      </TableCell>
-                      <TableCell>
-                        <Typography variant="body2">
-                          {formatDuration(stream.duration)}
-                        </Typography>
-                      </TableCell>
-                      <TableCell>
-                        <Typography variant="body2">
-                          {formatBytes(stream.bytesTransferred)}
-                        </Typography>
-                      </TableCell>
-                      <TableCell>
-                        <Typography variant="body2">
-                          {formatTimestamp(stream.startTime)}
-                        </Typography>
-                        <Typography variant="caption" color="text.secondary">
-                          Started {formatDuration(Date.now() - new Date(stream.startTime).getTime())} ago
-                        </Typography>
+                      <TableCell align="center">
+                        <Tooltip title="Terminate Session">
+                          <IconButton
+                            onClick={() => openTerminateDialog(session)}
+                            size="small"
+                            sx={{
+                              color: 'error.main',
+                              '&:hover': {
+                                backgroundColor: 'error.light',
+                                color: 'error.dark',
+                              }
+                            }}
+                          >
+                            <StopIcon />
+                          </IconButton>
+                        </Tooltip>
                       </TableCell>
                     </TableRow>
                   ))}
@@ -1079,6 +1295,238 @@ function Dashboard() {
           )}
         </CardContent>
       </Card>
+
+      {/* Session Termination Dialog */}
+      <Dialog
+        open={terminateDialog.open}
+        onClose={closeTerminateDialog}
+        maxWidth="sm"
+        fullWidth
+      >
+        <DialogTitle sx={{ display: 'flex', alignItems: 'center' }}>
+          <WarningIcon sx={{ color: 'warning.main', mr: 1 }} />
+          Terminate Streaming Session
+        </DialogTitle>
+        <DialogContent>
+          <DialogContentText>
+            Are you sure you want to terminate the streaming session for:
+          </DialogContentText>
+          {terminateDialog.sessionData && (
+            <Box sx={{ mt: 2, p: 2, bgcolor: 'grey.100', borderRadius: 1 }}>
+              <Typography variant="body2">
+                <strong>Client:</strong> {terminateDialog.sessionData.clientIP} ({terminateDialog.sessionData.hostname || 'Unknown'})
+              </Typography>
+              <Typography variant="body2">
+                <strong>Channel:</strong> {terminateDialog.sessionData.channelName} (Ch {terminateDialog.sessionData.channelNumber})
+              </Typography>
+              <Typography variant="body2">
+                <strong>Duration:</strong> {formatSessionDuration(terminateDialog.sessionData.startTime)}
+              </Typography>
+            </Box>
+          )}
+          <DialogContentText sx={{ mt: 2 }}>
+            This action will immediately stop the stream for this user. The user may need to restart their player to resume viewing.
+          </DialogContentText>
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={closeTerminateDialog} color="primary">
+            Cancel
+          </Button>
+          <Button 
+            onClick={() => handleTerminateSession(terminateDialog.sessionId)} 
+            color="error" 
+            variant="contained"
+            startIcon={<StopIcon />}
+          >
+            Terminate Session
+          </Button>
+        </DialogActions>
+      </Dialog>
+
+      {/* Streaming Analytics and Bandwidth Monitoring */}
+      {streamingBandwidth && streamingStats && (
+        <Grid container spacing={3} sx={{ mb: 3 }}>
+          {/* Bandwidth Analytics Card */}
+          <Grid item xs={12} md={6}>
+            <Card 
+              sx={{ 
+                background: 'linear-gradient(135deg, rgba(16, 185, 129, 0.05) 0%, rgba(5, 150, 105, 0.05) 100%)',
+                border: '1px solid rgba(16, 185, 129, 0.15)',
+                position: 'relative',
+                overflow: 'hidden',
+                height: '100%'
+              }}
+            >
+              <CardContent>
+                <Box sx={{ display: 'flex', alignItems: 'center', mb: 3 }}>
+                  <Box 
+                    sx={{ 
+                      width: 40, 
+                      height: 40,
+                      borderRadius: 2,
+                      background: 'linear-gradient(135deg, #10b981 0%, #059669 100%)',
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      mr: 2
+                    }}
+                  >
+                    <NetworkCheckIcon sx={{ fontSize: 20, color: 'white' }} />
+                  </Box>
+                  <Box>
+                    <Typography 
+                      variant="h6" 
+                      sx={{ 
+                        fontWeight: 700,
+                        background: 'linear-gradient(135deg, #10b981 0%, #059669 100%)',
+                        backgroundClip: 'text',
+                        WebkitBackgroundClip: 'text',
+                        WebkitTextFillColor: 'transparent',
+                      }}
+                    >
+                      Bandwidth Analytics
+                    </Typography>
+                    <Typography variant="body2" sx={{ color: 'text.secondary', fontWeight: 500 }}>
+                      Real-time network utilization
+                    </Typography>
+                  </Box>
+                </Box>
+                
+                <Grid container spacing={2}>
+                  <Grid item xs={6}>
+                    <Box sx={{ textAlign: 'center' }}>
+                      <Typography variant="h4" sx={{ 
+                        fontWeight: 700,
+                        color: 'success.main',
+                        mb: 0.5
+                      }}>
+                        {formatBitrate(streamingBandwidth.totalBandwidthUsage)}
+                      </Typography>
+                      <Typography variant="caption" sx={{ color: 'text.secondary', fontWeight: 600 }}>
+                        Total Bandwidth
+                      </Typography>
+                    </Box>
+                  </Grid>
+                  <Grid item xs={6}>
+                    <Box sx={{ textAlign: 'center' }}>
+                      <Typography variant="h4" sx={{ 
+                        fontWeight: 700,
+                        color: 'info.main',
+                        mb: 0.5
+                      }}>
+                        {formatBitrate(streamingBandwidth.peakBandwidthUsage)}
+                      </Typography>
+                      <Typography variant="caption" sx={{ color: 'text.secondary', fontWeight: 600 }}>
+                        Peak Bandwidth
+                      </Typography>
+                    </Box>
+                  </Grid>
+                  <Grid item xs={12}>
+                    <Box sx={{ mt: 2 }}>
+                      <Typography variant="body2" sx={{ mb: 1, fontWeight: 500 }}>
+                        Average per Session: {formatBitrate(streamingBandwidth.averageBandwidthPerSession)}
+                      </Typography>
+                      <Typography variant="body2" sx={{ color: 'text.secondary' }}>
+                        Total Data Transferred: {formatBytes(streamingBandwidth.totalDataTransferred)}
+                      </Typography>
+                    </Box>
+                  </Grid>
+                </Grid>
+              </CardContent>
+            </Card>
+          </Grid>
+
+          {/* Streaming Statistics Card */}
+          <Grid item xs={12} md={6}>
+            <Card 
+              sx={{ 
+                background: 'linear-gradient(135deg, rgba(59, 130, 246, 0.05) 0%, rgba(29, 78, 216, 0.05) 100%)',
+                border: '1px solid rgba(59, 130, 246, 0.15)',
+                position: 'relative',
+                overflow: 'hidden',
+                height: '100%'
+              }}
+            >
+              <CardContent>
+                <Box sx={{ display: 'flex', alignItems: 'center', mb: 3 }}>
+                  <Box 
+                    sx={{ 
+                      width: 40, 
+                      height: 40,
+                      borderRadius: 2,
+                      background: 'linear-gradient(135deg, #3b82f6 0%, #1d4ed8 100%)',
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      mr: 2
+                    }}
+                  >
+                    <TimelineIcon sx={{ fontSize: 20, color: 'white' }} />
+                  </Box>
+                  <Box>
+                    <Typography 
+                      variant="h6" 
+                      sx={{ 
+                        fontWeight: 700,
+                        background: 'linear-gradient(135deg, #3b82f6 0%, #1d4ed8 100%)',
+                        backgroundClip: 'text',
+                        WebkitBackgroundClip: 'text',
+                        WebkitTextFillColor: 'transparent',
+                      }}
+                    >
+                      Streaming Statistics
+                    </Typography>
+                    <Typography variant="body2" sx={{ color: 'text.secondary', fontWeight: 500 }}>
+                      Session metrics and performance
+                    </Typography>
+                  </Box>
+                </Box>
+                
+                <Grid container spacing={2}>
+                  <Grid item xs={6}>
+                    <Box sx={{ textAlign: 'center' }}>
+                      <Typography variant="h4" sx={{ 
+                        fontWeight: 700,
+                        color: 'primary.main',
+                        mb: 0.5
+                      }}>
+                        {streamingStats.totalSessions || 0}
+                      </Typography>
+                      <Typography variant="caption" sx={{ color: 'text.secondary', fontWeight: 600 }}>
+                        Total Sessions
+                      </Typography>
+                    </Box>
+                  </Grid>
+                  <Grid item xs={6}>
+                    <Box sx={{ textAlign: 'center' }}>
+                      <Typography variant="h4" sx={{ 
+                        fontWeight: 700,
+                        color: 'warning.main',
+                        mb: 0.5
+                      }}>
+                        {formatDuration(streamingStats.averageSessionDuration)}
+                      </Typography>
+                      <Typography variant="caption" sx={{ color: 'text.secondary', fontWeight: 600 }}>
+                        Avg Duration
+                      </Typography>
+                    </Box>
+                  </Grid>
+                  <Grid item xs={12}>
+                    <Box sx={{ mt: 2 }}>
+                      <Typography variant="body2" sx={{ mb: 1, fontWeight: 500 }}>
+                        Peak Concurrent: {streamingStats.peakConcurrentSessions || 0} sessions
+                      </Typography>
+                      <Typography variant="body2" sx={{ color: 'text.secondary' }}>
+                        Most Popular Channel: {streamingStats.mostPopularChannel || 'N/A'}
+                      </Typography>
+                    </Box>
+                  </Grid>
+                </Grid>
+              </CardContent>
+            </Card>
+          </Grid>
+        </Grid>
+      )}
 
       {/* System Information */}
       <Grid container spacing={3} sx={{ mt: 3 }}>

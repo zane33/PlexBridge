@@ -125,6 +125,11 @@ io.on('connection', (socket) => {
     socket.join('settings');
     logger.info(`Client ${socket.id} joined settings room`);
   });
+
+  socket.on('join-streaming', () => {
+    socket.join('streaming');
+    logger.info(`Client ${socket.id} joined streaming monitoring room`);
+  });
   
   // Handle client pings for custom health checks
   socket.on('ping', (callback) => {
@@ -363,12 +368,14 @@ const initializeApp = async () => {
       const m3uRoutes = require('./routes/m3u');
       const m3uImportRoutes = require('./routes/m3uImport');
       const plexSetupRoutes = require('./routes/plex-setup');
+      const streamingRoutes = require('./routes/streaming');
 
       // API Routes - MUST BE BEFORE STATIC FILES
       app.use('/', healthRoutes);  // Health check routes
       app.use('/', plexSetupRoutes);  // Plex setup guide
       app.use('/api/streams/parse/m3u', m3uRoutes);
       app.use('/api/streams/import/m3u', m3uImportRoutes);
+      app.use('/api/streaming', streamingRoutes);  // Enhanced streaming monitoring
       app.use('/api', apiRoutes);
       app.use('/epg', epgRoutes);
       app.use('/', ssdpRoutes);

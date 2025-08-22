@@ -365,6 +365,41 @@ class DatabaseService {
       `);
       createStreamSessionsTable.run();
 
+      // Migration: Add enhanced monitoring fields to stream_sessions table
+      try {
+        // Add new columns for enhanced stream monitoring
+        const addColumns = [
+          'ALTER TABLE stream_sessions ADD COLUMN client_hostname TEXT',
+          'ALTER TABLE stream_sessions ADD COLUMN client_identifier TEXT',
+          'ALTER TABLE stream_sessions ADD COLUMN channel_name TEXT',
+          'ALTER TABLE stream_sessions ADD COLUMN channel_number INTEGER',
+          'ALTER TABLE stream_sessions ADD COLUMN stream_url TEXT',
+          'ALTER TABLE stream_sessions ADD COLUMN stream_type TEXT',
+          'ALTER TABLE stream_sessions ADD COLUMN duration_ms INTEGER DEFAULT 0',
+          'ALTER TABLE stream_sessions ADD COLUMN current_bitrate INTEGER DEFAULT 0',
+          'ALTER TABLE stream_sessions ADD COLUMN avg_bitrate INTEGER DEFAULT 0',
+          'ALTER TABLE stream_sessions ADD COLUMN peak_bitrate INTEGER DEFAULT 0',
+          'ALTER TABLE stream_sessions ADD COLUMN error_count INTEGER DEFAULT 0',
+          'ALTER TABLE stream_sessions ADD COLUMN end_reason TEXT',
+          'ALTER TABLE stream_sessions ADD COLUMN last_update DATETIME DEFAULT CURRENT_TIMESTAMP'
+        ];
+
+        addColumns.forEach(sql => {
+          try {
+            this.db.prepare(sql).run();
+          } catch (error) {
+            // Column might already exist, ignore duplicate column errors
+            if (!error.message.includes('duplicate column name')) {
+              logger.warn('Failed to add column to stream_sessions:', error.message);
+            }
+          }
+        });
+        
+        logger.info('✅ Stream sessions table migration completed successfully');
+      } catch (migrationError) {
+        logger.warn('Stream sessions table migration failed:', migrationError.message);
+      }
+
       // Create logs table
       const createLogsTable = this.db.prepare(`
         CREATE TABLE IF NOT EXISTS logs (

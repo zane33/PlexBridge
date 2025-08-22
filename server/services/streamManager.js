@@ -6,6 +6,7 @@ const logger = require('../utils/logger');
 const config = require('../config');
 const cacheService = require('./cacheService');
 const settingsService = require('./settingsService');
+const streamSessionManager = require('./streamSessionManager');
 
 class StreamManager {
   constructor() {
@@ -638,6 +639,26 @@ class StreamManager {
       }
       this.clientSessions.get(clientIdentifier).set(streamId, sessionId);
 
+      // Start enhanced session tracking
+      try {
+        await streamSessionManager.startSession({
+          sessionId,
+          streamId,
+          clientIP: req.ip,
+          userAgent: req.get('User-Agent'),
+          clientIdentifier,
+          channelName: channelInfo?.name,
+          channelNumber: channelInfo?.number,
+          streamUrl: streamData.url,
+          streamType: streamData.type
+        });
+      } catch (sessionError) {
+        logger.warn('Failed to start enhanced session tracking', {
+          sessionId,
+          error: sessionError.message
+        });
+      }
+
       // Track stream statistics with detailed bandwidth monitoring
       this.streamStats.set(sessionId, {
         bytesTransferred: 0,
@@ -694,6 +715,12 @@ class StreamManager {
             if (currentBps > stats.peakBitrate) {
               stats.peakBitrate = Math.round(currentBps);
             }
+
+            // Update enhanced session tracking
+            streamSessionManager.updateSessionMetrics(sessionId, {
+              bytesTransferred: stats.bytesTransferred,
+              currentBitrate: stats.currentBitrate
+            });
           }
         }
       });
@@ -706,6 +733,11 @@ class StreamManager {
         const stats = this.streamStats.get(sessionId);
         if (stats) {
           stats.errors++;
+          
+          // Update enhanced session tracking with error
+          streamSessionManager.updateSessionMetrics(sessionId, {
+            errorIncrement: 1
+          });
         }
         
         // Enhanced error logging for stream sessions
@@ -1012,6 +1044,17 @@ class StreamManager {
 
   cleanupStream(sessionId, reason = 'manual') {
     const stream = this.activeStreams.get(sessionId);
+    
+    // End enhanced session tracking first
+    if (stream) {
+      streamSessionManager.endSession(sessionId, reason).catch(error => {
+        logger.warn('Failed to end enhanced session tracking', {
+          sessionId,
+          error: error.message
+        });
+      });
+    }
+    
     if (stream && stream.process) {
       try {
         // Send SIGTERM first for graceful shutdown

@@ -478,19 +478,19 @@ export const backupApi = {
     
     const { data } = backupData;
     
-    if (!Array.isArray(data.channels)) {
+    if (data.channels && !Array.isArray(data.channels)) {
       errors.push('Channels data must be an array');
     }
     
-    if (!Array.isArray(data.streams)) {
+    if (data.streams && !Array.isArray(data.streams)) {
       errors.push('Streams data must be an array');
     }
     
-    if (!Array.isArray(data.epgSources)) {
+    if (data.epgSources && !Array.isArray(data.epgSources)) {
       errors.push('EPG sources data must be an array');
     }
     
-    if (typeof data.settings !== 'object') {
+    if (data.settings && typeof data.settings !== 'object') {
       errors.push('Settings data must be an object');
     }
     

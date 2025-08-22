@@ -2626,23 +2626,23 @@ router.post('/backup/validate', async (req, res) => {
 
     const { data } = backupData;
 
-    // Validate data structure
-    if (!Array.isArray(data.channels)) {
+    // Validate data structure - only validate if the section exists
+    if (data.channels && !Array.isArray(data.channels)) {
       validation.errors.push('Channels data must be an array');
       validation.isValid = false;
     }
 
-    if (!Array.isArray(data.streams)) {
+    if (data.streams && !Array.isArray(data.streams)) {
       validation.errors.push('Streams data must be an array');
       validation.isValid = false;
     }
 
-    if (!Array.isArray(data.epgSources)) {
+    if (data.epgSources && !Array.isArray(data.epgSources)) {
       validation.errors.push('EPG sources data must be an array');
       validation.isValid = false;
     }
 
-    if (typeof data.settings !== 'object') {
+    if (data.settings && typeof data.settings !== 'object') {
       validation.errors.push('Settings data must be an object');
       validation.isValid = false;
     }
