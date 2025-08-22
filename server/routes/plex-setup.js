@@ -10,9 +10,9 @@ router.get('/plex-setup', async (req, res) => {
     const settingsService = require('../services/settingsService');
     const settings = await settingsService.getSettings();
     
-    // Priority order: Environment variable > Settings > Config > Auto-detect
-    let localIP = process.env.ADVERTISED_HOST ||                              // Docker environment
-                 settings?.plexlive?.network?.advertisedHost ||              // Settings UI
+    // Priority order: Settings > Environment variable > Config > Auto-detect
+    let localIP = settings?.plexlive?.network?.advertisedHost ||              // Settings UI
+                 process.env.ADVERTISED_HOST ||                              // Docker environment
                  config.plexlive?.network?.advertisedHost ||                 // Config file  
                  config.network?.advertisedHost;                             // Legacy config
     
@@ -86,9 +86,9 @@ router.get('/plex-setup.html', async (req, res) => {
     const settingsService = require('../services/settingsService');
     const settings = await settingsService.getSettings();
     
-    // Priority order: Environment variable > Settings > Config > Auto-detect
-    let localIP = process.env.ADVERTISED_HOST ||                              // Docker environment
-                 settings?.plexlive?.network?.advertisedHost ||              // Settings UI
+    // Priority order: Settings > Environment variable > Config > Auto-detect
+    let localIP = settings?.plexlive?.network?.advertisedHost ||              // Settings UI
+                 process.env.ADVERTISED_HOST ||                              // Docker environment
                  config.plexlive?.network?.advertisedHost ||                 // Config file  
                  config.network?.advertisedHost;                             // Legacy config
     

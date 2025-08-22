@@ -50,9 +50,9 @@ router.get('/lineup_status.json', async (req, res) => {
     const config = require('../config');
     const settings = await settingsService.getSettings();
     
-    // Priority order: Environment variable > Settings > Config > Auto-detect fallback
-    let baseHost = process.env.ADVERTISED_HOST ||                              // Docker environment
-                  settings?.plexlive?.network?.advertisedHost ||              // Settings UI
+    // Priority order: Settings > Environment variable > Config > Auto-detect fallback
+    let baseHost = settings?.plexlive?.network?.advertisedHost ||              // Settings UI
+                  process.env.ADVERTISED_HOST ||                              // Docker environment
                   config.plexlive?.network?.advertisedHost ||                 // Config file  
                   config.network?.advertisedHost;                             // Legacy config
     

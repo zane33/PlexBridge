@@ -2064,15 +2064,17 @@ router.get('/settings', async (req, res) => {
     
     const settings = await settingsService.getSettings();
     
-    // Show effective advertised host (environment variable takes precedence)
+    // Show effective advertised host (database settings take precedence)
     if (!settings.plexlive) settings.plexlive = {};
     if (!settings.plexlive.network) settings.plexlive.network = {};
     
     // Show the effective value that's actually being used
-    const effectiveAdvertisedHost = process.env.ADVERTISED_HOST || settings.plexlive.network.advertisedHost;
+    // Priority: Database settings > Environment variable
+    const originalSettingsValue = settings.plexlive.network.advertisedHost;
+    const effectiveAdvertisedHost = originalSettingsValue || process.env.ADVERTISED_HOST;
     if (effectiveAdvertisedHost) {
       settings.plexlive.network.advertisedHost = effectiveAdvertisedHost;
-      settings.plexlive.network._advertisedHostSource = process.env.ADVERTISED_HOST ? 'environment' : 'settings';
+      settings.plexlive.network._advertisedHostSource = originalSettingsValue ? 'settings' : 'environment';
     }
     
     logger.info('Settings retrieved successfully', { 
