@@ -256,7 +256,7 @@ function Dashboard() {
         platform: 'linux',
         arch: 'x64',
         nodeVersion: 'v18.20.8',
-        port: 8080,
+        port: 3000,
         baseUrl: `${window.location.protocol}//${window.location.host}`,
         ipAddresses: [
           {

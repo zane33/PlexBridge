@@ -10,13 +10,13 @@ const { chromium } = require('playwright');
     console.log('\n1. Checking API first...');
     
     // Check API response
-    const apiResponse = await page.request.get('http://localhost:8080/api/settings');
+    const apiResponse = await page.request.get('http://localhost:3000/api/settings');
     const apiData = await apiResponse.json();
     console.log('Backend maxConcurrentStreams:', apiData.streaming?.maxConcurrentStreams);
     
     console.log('\n2. Loading frontend...');
     
-    await page.goto('http://localhost:8080/');
+    await page.goto('http://localhost:3000/');
     await page.waitForLoadState('networkidle');
     
     // Take screenshot of dashboard
