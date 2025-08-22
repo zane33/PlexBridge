@@ -132,10 +132,12 @@ function Dashboard() {
 
     const unsubscribeStreamStart = socketService.on('stream:started', () => {
       fetchActiveStreams();
+      fetchMetrics(); // Also refresh metrics when stream starts
     });
 
     const unsubscribeStreamStop = socketService.on('stream:stopped', () => {
       fetchActiveStreams();
+      fetchMetrics(); // Also refresh metrics when stream stops
     });
 
     const unsubscribeBandwidthUpdate = socketService.on('streams:bandwidth:update', (data) => {

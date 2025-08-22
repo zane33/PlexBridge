@@ -1469,8 +1469,18 @@ router.get('/server/info', (req, res) => {
       });
     });
 
+    // Get dynamic port from settings or config
+    const settings = await settingsService.getSettings();
+    const streamingPort = settings?.plexlive?.network?.streamingPort || 
+                         config?.plexlive?.network?.streamingPort ||
+                         parseInt(process.env.STREAM_PORT) || 
+                         parseInt(process.env.STREAMING_PORT) || 
+                         parseInt(process.env.HTTP_PORT) || 
+                         parseInt(process.env.PORT) || 
+                         3000;
+    
     // Get primary server host
-    const serverHost = req.get('host') || `${req.hostname}:${process.env.HTTP_PORT || process.env.PORT || 3000}`;
+    const serverHost = req.get('host') || `${req.hostname}:${streamingPort}`;
     const protocol = req.secure ? 'https' : 'http';
     const baseUrl = `${protocol}://${serverHost}`;
 
@@ -1479,7 +1489,7 @@ router.get('/server/info', (req, res) => {
       platform: os.platform(),
       arch: os.arch(),
       nodeVersion: process.version,
-      port: process.env.HTTP_PORT || process.env.PORT || 3000,
+      port: streamingPort,
       baseUrl,
       ipAddresses,
       urls: {

@@ -26,7 +26,7 @@ const dataDir = process.env.DATA_PATH || getDataDir();
 // Default configuration
 const defaultConfig = {
   server: {
-    port: parseInt(process.env.HTTP_PORT) || parseInt(process.env.PORT) || 8080,
+    port: parseInt(process.env.HTTP_PORT) || parseInt(process.env.PORT) || 3000,
     host: process.env.HOST_IP || process.env.BIND_ADDRESS || '0.0.0.0',
     environment: process.env.NODE_ENV || 'development'
   },
@@ -170,12 +170,12 @@ const defaultConfig = {
       id: process.env.DEVICE_ID || 'PLEXTV001',
       tunerCount: parseInt(process.env.TUNER_COUNT) || 4,
       firmware: process.env.FIRMWARE_VERSION || '1.0.0',
-      baseUrl: process.env.BASE_URL || `http://${process.env.ADVERTISED_HOST || 'localhost'}:${process.env.HTTP_PORT || process.env.PORT || 8080}`
+      baseUrl: process.env.BASE_URL || `http://${process.env.ADVERTISED_HOST || 'localhost'}:${process.env.HTTP_PORT || process.env.PORT || 3000}`
     },
     network: {
       bindAddress: process.env.HOST_IP || process.env.BIND_ADDRESS || '0.0.0.0',
       advertisedHost: process.env.ADVERTISED_HOST || null,
-      streamingPort: parseInt(process.env.STREAM_PORT) || parseInt(process.env.STREAMING_PORT) || parseInt(process.env.HTTP_PORT) || parseInt(process.env.PORT) || 8080,
+      streamingPort: parseInt(process.env.STREAM_PORT) || parseInt(process.env.STREAMING_PORT) || parseInt(process.env.HTTP_PORT) || parseInt(process.env.PORT) || 3000,
       discoveryPort: parseInt(process.env.DISCOVERY_PORT) || parseInt(process.env.SSDP_PORT) || 1900,
       ipv6Enabled: process.env.IPV6_ENABLED === 'true'
     },

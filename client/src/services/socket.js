@@ -22,7 +22,7 @@ class SocketService {
 
     const serverPath = process.env.NODE_ENV === 'production' 
       ? window.location.origin 
-      : 'http://localhost:8080';
+      : 'http://localhost:3000';
 
     this.socket = io(serverPath, {
       // Connection settings
@@ -62,6 +62,11 @@ class SocketService {
       console.log('Socket.IO connected:', this.socket.id);
       this.connectionStatus = 'connected';
       this.reconnectAttempts = 0;
+      
+      // Join the metrics room for real-time updates
+      this.socket.emit('join-metrics');
+      console.log('Joined metrics room for real-time updates');
+      
       this.notifyListeners('connection', { status: 'connected' });
     });
 

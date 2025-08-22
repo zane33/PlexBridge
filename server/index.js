@@ -71,7 +71,7 @@ app.use('/api', limiter);
 app.use(cors({
   origin: process.env.NODE_ENV === 'production' 
     ? [process.env.ALLOWED_ORIGINS?.split(',') || []]
-    : ['http://localhost:3000', 'http://localhost:8080'],
+    : ['http://localhost:3000'],
   credentials: true,
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
   allowedHeaders: ['Content-Type', 'Authorization', 'Range', 'Accept', 'User-Agent'],
@@ -417,6 +417,20 @@ const initializeApp = async () => {
     logger.info(`🔍 Health check: http://localhost:${PORT}/health`);
     logger.info(`📺 Plex discovery: http://localhost:${PORT}/discover.json`);
     logger.info('🚀 Application initialization completed successfully');
+    
+    // Set up periodic metrics updates to connected clients
+    setInterval(async () => {
+      try {
+        const streamManager = require('./services/streamManager');
+        if (typeof streamManager.emitMetricsUpdate === 'function') {
+          await streamManager.emitMetricsUpdate();
+        }
+      } catch (error) {
+        logger.debug('Failed to emit periodic metrics update:', error);
+      }
+    }, 5000); // Emit metrics every 5 seconds
+    
+    logger.info('📊 Real-time metrics updates configured (5 second interval)');
     
     // Keep the process alive
     logger.info('Application is now running and ready to serve requests');

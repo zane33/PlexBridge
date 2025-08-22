@@ -859,6 +859,9 @@ class StreamManager {
         
         global.io.emit('stream:started', streamEventData);
         logger.stream('Emitted stream:started event', { sessionId });
+        
+        // Emit metrics update to the metrics room
+        this.emitMetricsUpdate();
       }
       
       logger.stream('Stream proxy created successfully', { sessionId, streamId });
@@ -1158,6 +1161,9 @@ class StreamManager {
         
         global.io.emit('stream:stopped', streamEndEventData);
         logger.stream('Emitted stream:stopped event', { sessionId });
+        
+        // Emit metrics update to the metrics room
+        this.emitMetricsUpdate();
       }
     }
     
@@ -2306,5 +2312,80 @@ setInterval(async () => {
     });
   }
 }, 2000); // Update every 2 seconds for real-time feel
+
+// Emit metrics update to connected clients
+streamManager.emitMetricsUpdate = async function() {
+  try {
+    const settingsService = require('./settingsService');
+    const database = require('./database');
+    const cacheService = require('./cacheService');
+    const epgService = require('./epgService');
+    
+    // Get max concurrent streams from settings
+    let maxConcurrentStreams = 10;
+    try {
+      maxConcurrentStreams = await settingsService.getSetting('plexlive.streaming.maxConcurrentStreams', 10);
+      maxConcurrentStreams = parseInt(maxConcurrentStreams) || 10;
+    } catch (err) {
+      logger.warn('Failed to get max concurrent streams for metrics update:', err);
+    }
+    
+    // Get active streams
+    const activeStreams = this.getActiveStreams() || [];
+    const streamsByChannel = this.getStreamsByChannel() || {};
+    const concurrencyMetrics = this.getConcurrencyMetrics(maxConcurrentStreams);
+    
+    // Get health checks
+    const dbHealth = database.isInitialized ? await database.healthCheck() : { status: 'initializing' };
+    const cacheHealth = await cacheService.healthCheck();
+    
+    // Get EPG status
+    let epgStatus = { status: 'unavailable' };
+    try {
+      epgStatus = await epgService.getStatus();
+    } catch (err) {
+      logger.debug('EPG service not available for metrics update');
+    }
+    
+    // Build metrics object
+    const metrics = {
+      system: {
+        uptime: process.uptime(),
+        memory: process.memoryUsage(),
+        cpu: process.cpuUsage(),
+        platform: process.platform,
+        nodeVersion: process.version
+      },
+      streams: {
+        active: Array.isArray(activeStreams) ? activeStreams.length : 0,
+        maximum: maxConcurrentStreams,
+        utilization: Array.isArray(activeStreams) 
+          ? (activeStreams.length / maxConcurrentStreams) * 100 
+          : 0,
+        byChannel: streamsByChannel,
+        concurrency: concurrencyMetrics
+      },
+      database: dbHealth || { status: 'unknown' },
+      cache: cacheHealth || { status: 'unknown' },
+      epg: epgStatus || { status: 'unknown' },
+      timestamp: new Date().toISOString()
+    };
+    
+    // Emit to metrics room
+    if (global.io) {
+      global.io.to('metrics').emit('metrics:update', metrics);
+      logger.debug('Emitted metrics update to metrics room');
+    }
+    
+    // Also cache the metrics
+    try {
+      await cacheService.setMetrics(metrics);
+    } catch (cacheError) {
+      logger.debug('Failed to cache metrics during update:', cacheError);
+    }
+  } catch (error) {
+    logger.error('Failed to emit metrics update:', error);
+  }
+};
 
 module.exports = streamManager;
