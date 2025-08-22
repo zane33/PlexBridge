@@ -8,12 +8,34 @@ const logger = require('../utils/logger');
 // HDHomeRun discovery endpoint
 router.get('/discover.json', async (req, res) => {
   try {
+    // Set timeout to ensure response within reasonable time
+    const timeoutId = setTimeout(() => {
+      if (!res.headersSent) {
+        logger.error('Discovery endpoint timeout', { userAgent: req.get('User-Agent') });
+        res.status(503).json({ error: 'Discovery service temporarily unavailable' });
+      }
+    }, 5000);
+
     const discovery = await ssdpService.generateDiscoveryResponse();
-    logger.debug('HDHomeRun discovery request', { userAgent: req.get('User-Agent') });
-    res.json(discovery);
+    clearTimeout(timeoutId);
+    
+    if (!res.headersSent) {
+      // Set appropriate headers to prevent caching issues
+      res.set({
+        'Cache-Control': 'no-cache, no-store, must-revalidate',
+        'Pragma': 'no-cache',
+        'Expires': '0',
+        'Content-Type': 'application/json'
+      });
+      
+      logger.debug('HDHomeRun discovery request', { userAgent: req.get('User-Agent') });
+      res.json(discovery);
+    }
   } catch (error) {
     logger.error('Discovery endpoint error:', error);
-    res.status(500).json({ error: 'Discovery failed' });
+    if (!res.headersSent) {
+      res.status(500).json({ error: 'Discovery failed' });
+    }
   }
 });
 

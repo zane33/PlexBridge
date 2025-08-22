@@ -35,7 +35,7 @@ services:
         max-size: "10m"
         max-file: "3"
     ports:
-      - "8080:3000"
+      - "3000:3000"
       - "1900:1900/udp"
     volumes:
       # Named volumes for persistent data storage

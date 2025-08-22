@@ -229,49 +229,58 @@ class SSDPService {
     }
   }
 
-  // Generate HDHomeRun discovery response
+  // Generate HDHomeRun discovery response with improved error handling
   async generateDiscoveryResponse() {
+    const startTime = Date.now();
+    
     try {
-      // Get current settings to get the device name
-      const settings = await settingsService.getSettings();
+      // Set timeout for settings retrieval to prevent hanging
+      const settingsPromise = Promise.race([
+        settingsService.getSettings(),
+        new Promise((_, reject) => setTimeout(() => reject(new Error('Settings timeout')), 2000))
+      ]);
+      
+      let settings;
+      try {
+        settings = await settingsPromise;
+      } catch (settingsError) {
+        logger.warn('Settings service timeout in discovery, using defaults', { error: settingsError.message });
+        settings = {};
+      }
+      
       const deviceName = settings?.plexlive?.device?.name || config.ssdp.friendlyName;
       const tunerCount = settings?.plexlive?.streaming?.maxConcurrentStreams || config.streams.maxConcurrent;
       
-      // Debug logging for IP resolution
-      logger.info('SSDP Discovery IP Resolution Debug:', {
-        envVar: process.env.ADVERTISED_HOST,
-        settingsPath: settings?.plexlive?.network?.advertisedHost,
-        configPath: config.plexlive?.network?.advertisedHost,
-        legacyConfig: config.network?.advertisedHost
-      });
-      
-      // Priority order: Runtime update > Settings > Environment > Config > Auto-detect
-      let localIP = this.advertisedHost ||                                      // Runtime update
-                   settings?.plexlive?.network?.advertisedHost ||              // Settings UI
-                   process.env.ADVERTISED_HOST ||                              // Docker environment
-                   config.plexlive?.network?.advertisedHost ||                 // Config file  
-                   config.network?.advertisedHost;                             // Legacy config
-      
-      logger.info('SSDP Discovery IP after priority check:', { localIP });
+      // Simplified IP resolution with fallback
+      let localIP = this.advertisedHost ||
+                   settings?.plexlive?.network?.advertisedHost ||
+                   process.env.ADVERTISED_HOST ||
+                   config.plexlive?.network?.advertisedHost ||
+                   config.network?.advertisedHost;
       
       if (!localIP) {
-        // Auto-detect IP if no advertised host is configured
-        const networkInterfaces = os.networkInterfaces();
-        localIP = '127.0.0.1';
-        
-        for (const interfaceName in networkInterfaces) {
-          const addresses = networkInterfaces[interfaceName];
-          for (const address of addresses) {
-            if (address.family === 'IPv4' && !address.internal) {
-              localIP = address.address;
-              break;
+        // Fast auto-detect with timeout
+        try {
+          const networkInterfaces = os.networkInterfaces();
+          localIP = '127.0.0.1';
+          
+          for (const interfaceName in networkInterfaces) {
+            const addresses = networkInterfaces[interfaceName];
+            for (const address of addresses) {
+              if (address.family === 'IPv4' && !address.internal) {
+                localIP = address.address;
+                break;
+              }
             }
+            if (localIP !== '127.0.0.1') break;
           }
-          if (localIP !== '127.0.0.1') break;
+        } catch (networkError) {
+          logger.warn('Network interface detection failed, using localhost', { error: networkError.message });
+          localIP = '127.0.0.1';
         }
       }
 
-      return {
+      const discoveryResponse = {
         FriendlyName: deviceName,
         Manufacturer: config.ssdp.manufacturer,
         ManufacturerURL: 'https://github.com/plextv',
@@ -298,8 +307,17 @@ class SSDPService {
         EPGDays: 7,
         EPGChannels: 'all'
       };
+      
+      const duration = Date.now() - startTime;
+      if (duration > 1000) {
+        logger.warn('Discovery response generation took too long', { duration, localIP });
+      }
+      
+      return discoveryResponse;
+      
     } catch (error) {
-      logger.error('Error generating discovery response:', error);
+      const duration = Date.now() - startTime;
+      logger.error('Error generating discovery response, using fallback', { error: error.message, duration });
       // Fallback to static config if settings fail
       return this.generateStaticDiscoveryResponse();
     }

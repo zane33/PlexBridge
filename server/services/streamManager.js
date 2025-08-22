@@ -901,9 +901,18 @@ class StreamManager {
       '-reconnect', '1',
       '-reconnect_streamed', '1',
       '-reconnect_delay_max', '5',
+      '-reconnect_at_eof', '1',
+      '-reconnect_on_network_error', '1',
+      '-reconnect_on_http_error', '4xx,5xx',
+      '-rw_timeout', '30000000',
+      '-timeout', '30000000',
+      '-fflags', '+genpts',
+      '-avoid_negative_ts', 'make_zero',
       '-i', finalUrl,
       '-c', 'copy',
+      '-bsf:v', 'h264_mp4toannexb',
       '-f', 'mpegts',
+      '-mpegts_copyts', '1',
       '-'
     ];
 
@@ -1492,46 +1501,254 @@ class StreamManager {
         clientIP: req.ip
       });
 
-      // Handle process events
+      // ===== ADD SESSION TRACKING FOR PLEX STREAMS =====
+      const streamSessionManager = require('./streamSessionManager');
+      const clientIdentifier = this.generateClientIdentifier(req);
+      const sessionId = `plex_${channel.id}_${clientIdentifier}_${Date.now()}`;
+      
+      // Create session info for tracking
+      const streamInfo = {
+        streamId: channel.id,
+        sessionId,
+        process: ffmpegProcess,
+        startTime: Date.now(),
+        clientIP: req.ip,
+        userAgent: req.get('User-Agent'),
+        clientIdentifier,
+        url: finalStreamUrl,
+        type: 'plex-mpegts',
+        channelName: channel.name,
+        channelNumber: channel.number,
+        isUnique: true,
+        isPlexStream: true
+      };
+      
+      // Store in active streams for dashboard tracking
+      this.activeStreams.set(sessionId, streamInfo);
+      
+      // Track channel streams
+      if (!this.channelStreams.has(channel.id)) {
+        this.channelStreams.set(channel.id, new Set());
+      }
+      this.channelStreams.get(channel.id).add(sessionId);
+      
+      // Track client sessions
+      if (!this.clientSessions.has(clientIdentifier)) {
+        this.clientSessions.set(clientIdentifier, new Map());
+      }
+      this.clientSessions.get(clientIdentifier).set(channel.id, sessionId);
+
+      // Get actual stream ID from streams table for foreign key constraint
+      const database = require('./database');
+      let actualStreamId = channel.id; // fallback to channel ID
+      try {
+        const streamRecord = await database.get('SELECT id FROM streams WHERE channel_id = ?', [channel.id]);
+        if (streamRecord) {
+          actualStreamId = streamRecord.id;
+        }
+      } catch (streamError) {
+        logger.warn('Could not find stream record for channel', {
+          channelId: channel.id,
+          error: streamError.message
+        });
+      }
+
+      // Start enhanced session tracking
+      try {
+        await streamSessionManager.startSession({
+          sessionId,
+          streamId: actualStreamId,
+          clientIP: req.ip,
+          userAgent: req.get('User-Agent'),
+          clientIdentifier,
+          channelName: channel.name,
+          channelNumber: channel.number,
+          streamUrl: finalStreamUrl,
+          streamType: 'plex-mpegts'
+        });
+      } catch (sessionError) {
+        logger.warn('Failed to start enhanced session tracking for Plex stream', {
+          sessionId,
+          error: sessionError.message
+        });
+      }
+
+      // Track stream statistics with detailed bandwidth monitoring
+      this.streamStats.set(sessionId, {
+        bytesTransferred: 0,
+        startTime: Date.now(),
+        lastUpdateTime: Date.now(),
+        errors: 0,
+        bandwidthSamples: [],
+        avgBitrate: 0,
+        peakBitrate: 0,
+        currentBitrate: 0
+      });
+
+      // Handle process events with session cleanup
       ffmpegProcess.on('error', (error) => {
+        const stats = this.streamStats.get(sessionId);
+        if (stats) {
+          stats.errors++;
+          
+          // Update enhanced session tracking with error
+          streamSessionManager.updateSessionMetrics(sessionId, {
+            errorIncrement: 1
+          });
+        }
+        
         logger.error('FFmpeg MPEG-TS process error', { 
           channelId: channel.id,
+          sessionId,
           error: error.message 
         });
+        
+        // Clean up session
+        this.cleanupStream(sessionId, 'ffmpeg_error');
+        
         if (!res.headersSent) {
           res.status(500).send('Transcoding failed');
         }
       });
 
+      ffmpegProcess.on('close', (code) => {
+        logger.info('FFmpeg MPEG-TS process closed', { 
+          channelId: channel.id,
+          sessionId,
+          exitCode: code 
+        });
+        
+        // Clean up session
+        this.cleanupStream(sessionId, 'process_closed');
+      });
+
       ffmpegProcess.stderr.on('data', (data) => {
         const errorOutput = data.toString();
+        const stats = this.streamStats.get(sessionId);
+        if (stats) {
+          stats.errors++;
+          
+          // Update enhanced session tracking with error
+          streamSessionManager.updateSessionMetrics(sessionId, {
+            errorIncrement: 1
+          });
+        }
+        
         // Log all stderr output for debugging
         logger.info('FFmpeg MPEG-TS stderr', { 
           channelId: channel.id,
+          sessionId,
           output: errorOutput.trim() 
         });
       });
 
-      ffmpegProcess.stdout.on('data', (data) => {
-        logger.info('FFmpeg MPEG-TS stdout data received', {
-          channelId: channel.id,
-          dataSize: data.length
+      // Clean up on client disconnect with session cleanup
+      req.on('close', () => {
+        logger.info('Plex client disconnected', { 
+          sessionId,
+          channelId: channel.id
         });
+        
+        // Clean up session (this will also kill the process)
+        this.cleanupStream(sessionId, 'client_disconnect');
       });
 
-      // Clean up on client disconnect
-      req.on('close', () => {
-        if (ffmpegProcess && !ffmpegProcess.killed) {
-          logger.info('Client disconnected, killing FFmpeg MPEG-TS process', { 
-            channelId: channel.id,
-            pid: ffmpegProcess.pid 
-          });
-          ffmpegProcess.kill('SIGTERM');
+      // Set stream timeout with session cleanup
+      const streamTimeout = config.plexlive?.streaming?.streamTimeout || 30000;
+      const timeoutId = setTimeout(() => {
+        logger.stream('Plex stream timeout reached', { sessionId, timeout: streamTimeout });
+        this.cleanupStream(sessionId, 'timeout');
+      }, streamTimeout);
+      this.streamTimeouts.set(sessionId, timeoutId);
+
+      // Reset timeout on data transfer (keep-alive)
+      ffmpegProcess.stdout.on('data', () => {
+        this.resetStreamTimeout(sessionId, streamTimeout);
+      });
+
+      // Store in cache for session tracking
+      try {
+        const cacheService = require('./cache');
+        cacheService.addStreamSession(sessionId, channel.id, {
+          ip: req.ip,
+          userAgent: req.get('User-Agent')
+        });
+      } catch (cacheError) {
+        logger.warn('Cache service not available for session tracking', {
+          sessionId,
+          error: cacheError.message
+        });
+      }
+
+      // Emit Socket.IO event for real-time dashboard updates
+      if (global.io) {
+        const streamEventData = {
+          sessionId,
+          streamId: channel.id,
+          channelName: channel.name,
+          channelNumber: channel.number,
+          clientIP: req.ip,
+          userAgent: req.get('User-Agent'),
+          clientIdentifier,
+          streamUrl: finalStreamUrl,
+          streamType: 'plex-mpegts',
+          startTime: Date.now(),
+          isPlexStream: true
+        };
+        
+        global.io.emit('stream:started', streamEventData);
+        logger.stream('Emitted Plex stream:started event', { sessionId });
+      }
+      
+      logger.stream('Plex MPEG-TS stream proxy created successfully', { sessionId, channelId: channel.id });
+
+      // Handle FFmpeg stdout with bandwidth tracking
+      ffmpegProcess.stdout.on('data', (chunk) => {
+        const stats = this.streamStats.get(sessionId);
+        if (stats) {
+          const now = Date.now();
+          const deltaTime = now - stats.lastUpdateTime;
+          const deltaBytes = chunk.length;
+          
+          // Update byte counter
+          stats.bytesTransferred += deltaBytes;
+          stats.lastUpdateTime = now;
+          
+          // Calculate bitrate if we have enough time elapsed (avoid division by zero)
+          if (deltaTime > 100) { // More than 100ms
+            const currentBitrate = Math.round((deltaBytes * 8) / (deltaTime / 1000)); // bits per second
+            stats.currentBitrate = currentBitrate;
+            
+            // Update peak bitrate
+            if (currentBitrate > stats.peakBitrate) {
+              stats.peakBitrate = currentBitrate;
+            }
+            
+            // Maintain recent samples for average calculation
+            stats.bandwidthSamples.push({ timestamp: now, bitrate: currentBitrate });
+            if (stats.bandwidthSamples.length > 30) {
+              stats.bandwidthSamples.shift(); // Keep only recent 30 samples
+            }
+            
+            // Calculate average bitrate
+            if (stats.bandwidthSamples.length > 0) {
+              const totalBitrate = stats.bandwidthSamples.reduce((sum, sample) => sum + sample.bitrate, 0);
+              stats.avgBitrate = Math.round(totalBitrate / stats.bandwidthSamples.length);
+            }
+
+            // Update enhanced session tracking
+            streamSessionManager.updateSessionMetrics(sessionId, {
+              bytesTransferred: stats.bytesTransferred,
+              currentBitrate: stats.currentBitrate
+            });
+          }
+        }
+        
+        // Write to response
+        if (!res.headersSent && !res.destroyed) {
+          res.write(chunk);
         }
       });
-
-      // Pipe FFmpeg output to client
-      ffmpegProcess.stdout.pipe(res);
 
     } catch (error) {
       logger.error('Plex-compatible stream proxy error', { 
