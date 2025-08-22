@@ -72,14 +72,21 @@ router.get('/lineup_status.json', async (req, res) => {
       }
       
       // Get port from request host or use default
-      const hostHeader = req.get('host') || 'localhost:8080';
-      const port = hostHeader.split(':')[1] || '8080';
+      const defaultPort = config.server?.port || process.env.HTTP_PORT || process.env.PORT || 3000;
+      const hostHeader = req.get('host') || `localhost:${defaultPort}`;
+      const port = hostHeader.split(':')[1] || defaultPort;
       baseHost = `${localIP}:${port}`;
     }
     
     // Ensure we have port if not included
     if (!baseHost.includes(':')) {
-      baseHost += ':8080';
+      const streamingPort = settings?.plexlive?.network?.streamingPort || 
+                           config.plexlive?.network?.streamingPort || 
+                           config.server?.port || 
+                           process.env.HTTP_PORT || 
+                           process.env.PORT || 
+                           3000;
+      baseHost += `:${streamingPort}`;
     }
     
     // Ensure we have http:// prefix
@@ -134,11 +141,17 @@ router.get('/lineup.json', async (req, res) => {
                   config.plexlive?.network?.advertisedHost ||                 // Config file  
                   config.network?.advertisedHost ||                           // Legacy config
                   req.get('host') ||                                           // Host header fallback
-                  'localhost:8080';                                           // Final fallback
+                  `localhost:${config.server?.port || process.env.HTTP_PORT || process.env.PORT || 3000}`;  // Final fallback
     
     // Ensure we have port if not included
     if (!baseHost.includes(':')) {
-      baseHost += ':8080';
+      const streamingPort = settings?.plexlive?.network?.streamingPort || 
+                           config.plexlive?.network?.streamingPort || 
+                           config.server?.port || 
+                           process.env.HTTP_PORT || 
+                           process.env.PORT || 
+                           3000;
+      baseHost += `:${streamingPort}`;
     }
     
     // Ensure we have http:// prefix
