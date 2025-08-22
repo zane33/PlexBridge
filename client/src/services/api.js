@@ -374,10 +374,11 @@ export const backupApi = {
     }),
   
   // Download backup file
-  downloadBackup: async (includePasswords = false, includeEpgData = false, includeLogs = false) => {
+  downloadBackup: async (includeSettings = true, includePasswords = false, includeEpgData = false, includeLogs = false) => {
     try {
       const response = await api.get('/api/backup/export', {
         params: { 
+          includeSettings,
           includePasswords, 
           includeEpgData, 
           includeLogs, 

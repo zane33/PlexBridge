@@ -63,6 +63,7 @@ function BackupManager() {
   const [exportDialogOpen, setExportDialogOpen] = useState(false);
   const [importDialogOpen, setImportDialogOpen] = useState(false);
   const [exportOptions, setExportOptions] = useState({
+    includeSettings: true,
     includePasswords: false,
     includeEpgData: false,
     includeLogs: false,
@@ -91,6 +92,7 @@ function BackupManager() {
     setLoading(true);
     try {
       await backupApi.downloadBackup(
+        exportOptions.includeSettings,
         exportOptions.includePasswords,
         exportOptions.includeEpgData,
         exportOptions.includeLogs
@@ -327,12 +329,6 @@ function BackupManager() {
                   </ListItemIcon>
                   <ListItemText primary="EPG Sources" secondary="Electronic Program Guide sources" />
                 </ListItem>
-                <ListItem disablePadding>
-                  <ListItemIcon sx={{ minWidth: 32 }}>
-                    <SettingsIcon fontSize="small" color="primary" />
-                  </ListItemIcon>
-                  <ListItemText primary="Settings" secondary="Application configuration and preferences" />
-                </ListItem>
               </List>
             </Paper>
 
@@ -340,6 +336,26 @@ function BackupManager() {
               <Typography variant="subtitle2" gutterBottom sx={{ fontWeight: 'bold' }}>
                 Optional Data:
               </Typography>
+              
+              <FormControlLabel
+                control={
+                  <Checkbox
+                    checked={exportOptions.includeSettings}
+                    onChange={(e) => setExportOptions(prev => ({ 
+                      ...prev, 
+                      includeSettings: e.target.checked 
+                    }))}
+                  />
+                }
+                label={
+                  <Box>
+                    <Typography variant="body2">Include Application Settings</Typography>
+                    <Typography variant="caption" color="text.secondary">
+                      System configuration and preferences (recommended)
+                    </Typography>
+                  </Box>
+                }
+              />
               
               <FormControlLabel
                 control={

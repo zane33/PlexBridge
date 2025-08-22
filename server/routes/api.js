@@ -2176,13 +2176,18 @@ router.post('/settings/reset', async (req, res) => {
 // BACKUP/RESTORE API
 router.get('/backup/export', async (req, res) => {
   try {
-    const { format = 'json', includePasswords = false, includeEpgData = false, includeLogs = false } = req.query;
+    const { format = 'json', includeSettings = true, includePasswords = false, includeEpgData = false, includeLogs = false } = req.query;
     
     // Get all configuration data
     const channels = await database.all('SELECT * FROM channels ORDER BY number');
     const streams = await database.all('SELECT * FROM streams');
     const epgSources = await database.all('SELECT * FROM epg_sources');
-    const settings = await database.all('SELECT * FROM settings');
+    
+    // Get settings only if requested
+    let settings = [];
+    if (includeSettings === 'true' || includeSettings === true) {
+      settings = await database.all('SELECT * FROM settings');
+    }
     
     // Get EPG data if requested
     let epgChannels = [];
@@ -2236,27 +2241,30 @@ router.get('/backup/export', async (req, res) => {
       return streamCopy;
     });
     
-    // Process settings
-    const settingsObj = {};
-    settings.forEach(setting => {
-      let value = setting.value;
-      if (setting.type === 'number') {
-        value = parseFloat(value);
-      } else if (setting.type === 'boolean') {
-        value = value === 'true';
-      } else if (setting.type === 'json') {
-        try {
-          value = JSON.parse(value);
-        } catch (e) {
-          // Keep as string if parsing fails
+    // Process settings only if included
+    let settingsObj = {};
+    if (includeSettings === 'true' || includeSettings === true) {
+      settings.forEach(setting => {
+        let value = setting.value;
+        if (setting.type === 'number') {
+          value = parseFloat(value);
+        } else if (setting.type === 'boolean') {
+          value = value === 'true';
+        } else if (setting.type === 'json') {
+          try {
+            value = JSON.parse(value);
+          } catch (e) {
+            // Keep as string if parsing fails
+          }
         }
-      }
-      settingsObj[setting.key] = value;
-    });
+        settingsObj[setting.key] = value;
+      });
+    }
     
     const backupData = {
       version: '2.0.0',
       timestamp: new Date().toISOString(),
+      includesSettings: includeSettings === 'true' || includeSettings === true,
       includesPasswords: includePasswords,
       includesEpgData: includeEpgData === 'true' || includeEpgData === true,
       includesLogs: includeLogs === 'true' || includeLogs === true,
@@ -2264,7 +2272,7 @@ router.get('/backup/export', async (req, res) => {
         channels,
         streams: processedStreams,
         epgSources,
-        settings: settingsObj,
+        ...(Object.keys(settingsObj).length > 0 && { settings: settingsObj }),
         ...(epgChannels.length > 0 && { epgChannels }),
         ...(epgPrograms.length > 0 && { epgPrograms }),
         ...(recentLogs.length > 0 && { logs: recentLogs })
@@ -2281,7 +2289,7 @@ router.get('/backup/export', async (req, res) => {
           channels,
           streams: processedStreams,
           epgSources,
-          settings: settingsObj,
+          ...(Object.keys(settingsObj).length > 0 && { settings: settingsObj }),
           epgChannels,
           epgPrograms,
           logs: recentLogs
