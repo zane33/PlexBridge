@@ -1665,7 +1665,7 @@ class StreamManager {
 
       // Store in cache for session tracking
       try {
-        const cacheService = require('./cache');
+        const cacheService = require('./cacheService');
         cacheService.addStreamSession(sessionId, channel.id, {
           ip: req.ip,
           userAgent: req.get('User-Agent')
