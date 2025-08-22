@@ -1447,7 +1447,7 @@ router.get('/debug/epg', async (req, res) => {
 });
 
 // Server information endpoint
-router.get('/server/info', (req, res) => {
+router.get('/server/info', async (req, res) => {
   try {
     const os = require('os');
     const config = require('../config');
