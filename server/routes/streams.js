@@ -278,7 +278,7 @@ router.get('/test/ffmpeg/:streamUrl', async (req, res) => {
     if (finalUrl.includes('.m3u8')) {
       const hlsArgs = settings?.plexlive?.transcoding?.mpegts?.hlsProtocolArgs || 
                      config.plexlive?.transcoding?.mpegts?.hlsProtocolArgs ||
-                     '-allowed_extensions ALL -protocol_whitelist file,http,https,tcp,tls';
+                     '-allowed_extensions ALL -protocol_whitelist file,http,https,tcp,tls,crypto';
       
       // Insert HLS args after the input URL
       ffmpegCommand = ffmpegCommand.replace('-i ' + finalUrl, '-i ' + finalUrl + ' ' + hlsArgs);

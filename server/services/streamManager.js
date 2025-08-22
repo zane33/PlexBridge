@@ -579,7 +579,7 @@ class StreamManager {
         case 'hls':
         case 'dash':
         case 'http':
-          streamProcess = this.createHTTPStreamProxy(url, auth, customHeaders);
+          streamProcess = await this.createHTTPStreamProxy(url, auth, customHeaders);
           break;
         case 'ts':
         case 'mpegts':
@@ -839,10 +839,37 @@ class StreamManager {
     }
   }
 
-  createHTTPStreamProxy(url, auth, customHeaders) {
+  async createHTTPStreamProxy(url, auth, customHeaders) {
+    // For HLS streams that redirect, we need to resolve the final URL first
+    let finalUrl = url;
+    
+    try {
+      // Check if URL redirects (like TVNZ streams)
+      if (url.includes('mjh.nz') || url.includes('tvnz')) {
+        const response = await axios.head(url, {
+          maxRedirects: 5,
+          timeout: 5000,
+          headers: {
+            'User-Agent': config.protocols.http.userAgent
+          }
+        });
+        
+        // Use the final URL after redirects
+        if (response.request && response.request.res && response.request.res.responseUrl) {
+          finalUrl = response.request.res.responseUrl;
+          logger.stream('Stream URL redirected', { original: url, final: finalUrl });
+        }
+      }
+    } catch (error) {
+      logger.warn('Failed to resolve redirect, using original URL', { url, error: error.message });
+    }
+
     const args = [
       '-y',
-      '-i', url,
+      '-reconnect', '1',
+      '-reconnect_streamed', '1',
+      '-reconnect_delay_max', '5',
+      '-i', finalUrl,
       '-c', 'copy',
       '-f', 'mpegts',
       '-'
@@ -1286,14 +1313,50 @@ class StreamManager {
         const axios = require('axios');
         logger.info('Resolving stream redirects', { channelId: channel.id, streamUrl });
         
-        const response = await axios.head(streamUrl, {
-          maxRedirects: 5,
-          timeout: 10000,
-          headers: {
-            'User-Agent': 'PlexBridge/1.0'
+        // For TVNZ and mjh.nz streams, follow redirects properly
+        if (streamUrl.includes('mjh.nz') || streamUrl.includes('tvnz')) {
+          // Use a HEAD request without following redirects to get the Location header
+          const response = await axios.head(streamUrl, {
+            maxRedirects: 0, // Don't follow redirects automatically
+            timeout: 10000,
+            validateStatus: function (status) {
+              return status >= 200 && status < 400; // Accept redirects as success
+            },
+            headers: {
+              'User-Agent': 'VLC/3.0.0 LibVLC/3.0.0',
+              'Accept': '*/*'
+            }
+          });
+          
+          // Get the redirect URL from the location header
+          if (response.status === 302 && response.headers.location) {
+            finalStreamUrl = response.headers.location;
+            
+            logger.info('TVNZ/mjh.nz redirect resolved', {
+              channelId: channel.id,
+              originalUrl: streamUrl,
+              finalUrl: finalStreamUrl,
+              status: response.status,
+              redirected: true
+            });
+          } else {
+            logger.warn('TVNZ/mjh.nz redirect not found', {
+              channelId: channel.id,
+              status: response.status,
+              headers: response.headers
+            });
           }
-        });
-        finalStreamUrl = response.request.responseURL || streamUrl;
+        } else {
+          // For other streams, use HEAD request
+          const response = await axios.head(streamUrl, {
+            maxRedirects: 5,
+            timeout: 10000,
+            headers: {
+              'User-Agent': 'PlexBridge/1.0'
+            }
+          });
+          finalStreamUrl = response.request.responseURL || streamUrl;
+        }
         
         logger.info('Stream URL resolution completed', {
           channelId: channel.id,
@@ -1336,9 +1399,20 @@ class StreamManager {
       
       // Add HLS-specific arguments if needed
       if (finalStreamUrl.includes('.m3u8')) {
-        const hlsArgs = settings?.plexlive?.transcoding?.mpegts?.hlsProtocolArgs || 
-                       config.plexlive?.transcoding?.mpegts?.hlsProtocolArgs ||
-                       '-allowed_extensions ALL -protocol_whitelist file,http,https,tcp,tls,pipe';
+        let hlsArgs = settings?.plexlive?.transcoding?.mpegts?.hlsProtocolArgs || 
+                     config.plexlive?.transcoding?.mpegts?.hlsProtocolArgs ||
+                     '-allowed_extensions ALL -protocol_whitelist file,http,https,tcp,tls,pipe,crypto';
+        
+        // For redirected streams (like TVNZ), add additional HLS options for better compatibility
+        if (finalStreamUrl !== streamUrl) {
+          hlsArgs += ' -http_seekable 0 -multiple_requests 1 -http_persistent 0';
+          
+          logger.info('Added HLS compatibility options for redirected stream', {
+            channelId: channel.id,
+            originalUrl: streamUrl,
+            finalUrl: finalStreamUrl
+          });
+        }
         
         // Insert HLS args BEFORE the input URL for proper protocol handling
         ffmpegCommand = ffmpegCommand.replace('-i ' + finalStreamUrl, hlsArgs + ' -i ' + finalStreamUrl);
