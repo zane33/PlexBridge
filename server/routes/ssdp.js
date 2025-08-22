@@ -344,7 +344,7 @@ router.post('/contentdirectory/control', (req, res) => {
 // Guide endpoint - redirect to XMLTV endpoint for Plex compatibility
 router.get('/guide', (req, res) => {
   try {
-    const hostHeader = req.get('host') || 'localhost:8080';
+    const hostHeader = req.get('host') || `localhost:${config.server?.port || process.env.HTTP_PORT || process.env.PORT || 3000}`;
     res.redirect(`http://${hostHeader}/epg/xmltv.xml`);
   } catch (error) {
     logger.error('Guide redirect error:', error);
@@ -355,7 +355,7 @@ router.get('/guide', (req, res) => {
 // Guide.xml endpoint - some Plex versions look for this
 router.get('/guide.xml', (req, res) => {
   try {
-    const hostHeader = req.get('host') || 'localhost:8080';
+    const hostHeader = req.get('host') || `localhost:${config.server?.port || process.env.HTTP_PORT || process.env.PORT || 3000}`;
     res.redirect(`http://${hostHeader}/epg/xmltv.xml`);
   } catch (error) {
     logger.error('Guide.xml redirect error:', error);
