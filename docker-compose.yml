@@ -43,8 +43,8 @@ services:
       - ./data:/data
       # Config as read-only bind mount for easy editing
       - ./config:/app/config:ro
-      # Server code bind mount for development
-      - ./server:/app/server
+      # Server code bind mount removed for production deployment
+      # - ./server:/app/server
     environment:
       # Application environment
       - NODE_ENV=production
