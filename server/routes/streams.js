@@ -42,7 +42,16 @@ router.get('/stream/:channelId/:filename?', async (req, res) => {
       isPlexRequest
     });
     
-    // Route is working - remove test response
+    // Handle HEAD requests for Plex (it sends HEAD first to check the stream)
+    if (req.method === 'HEAD') {
+      logger.info('HEAD request for stream', { channelId, isPlexRequest });
+      res.set({
+        'Content-Type': 'video/mp2t',
+        'Access-Control-Allow-Origin': '*',
+        'Cache-Control': 'no-cache, no-store, must-revalidate'
+      });
+      return res.status(200).end();
+    }
     
     logger.info(`Stream request for channel: ${channelId}${isSubFile ? '/' + filename : ''}`, { 
       clientIP: req.ip,
