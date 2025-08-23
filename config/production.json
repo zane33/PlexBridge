@@ -27,6 +27,7 @@
     },
     "streaming": {
       "maxConcurrentStreams": 10,
+      "maxConcurrentPerChannel": 3,
       "streamTimeout": 60000,
       "reconnectAttempts": 5,
       "bufferSize": 131072,
