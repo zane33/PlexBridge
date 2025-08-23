@@ -37,7 +37,7 @@ async function verifyTranscodingIssue() {
 
   try {
     console.log('1️⃣ Loading application and navigating to streams...');
-    await page.goto('http://localhost:8080');
+    await page.goto('http://localhost:3000');
     await page.waitForLoadState('networkidle');
     
     await page.click('[data-testid="nav-streams"]');

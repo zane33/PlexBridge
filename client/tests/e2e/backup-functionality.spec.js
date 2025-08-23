@@ -35,7 +35,7 @@ test.describe('Backup Functionality Testing', () => {
 
     // Step 1: Navigate to PlexBridge application
     console.log('Step 1: Navigating to PlexBridge application...');
-    await page.goto('http://localhost:8080', { waitUntil: 'networkidle' });
+    await page.goto('http://localhost:3000', { waitUntil: 'networkidle' });
     
     // Take screenshot of homepage showing sidebar navigation
     await page.screenshot({ 
@@ -324,7 +324,7 @@ test.describe('Backup Functionality Testing', () => {
 
     // Test direct URL navigation
     console.log('Testing direct URL navigation to /backup...');
-    await page.goto('http://localhost:8080/backup', { waitUntil: 'networkidle' });
+    await page.goto('http://localhost:3000/backup', { waitUntil: 'networkidle' });
     
     await expect(page).toHaveURL(/\/backup/);
     await expect(page.locator('text=Backup').first()).toBeVisible();
@@ -337,13 +337,13 @@ test.describe('Backup Functionality Testing', () => {
 
     // Test browser back/forward navigation
     console.log('\nTesting browser navigation...');
-    await page.goto('http://localhost:8080/', { waitUntil: 'networkidle' });
+    await page.goto('http://localhost:3000/', { waitUntil: 'networkidle' });
     await page.goBack();
     await expect(page).toHaveURL(/\/backup/);
     console.log('✓ Browser back navigation works');
 
     await page.goForward();  
-    await expect(page).toHaveURL('http://localhost:8080/');
+    await expect(page).toHaveURL('http://localhost:3000/');
     console.log('✓ Browser forward navigation works');
 
     console.log('\n✅ Backup Navigation Entry Points Test Completed!\n');
@@ -352,7 +352,7 @@ test.describe('Backup Functionality Testing', () => {
   test('Backup page accessibility and screen reader compatibility', async ({ page }) => {
     console.log('\n=== Testing Backup Page Accessibility ===\n');
 
-    await page.goto('http://localhost:8080/backup', { waitUntil: 'networkidle' });
+    await page.goto('http://localhost:3000/backup', { waitUntil: 'networkidle' });
     
     // Check for proper heading structure
     const headings = await page.locator('h1, h2, h3, h4, h5, h6').allTextContents();

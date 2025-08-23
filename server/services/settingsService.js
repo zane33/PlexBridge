@@ -347,7 +347,8 @@ class SettingsService {
       device: {
         name: 'PlexTV',
         id: 'PLEXTV001',
-        tunerCount: 4,
+        uuid: 'plextv-default-uuid-001',
+        tunerCount: 5,
         firmware: '1.0.0',
         baseUrl: 'http://localhost:3000'
       },

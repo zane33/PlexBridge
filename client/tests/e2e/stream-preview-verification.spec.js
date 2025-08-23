@@ -45,7 +45,7 @@ test.describe('HGTV Stream Preview Testing', () => {
 
     // Step 1: Navigate to PlexBridge application
     console.log('Step 1: Navigating to PlexBridge application...');
-    await page.goto('http://localhost:8080', { waitUntil: 'networkidle' });
+    await page.goto('http://localhost:3000', { waitUntil: 'networkidle' });
     
     // Take screenshot of homepage
     await page.screenshot({ 

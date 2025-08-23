@@ -303,7 +303,7 @@ const initializeApp = async () => {
       logger.info('✅ SSDP service initialized successfully');
       
       // Start SSDP advertising
-      ssdpService.start(io);
+      await ssdpService.start(io);
       logger.info('✅ SSDP service started and advertising');
     } catch (ssdpError) {
       logger.warn('Failed to initialize SSDP service, continuing without SSDP:', ssdpError.message);

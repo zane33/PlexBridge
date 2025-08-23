@@ -9,6 +9,76 @@ class SSDPService {
     this.server = null;
     this.isRunning = false;
     this.socketIO = null;
+    this.currentUuid = null;
+    this.lastAnnouncedSettings = null;
+  }
+
+  // Get device UUID from settings first, then fallback to config
+  async getDeviceUuid() {
+    try {
+      const settings = await settingsService.getSettings();
+      const settingsUuid = settings?.plexlive?.device?.uuid;
+      
+      if (settingsUuid && settingsUuid !== 'plextv-default-uuid-001') {
+        return settingsUuid;
+      }
+      
+      // Ensure we ALWAYS use the environment variable if set, never generate random
+      if (process.env.DEVICE_UUID) {
+        return process.env.DEVICE_UUID;
+      }
+      
+      // Fallback to config, but warn about potential random UUID
+      const configUuid = config.ssdp.deviceUuid;
+      if (configUuid.includes('plextv-local-stable-uuid') || configUuid.includes('plextv-default-uuid')) {
+        return configUuid;
+      }
+      
+      // If we get here, config might have a random UUID - use a fixed fallback instead
+      logger.warn('Config has random UUID, using fixed fallback to prevent multiple device registrations');
+      return 'plextv-emergency-stable-uuid-001';
+      
+    } catch (error) {
+      logger.warn('Failed to get UUID from settings, using environment or fallback:', error.message);
+      return process.env.DEVICE_UUID || 'plextv-emergency-stable-uuid-001';
+    }
+  }
+
+  // Check if SSDP-relevant settings have changed
+  async hasSettingsChanged() {
+    try {
+      const settings = await settingsService.getSettings();
+      const currentSettings = {
+        uuid: await this.getDeviceUuid(),
+        name: settings?.plexlive?.device?.name || config.ssdp.friendlyName,
+        enabled: settings?.plexlive?.ssdp?.enabled !== false,
+        advertisedHost: settings?.plexlive?.network?.advertisedHost || process.env.ADVERTISED_HOST
+      };
+
+      // First time check - no previous settings
+      if (!this.lastAnnouncedSettings) {
+        this.lastAnnouncedSettings = currentSettings;
+        return true;
+      }
+
+      // Compare with last announced settings
+      const changed = JSON.stringify(currentSettings) !== JSON.stringify(this.lastAnnouncedSettings);
+      
+      if (changed) {
+        logger.info('SSDP settings changed, reload required:', {
+          old: this.lastAnnouncedSettings,
+          new: currentSettings
+        });
+        this.lastAnnouncedSettings = currentSettings;
+      } else {
+        logger.info('SSDP settings unchanged, skipping announcement to prevent duplicate device registrations');
+      }
+
+      return changed;
+    } catch (error) {
+      logger.warn('Failed to check SSDP settings changes:', error.message);
+      return true; // Default to allowing restart on error
+    }
   }
 
   async initialize() {
@@ -25,14 +95,33 @@ class SSDPService {
     }
   }
 
-  start(io) {
-    if (this.isRunning) {
-      logger.warn('SSDP service is already running');
+  async start(io) {
+    // Check if settings actually changed before starting/restarting
+    const settingsChanged = await this.hasSettingsChanged();
+    if (!settingsChanged && this.isRunning) {
+      logger.info('SSDP service skipped - no relevant settings changed and already running');
       return;
     }
 
+    // If already running but settings changed, stop first
+    if (this.isRunning && settingsChanged) {
+      logger.info('SSDP settings changed, restarting service...');
+      await this.stop();
+    }
+
     try {
+      // Add a small delay to ensure environment is fully loaded and prevent rapid restart announcements
+      await new Promise(resolve => setTimeout(resolve, 1000));
       this.socketIO = io;
+      
+      // Get device UUID from settings or config
+      const deviceUuid = await this.getDeviceUuid();
+      
+      // Log UUID for debugging - this helps track if multiple UUIDs are being generated
+      logger.info('SSDP starting with UUID:', { 
+        uuid: deviceUuid,
+        source: deviceUuid.includes('plextv-local-stable-uuid') ? 'environment' : 'settings'
+      });
       
       // Get local IP address
       const networkInterfaces = os.networkInterfaces();
@@ -58,7 +147,7 @@ class SSDPService {
           port: devicePort,
           path: '/device.xml'
         },
-        udn: `uuid:${config.ssdp.deviceUuid}`,
+        udn: `uuid:${deviceUuid}`,
         description: '/device.xml',
         ttl: 86400 // 24 hours
       });
@@ -74,7 +163,7 @@ class SSDPService {
       this.isRunning = true;
 
       logger.info('SSDP service started', {
-        uuid: config.ssdp.deviceUuid,
+        uuid: deviceUuid,
         location: deviceUrl,
         friendlyName: config.ssdp.friendlyName
       });
@@ -157,9 +246,10 @@ class SSDPService {
   // Generate HDHomeRun-compatible device description
   async generateDeviceDescription() {
     try {
-      // Get current settings to get the device name
+      // Get current settings to get the device name and UUID
       const settings = await settingsService.getSettings();
       const deviceName = settings?.plexlive?.device?.name || config.ssdp.friendlyName;
+      const deviceUuid = await this.getDeviceUuid();
       
       // Priority order: Runtime update > Settings > Environment > Config > Auto-detect
       let localIP = this.advertisedHost ||                                      // Runtime update
@@ -210,7 +300,7 @@ class SSDPService {
     <modelNumber>${config.ssdp.modelNumber}</modelNumber>
     <modelURL>https://github.com/plextv</modelURL>
     <serialNumber>12345678</serialNumber>
-    <UDN>uuid:${config.ssdp.deviceUuid}</UDN>
+    <UDN>uuid:${deviceUuid}</UDN>
     <serviceList>
       <service>
         <serviceType>urn:schemas-upnp-org:service:ContentDirectory:1</serviceType>
@@ -420,7 +510,7 @@ class SSDPService {
     <modelNumber>${config.ssdp.modelNumber}</modelNumber>
     <modelURL>https://github.com/plextv</modelURL>
     <serialNumber>12345678</serialNumber>
-    <UDN>uuid:${config.ssdp.deviceUuid}</UDN>
+    <UDN>uuid:${deviceUuid}</UDN>
     <serviceList>
       <service>
         <serviceType>urn:schemas-upnp-org:service:ContentDirectory:1</serviceType>

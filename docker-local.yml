@@ -86,10 +86,11 @@ services:
       - HEALTH_CHECK_INTERVAL=60000       # Check health every minute
       - DB_HEALTH_CHECK_INTERVAL=60000    # Database health check interval
       
-      # Optional: Device identification
-      # - DEVICE_NAME=PlexTV
-      # - DEVICE_ID=PLEXTV001
-      # - TUNER_COUNT=4
+      # Device identification
+      - DEVICE_UUID=plextv-local-stable-uuid-001
+      - DEVICE_NAME=PlexBridge Local
+      - DEVICE_ID=PLEXTV001
+      - TUNER_COUNT=5
       
       # Optional: Legacy PORT support (HTTP_PORT takes precedence)
       - PORT=3000

@@ -1038,6 +1038,16 @@ function Settings() {
                 </Grid>
                 
                 <Grid item xs={12} md={6}>
+                  <TextField
+                    fullWidth
+                    label="Device UUID"
+                    value={getSetting('plexlive.device.uuid', 'plextv-default-uuid-001')}
+                    onChange={(e) => updateSetting('plexlive.device.uuid', e.target.value)}
+                    helperText="Stable UUID for SSDP discovery (prevents multiple device registrations)"
+                  />
+                </Grid>
+                
+                <Grid item xs={12} md={6}>
                   <Typography gutterBottom>Virtual Tuner Count</Typography>
                   <Slider
                     value={getSetting('plexlive.device.tunerCount', 4)}
