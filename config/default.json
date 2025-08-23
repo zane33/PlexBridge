@@ -94,7 +94,7 @@
       "defaultProfile": "medium",
       "mpegts": {
         "enabled": true,
-        "ffmpegArgs": "-hide_banner -loglevel error -i [URL] -c:v libx264 -c:a aac -preset veryfast -profile:v main -level 3.1 -f mpegts -avoid_negative_ts make_zero -fflags +genpts pipe:1",
+        "ffmpegArgs": "-hide_banner -loglevel error -i [URL] -c:v copy -c:a copy -f mpegts pipe:1",
         "hlsProtocolArgs": "-allowed_extensions ALL -protocol_whitelist file,http,https,tcp,tls,pipe,crypto"
       }
     },
