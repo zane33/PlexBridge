@@ -123,30 +123,41 @@ class SSDPService {
         source: deviceUuid.includes('plextv-local-stable-uuid') ? 'environment' : 'settings'
       });
       
-      // Get local IP address
-      const networkInterfaces = os.networkInterfaces();
-      let localIP = '127.0.0.1';
+      // Get advertised host from settings or environment
+      const settings = await settingsService.getSettings();
+      const advertisedHost = settings?.plexlive?.network?.advertisedHost || 
+                            process.env.ADVERTISED_HOST || 
+                            config.plexlive?.network?.advertisedHost;
       
-      for (const interfaceName in networkInterfaces) {
-        const addresses = networkInterfaces[interfaceName];
-        for (const address of addresses) {
-          if (address.family === 'IPv4' && !address.internal) {
-            localIP = address.address;
-            break;
+      // If no advertised host is configured, fall back to detecting local IP
+      let localIP = advertisedHost;
+      if (!localIP || localIP === 'auto-detect') {
+        const networkInterfaces = os.networkInterfaces();
+        localIP = '127.0.0.1';
+        
+        for (const interfaceName in networkInterfaces) {
+          const addresses = networkInterfaces[interfaceName];
+          for (const address of addresses) {
+            if (address.family === 'IPv4' && !address.internal) {
+              localIP = address.address;
+              break;
+            }
           }
+          if (localIP !== '127.0.0.1') break;
         }
-        if (localIP !== '127.0.0.1') break;
       }
 
-      const devicePort = config.server.port;
+      const devicePort = process.env.HTTP_PORT || config.server.port;
       const deviceUrl = `http://${localIP}:${devicePort}`;
+      
+      logger.info('SSDP using advertised host for device URL', {
+        advertisedHost: localIP,
+        deviceUrl: deviceUrl
+      });
 
       // Create SSDP server configuration
       this.server = new SSDP({
-        location: {
-          port: devicePort,
-          path: '/device.xml'
-        },
+        location: `${deviceUrl}/device.xml`,  // Use full URL with advertised host
         udn: `uuid:${deviceUuid}`,
         description: '/device.xml',
         ttl: 86400 // 24 hours
