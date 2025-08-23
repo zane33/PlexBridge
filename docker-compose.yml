@@ -36,8 +36,8 @@ services:
         max-file: "3"
     network_mode: "container:transmission-openvpn"
     #ports:
-    # - "3000:3000"
-    # - "1900:1900/udp"
+    #  - "3000:3000"
+    #  - "1900:1900/udp"
     volumes:
       # Use named volume for data persistence with fallback to bind mount
       - plextv_data:/data
@@ -52,13 +52,13 @@ services:
       - NODE_ENV=production
       
       # Network configuration - customize these for your deployment
-      - HOST_IP=192.168.4.5                # Bind address (0.0.0.0 for all interfaces)
-      - HTTP_PORT=3000                    # Main HTTP server port
-      - STREAM_PORT=3000                  # Streaming port (usually same as HTTP_PORT)
-      - DISCOVERY_PORT=1900               # SSDP discovery port
-      - ADVERTISED_HOST=192.168.4.5         # Hostname/IP that clients should connect to (set via UI)
-      - BASE_URL=http://192.168.4.5:3000    # Complete base URL for the service (set via UI)
-      - IPV6_ENABLED=false               # Enable/disable IPv6 support
+      - HOST_IP=192.168.4.56                 # Bind address (0.0.0.0 for all interfaces)
+      - HTTP_PORT=3000                     # Main HTTP server port
+      - STREAM_PORT=3000                   # Streaming port (usually same as HTTP_PORT)
+      - DISCOVERY_PORT=1900                # SSDP discovery port
+      - ADVERTISED_HOST=192.168.4.5      # Hostname/IP that clients should connect to
+      - BASE_URL=http://192.168.4.5:3000 # Complete base URL for the service
+      # - IPV6_ENABLED=false               # Enable/disable IPv6 support
       
       # Storage paths
       - DB_PATH=/data/database/plextv.db
@@ -86,10 +86,11 @@ services:
       - HEALTH_CHECK_INTERVAL=60000       # Check health every minute
       - DB_HEALTH_CHECK_INTERVAL=60000    # Database health check interval
       
-      # Optional: Device identification
-      # - DEVICE_NAME=PlexTV
-      # - DEVICE_ID=PLEXTV001
-      # - TUNER_COUNT=4
+      # Device identification
+      - DEVICE_UUID=plextv-local-stable-uuid-001
+      - DEVICE_NAME=PlexBridge Local
+      - DEVICE_ID=PLEXTV001
+      - TUNER_COUNT=5
       
       # Optional: Legacy PORT support (HTTP_PORT takes precedence)
       - PORT=3000
@@ -100,7 +101,11 @@ services:
       retries: 3
       start_period: 40s
 
-# Define named volumes for data persistence
+# Named volumes for persistent data storage
 volumes:
   plextv_data:
     driver: local
+    driver_opts:
+      type: none
+      o: bind
+      device: ./data
