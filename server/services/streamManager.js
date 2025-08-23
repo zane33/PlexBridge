@@ -1741,12 +1741,10 @@ class StreamManager {
       
       logger.stream('Plex MPEG-TS stream proxy created successfully', { sessionId, channelId: channel.id });
 
-      // Create a buffered stream for smooth delivery to Plex
-      let packetBuffer = Buffer.alloc(0);
-      const MPEG_TS_PACKET_SIZE = 188;
-      const BUFFER_SIZE = MPEG_TS_PACKET_SIZE * 7; // Buffer 7 packets at a time for smooth delivery
+      // Pipe FFmpeg output directly to response without buffering
+      ffmpegProcess.stdout.pipe(res);
       
-      // Handle FFmpeg stdout with bandwidth tracking and MPEG-TS packet buffering
+      // Handle FFmpeg stdout with bandwidth tracking
       ffmpegProcess.stdout.on('data', (chunk) => {
         const stats = this.streamStats.get(sessionId);
         if (stats) {
@@ -1785,38 +1783,6 @@ class StreamManager {
               bytesTransferred: stats.bytesTransferred,
               currentBitrate: stats.currentBitrate
             });
-          }
-        }
-        
-        // Buffer incoming MPEG-TS packets for smooth delivery
-        packetBuffer = Buffer.concat([packetBuffer, chunk]);
-        
-        // Process complete MPEG-TS packets
-        while (packetBuffer.length >= BUFFER_SIZE) {
-          const packetGroup = packetBuffer.slice(0, BUFFER_SIZE);
-          packetBuffer = packetBuffer.slice(BUFFER_SIZE);
-          
-          // Write buffered packets to response with error handling
-          if (!res.headersSent && !res.destroyed && !res.writableEnded) {
-            try {
-              const written = res.write(packetGroup);
-              if (!written) {
-                // Backpressure handling - pause and wait for drain
-                ffmpegProcess.stdout.pause();
-                res.once('drain', () => {
-                  if (!res.destroyed) {
-                    ffmpegProcess.stdout.resume();
-                  }
-                });
-              }
-            } catch (writeError) {
-              logger.warn('Error writing to Plex client', {
-                sessionId,
-                error: writeError.message
-              });
-              // Client likely disconnected, cleanup will be handled by req.on('close')
-              break;
-            }
           }
         }
       });
@@ -1926,8 +1892,9 @@ class StreamManager {
           const advertisedHost = settings?.plexlive?.network?.advertisedHost || 
                                 process.env.ADVERTISED_HOST || 
                                 config.plexlive?.network?.advertisedHost ||
-                                req.get('host');
-          const baseUrl = `http://${advertisedHost}/stream/${channel.id}/`;
+                                req.get('host').split(':')[0];
+          const httpPort = process.env.HTTP_PORT || config.server.port || 3000;
+          const baseUrl = `http://${advertisedHost}:${httpPort}/stream/${channel.id}/`;
           
           logger.info('Before URL rewriting', { 
             sampleContent: playlistContent.substring(0, 500),
