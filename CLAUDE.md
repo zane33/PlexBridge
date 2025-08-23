@@ -93,6 +93,16 @@ PlexBridge/
 
 **This structure ensures a clean, maintainable codebase while preserving complete development history.**
 
+### **Critical Streaming Architecture Knowledge (August 2025)**
+
+**IMPORTANT**: For complete streaming implementation details, see [docs/Streaming-Architecture-Guide.md](docs/Streaming-Architecture-Guide.md)
+
+#### Key Streaming Insights:
+1. **Plex requires unbuffered MPEG-TS streams** - Direct piping from FFmpeg is critical
+2. **URL rewriting must use ADVERTISED_HOST** - Not localhost or request host
+3. **FFmpeg configuration is optimized** - Copy codecs, no re-encoding
+4. **25-second timeout was caused by buffering** - Now resolved with direct piping
+
 ### **Recent Improvements (August 2025)**
 
 The following critical issues have been **RESOLVED** and should not require further investigation:

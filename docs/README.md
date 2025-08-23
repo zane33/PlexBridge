@@ -4,15 +4,31 @@ This directory contains comprehensive documentation for the PlexTV application -
 
 ## Documentation Structure
 
+### Core Documentation
 - **[Architecture.md](Architecture.md)** - System architecture, components, and design patterns
 - **[API.md](API.md)** - Complete API reference and endpoint documentation
-- **[Networking.md](Networking.md)** - Network architecture, ports, and protocols
-- **[Database.md](Database.md)** - Database schema, models, and data flow
-- **[Streaming.md](Streaming.md)** - Stream management, protocols, and media handling
 - **[Configuration.md](Configuration.md)** - Configuration options and environment variables
-- **[Deployment.md](Deployment.md)** - Deployment guides and production setup
-- **[Development.md](Development.md)** - Development setup and contributing guidelines
 - **[Troubleshooting.md](Troubleshooting.md)** - Common issues and solutions
+
+### Streaming & Integration
+- **[Streaming-Architecture-Guide.md](Streaming-Architecture-Guide.md)** - 🔥 **Comprehensive streaming pipeline documentation**
+  - Complete Plex → PlexBridge → IPTV flow
+  - FFmpeg configurations and optimizations
+  - Critical implementation details and fixes
+  - Performance tuning and troubleshooting
+- **[Plex-Live-TV-Integration.md](Plex-Live-TV-Integration.md)** - Plex Live TV & DVR setup guide
+- **[Plex-Live-TV-Streaming-Technical-Guide.md](Plex-Live-TV-Streaming-Technical-Guide.md)** - Technical streaming details
+
+### Deployment & Setup
+- **[Docker-Deployment-Guide.md](Docker-Deployment-Guide.md)** - Docker deployment instructions
+- **[Quick-Deployment-Reference.md](Quick-Deployment-Reference.md)** - Quick start guide
+- **[Setup.md](Setup.md)** - Initial setup and configuration
+
+### Technical Details
+- **[Networking.md](Networking.md)** - Network architecture, ports, and protocols
+- **[M3U_IMPORT_API.md](M3U_IMPORT_API.md)** - M3U playlist import API
+- **[M3U_Performance_Optimizations.md](M3U_Performance_Optimizations.md)** - M3U parsing optimizations
+- **[GUI.md](GUI.md)** - Web interface documentation
 
 ## Quick Reference
 
