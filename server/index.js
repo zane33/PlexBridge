@@ -333,6 +333,8 @@ const initializeApp = async () => {
   logger.info(`Database path: ${config.database.path}`);
   logger.info(`Memory Usage: Heap ${Math.round(process.memoryUsage().heapUsed / 1024 / 1024)}MB / Total ${Math.round(process.memoryUsage().heapTotal / 1024 / 1024)}MB`);
   logger.info('='.repeat(80));
+  
+  try {
     
     // Initialize database with retries
     let dbInitialized = false;
