@@ -341,10 +341,16 @@ FFmpeg parameters can be customized through the Settings UI or configuration fil
 3. Configuration file defaults
 4. Built-in fallbacks
 
-**Example Custom Command:**
+**Default Optimized Command (August 2025):**
 ```bash
--hide_banner -loglevel error -i [URL] -c:a libmp3lame -vcodec copy -f mpegts pipe:1
+-hide_banner -loglevel error -reconnect 1 -reconnect_at_eof 1 -reconnect_streamed 1 -reconnect_delay_max 2 -i [URL] -c:v copy -c:a copy -f mpegts -mpegts_copyts 1 -avoid_negative_ts make_zero -fflags +genpts+igndts+discardcorrupt -copyts -muxdelay 0 -muxpreload 0 pipe:1
 ```
+
+**Key Improvements:**
+- Auto-reconnection on stream failure
+- Timestamp correction and synchronization
+- Corrupted packet handling
+- Zero-delay muxing for low latency
 
 **Configuration Structure:**
 ```json
@@ -353,7 +359,7 @@ FFmpeg parameters can be customized through the Settings UI or configuration fil
     "transcoding": {
       "mpegts": {
         "enabled": true,
-        "ffmpegArgs": "-hide_banner -loglevel error -i [URL] -c:v copy -c:a copy -f mpegts pipe:1",
+        "ffmpegArgs": "-hide_banner -loglevel error -reconnect 1 -reconnect_at_eof 1 -reconnect_streamed 1 -reconnect_delay_max 2 -i [URL] -c:v copy -c:a copy -f mpegts -mpegts_copyts 1 -avoid_negative_ts make_zero -fflags +genpts+igndts+discardcorrupt -copyts -muxdelay 0 -muxpreload 0 pipe:1",
         "hlsProtocolArgs": "-allowed_extensions ALL -protocol_whitelist file,http,https,tcp,tls,pipe"
       }
     }
