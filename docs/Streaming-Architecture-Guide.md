@@ -156,7 +156,21 @@ async detectStreamFormat(streamUrl) {
 
 ## FFmpeg Configuration
 
-### Current Working Configuration
+### Optimal Configuration (Recommended)
+
+```bash
+ffmpeg -hide_banner -loglevel error -i [URL] -c:v copy -c:a copy -f mpegts pipe:1
+```
+
+This minimal configuration provides optimal performance by:
+- **Minimal overhead**: Only essential parameters
+- **No buffering delays**: Direct input to output processing  
+- **Copy codecs**: Zero transcoding latency
+- **Clean output**: Errors only, no unnecessary logging
+
+### Extended Configuration (Advanced)
+
+For streams requiring additional protocol handling:
 
 ```bash
 ffmpeg -hide_banner -loglevel error \
@@ -167,7 +181,6 @@ ffmpeg -hide_banner -loglevel error \
   -http_persistent 1 \
   -http_seekable 0 \
   -multiple_requests 1 \
-  -http_persistent 0 \
   -i {stream_url} \
   -c:v copy \
   -c:a copy \

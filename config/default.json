@@ -94,8 +94,8 @@
       "defaultProfile": "medium",
       "mpegts": {
         "enabled": true,
-        "ffmpegArgs": "-hide_banner -loglevel error -allowed_extensions ALL -protocol_whitelist file,http,https,tcp,tls,pipe,crypto -user_agent PlexBridge/1.0 -live_start_index 0 -http_persistent 1 -http_seekable 0 -multiple_requests 1 -http_persistent 0 -i [URL] -c:v copy -c:a copy -f mpegts pipe:1",
-        "hlsProtocolArgs": "-allowed_extensions ALL -protocol_whitelist file,http,https,tcp,tls,pipe,crypto"
+        "ffmpegArgs": "-hide_banner -loglevel error -i [URL] -c:v copy -c:a copy -f mpegts pipe:1",
+        "hlsProtocolArgs": "-allowed_extensions ALL -protocol_whitelist file,http,https,tcp,tls,pipe,crypto -user_agent PlexBridge/1.0 -live_start_index 0 -http_persistent 1"
       }
     },
     "caching": {
