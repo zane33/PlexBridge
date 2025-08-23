@@ -186,19 +186,34 @@ function Dashboard() {
     const unsubscribeSessionStarted = socketService.on('session:started', (data) => {
       console.log('New streaming session started:', data);
       fetchStreamingData();
+      fetchMetrics(); // Update metrics immediately
     });
 
     const unsubscribeSessionEnded = socketService.on('session:ended', (data) => {
       console.log('Streaming session ended:', data);
       fetchStreamingData();
+      fetchMetrics(); // Update metrics immediately
     });
 
     const unsubscribeMonitoringUpdate = socketService.on('monitoring:update', (data) => {
+      console.log('Received monitoring update:', data);
       if (data.sessions) {
         setStreamingSessions(data.sessions);
       }
       if (data.capacity) {
         setStreamingCapacity(data.capacity);
+        // Also update metrics for utilization display
+        if (metrics) {
+          setMetrics(prev => ({
+            ...prev,
+            streams: {
+              ...prev.streams,
+              active: data.capacity.totalActiveStreams,
+              maximum: data.capacity.maxConcurrentStreams,
+              utilization: data.capacity.utilizationPercentage
+            }
+          }));
+        }
       }
       if (data.bandwidth) {
         setStreamingBandwidth(data.bandwidth);
@@ -364,14 +379,19 @@ function Dashboard() {
 
   const handleTerminateSession = async (sessionId) => {
     try {
-      // Use existing API structure - check what endpoint is available
-      await api.delete(`/streams/active/${sessionId}`);
+      // Use correct streaming API endpoint
+      await api.delete(`/api/streaming/sessions/${sessionId}`);
       enqueueSnackbar('Session terminated successfully', { variant: 'success' });
       setTerminateDialog({ open: false, sessionId: null, sessionData: null });
+      
+      // Refresh streaming data immediately
       fetchStreamingData();
+      fetchActiveStreams();
+      fetchMetrics();
     } catch (error) {
       console.error('Failed to terminate session:', error);
-      enqueueSnackbar('Failed to terminate session. This feature may not be fully implemented yet.', { variant: 'warning' });
+      const errorMessage = error.response?.data?.details || error.response?.data?.error || 'Unknown error occurred';
+      enqueueSnackbar(`Failed to terminate session: ${errorMessage}`, { variant: 'error' });
     }
   };
 
@@ -429,10 +449,23 @@ function Dashboard() {
     }
   };
 
-  const formatSessionDuration = (startTime) => {
-    if (!startTime) return '0s';
-    const duration = Date.now() - new Date(startTime).getTime();
-    return formatDuration(duration);
+  const formatSessionDuration = (session) => {
+    // Use session duration if available (preferred), otherwise calculate from startTime
+    if (session && typeof session === 'object') {
+      if (session.duration && !isNaN(session.duration)) {
+        return formatDuration(session.duration);
+      } else if (session.startTime) {
+        const duration = Date.now() - new Date(session.startTime).getTime();
+        return formatDuration(duration);
+      } else if (session.durationFormatted) {
+        return session.durationFormatted;
+      }
+    } else if (session && typeof session === 'string') {
+      // Handle case where startTime string is passed directly (for backwards compatibility)
+      const duration = Date.now() - new Date(session).getTime();
+      return formatDuration(duration);
+    }
+    return '0s';
   };
 
   const getUtilizationColor = (percentage) => {
@@ -602,15 +635,23 @@ function Dashboard() {
     );
   }
 
+  // Use the most up-to-date streaming data for chart display
+  const currentActiveStreams = streamingCapacity?.totalActiveStreams ?? metrics?.streams?.active ?? 0;
+  const currentMaxStreams = streamingCapacity?.maxConcurrentStreams ?? metrics?.streams?.maximum ?? 0;
+  const currentUtilization = streamingCapacity?.utilizationPercentage ?? metrics?.streams?.utilization ?? 0;
+  
   const streamUtilizationData = {
     labels: ['Used', 'Available'],
     datasets: [
       {
         data: [
-          metrics?.streams?.active || 0, 
-          (metrics?.streams?.maximum || 0) - (metrics?.streams?.active || 0)
+          currentActiveStreams, 
+          Math.max(0, currentMaxStreams - currentActiveStreams)
         ],
-        backgroundColor: ['#1976d2', '#424242'],
+        backgroundColor: [
+          currentUtilization > 90 ? '#ef4444' : currentUtilization > 70 ? '#f59e0b' : '#1976d2', 
+          '#424242'
+        ],
         borderWidth: 0,
       },
     ],
@@ -682,10 +723,10 @@ function Dashboard() {
                       mb: 0.5
                     }}
                   >
-                    {streamingCapacity?.totalActiveStreams || metrics?.streams?.active || 0}
+                    {currentActiveStreams}
                   </Typography>
                   <Typography variant="body2" sx={{ color: 'text.secondary', fontWeight: 500 }}>
-                    of {streamingCapacity?.maxConcurrentStreams || metrics?.streams?.maximum || 0} max capacity
+                    of {currentMaxStreams} max capacity
                   </Typography>
                 </Box>
                 <Box 
@@ -715,29 +756,29 @@ function Dashboard() {
                   </Typography>
                   <Box sx={{ display: 'flex', alignItems: 'center' }}>
                     <Typography variant="caption" sx={{ color: 'primary.main', fontWeight: 600, mr: 1 }}>
-                      {streamingCapacity?.utilizationPercentage || metrics?.streams?.utilization || 0}%
+                      {currentUtilization}%
                     </Typography>
                     <Chip
-                      label={getUtilizationStatus(streamingCapacity?.utilizationPercentage || metrics?.streams?.utilization || 0)}
+                      label={getUtilizationStatus(currentUtilization)}
                       size="small"
-                      color={getUtilizationColor(streamingCapacity?.utilizationPercentage || metrics?.streams?.utilization || 0)}
+                      color={getUtilizationColor(currentUtilization)}
                       sx={{ fontSize: '0.7rem', height: '16px' }}
                     />
                   </Box>
                 </Box>
                 <LinearProgress
                   variant="determinate"
-                  value={streamingCapacity?.utilizationPercentage || metrics?.streams?.utilization || 0}
-                  color={getUtilizationColor(streamingCapacity?.utilizationPercentage || metrics?.streams?.utilization || 0)}
+                  value={currentUtilization}
+                  color={getUtilizationColor(currentUtilization)}
                   sx={{
                     height: 8,
                     borderRadius: 4,
                     backgroundColor: 'rgba(99, 102, 241, 0.1)',
                     '& .MuiLinearProgress-bar': {
                       borderRadius: 4,
-                      background: (streamingCapacity?.utilizationPercentage || 0) > 90 
+                      background: currentUtilization > 90 
                         ? 'linear-gradient(90deg, #ef4444 0%, #dc2626 100%)'
-                        : (streamingCapacity?.utilizationPercentage || 0) > 70
+                        : currentUtilization > 70
                         ? 'linear-gradient(90deg, #f59e0b 0%, #d97706 100%)'
                         : 'linear-gradient(90deg, #6366f1 0%, #8b5cf6 100%)',
                     }
@@ -1243,7 +1284,7 @@ function Dashboard() {
                         <Box sx={{ display: 'flex', alignItems: 'center' }}>
                           <TimelineIcon sx={{ mr: 1, color: 'success.main', fontSize: 16 }} />
                           <Typography variant="body2" fontWeight="bold">
-                            {formatSessionDuration(session.startTime)}
+                            {formatSessionDuration(session)}
                           </Typography>
                         </Box>
                       </TableCell>
@@ -1322,7 +1363,7 @@ function Dashboard() {
                 <strong>Channel:</strong> {terminateDialog.sessionData.channelName} (Ch {terminateDialog.sessionData.channelNumber})
               </Typography>
               <Typography variant="body2">
-                <strong>Duration:</strong> {formatSessionDuration(terminateDialog.sessionData.startTime)}
+                <strong>Duration:</strong> {formatSessionDuration(terminateDialog.sessionData)}
               </Typography>
             </Box>
           )}

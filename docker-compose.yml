@@ -39,9 +39,14 @@ services:
      # - "3000:3000"
       #- "1900:1900/udp"
     volumes:
-      # Named volumes for persistent data storage
+      # Use named volume for data persistence with fallback to bind mount
       - plextv_data:/data
-      - plextv_config:/app/config
+      # Config as read-only bind mount for easy editing
+      - ./config:/app/config:ro
+      # Additional bind mount for easy access to data (optional)
+      - ./data:/host-data
+      # Server code bind mount for development
+      - ./server:/app/server
     environment:
       # Application environment
       - NODE_ENV=production

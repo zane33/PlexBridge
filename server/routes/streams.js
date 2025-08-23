@@ -2,8 +2,10 @@ const express = require('express');
 const router = express.Router();
 const database = require('../services/database');
 const streamManager = require('../services/streamManager');
+const streamSessionManager = require('../services/streamSessionManager');
 const streamPreviewService = require('../services/streamPreviewService');
 const logger = require('../utils/logger');
+const { v4: uuidv4 } = require('uuid');
 
 // Stream proxy endpoint for Plex - handles both main playlist and sub-files
 router.get('/stream/:channelId/:filename?', async (req, res) => {
@@ -159,16 +161,43 @@ router.get('/stream/:channelId/:filename?', async (req, res) => {
         res.status(500).send(`Failed to proxy sub-file: ${error.message}`);
       }
     } else {
+      // Start session tracking for non-subfile requests
+      try {
+        await streamSessionManager.startSession({
+          sessionId,
+          streamId: stream.id,
+          clientIP,
+          userAgent,
+          clientIdentifier,
+          channelName: channel.name,
+          channelNumber: channel.number,
+          streamUrl: targetUrl,
+          streamType: isPlexRequest ? 'mpegts' : 'hls'
+        });
+        
+        logger.info('Stream session started', { sessionId, channelId, channelName: channel.name });
+      } catch (sessionError) {
+        logger.warn('Failed to start session tracking', { sessionId, error: sessionError.message });
+      }
+      
+      // Set up session cleanup on client disconnect
+      req.on('close', async () => {
+        try {
+          await streamSessionManager.endSession(sessionId, 'client_disconnect');
+          logger.info('Stream session ended due to client disconnect', { sessionId, channelId });
+        } catch (error) {
+          logger.warn('Failed to end session on disconnect', { sessionId, error: error.message });
+        }
+      });
+      
       // For main playlist requests
       if (isPlexRequest && !isSubFile) {
         // Plex needs direct MPEG-TS stream, not HLS playlist
         logger.info('Plex request detected - forcing MPEG-TS transcoding', { 
+          sessionId,
           channelId, 
           userAgent 
         });
-        
-        // TEMPORARY: Add console debug
-        console.log('ATTEMPTING PLEX TRANSCODING:', { targetUrl, channelId });
         
         // Force MPEG-TS transcoding for Plex compatibility
         await streamManager.proxyPlexCompatibleStream(targetUrl, channel, req, res);
@@ -220,11 +249,27 @@ router.get('/streams/convert/hls/:streamId', async (req, res) => {
   }
 });
 
-// Active streams endpoint - Enhanced to return Promise-based data
+// Active streams endpoint - Enhanced to return Promise-based data from session manager
 router.get('/streams/active', async (req, res) => {
   try {
-    const activeStreams = await streamManager.getActiveStreams();
-    res.json({ streams: activeStreams });
+    // Use streamSessionManager for more accurate session tracking
+    const activeSessions = streamSessionManager.getActiveSessions();
+    const capacity = streamSessionManager.getCapacityMetrics(10);
+    const bandwidth = streamSessionManager.getBandwidthStats();
+    
+    // Also get legacy streams for compatibility
+    const legacyStreams = await streamManager.getActiveStreams();
+    
+    // Combine session data with legacy compatibility
+    const streams = activeSessions.length > 0 ? activeSessions : legacyStreams;
+    
+    res.json({ 
+      streams, 
+      capacity,
+      bandwidth,
+      sessionCount: activeSessions.length,
+      legacyCount: legacyStreams.length
+    });
   } catch (error) {
     logger.error('Error getting active streams:', error);
     res.status(500).json({ error: 'Failed to get active streams' });

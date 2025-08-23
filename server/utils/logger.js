@@ -181,10 +181,10 @@ const logger = winston.createLogger({
 // Add custom logging methods
 logger.stream = function(message, meta = {}) {
   this.info(message, { ...meta, category: 'stream' });
-  // Disable database logging to prevent errors
-  // if (dbLogger) {
-  //   dbLogger.log('info', message, { ...meta, category: 'stream' });
-  // }
+  // Enable database logging for logs viewer
+  if (dbLogger) {
+    dbLogger.log('info', message, { ...meta, category: 'stream' });
+  }
 };
 
 // Enhanced stream session logging
@@ -246,46 +246,46 @@ const originalDebug = logger.debug.bind(logger);
 
 logger.info = function(message, meta = {}) {
   originalInfo(message, meta);
-  // Disable database logging to prevent errors
-  // if (dbLogger) {
-  //   // Don't await database logging to prevent blocking
-  //   dbLogger.log('info', message, meta).catch(() => {
-  //     // Silently ignore database logging errors to prevent loops
-  //   });
-  // }
+  // Enable database logging for logs viewer
+  if (dbLogger) {
+    // Don't await database logging to prevent blocking
+    dbLogger.log('info', message, meta).catch(() => {
+      // Silently ignore database logging errors to prevent loops
+    });
+  }
 };
 
 logger.warn = function(message, meta = {}) {
   originalWarn(message, meta);
-  // Disable database logging to prevent errors
-  // if (dbLogger) {
-  //   // Don't await database logging to prevent blocking
-  //   dbLogger.log('warn', message, meta).catch(() => {
-  //     // Silently ignore database logging errors to prevent loops
-  //   });
-  // }
+  // Enable database logging for logs viewer
+  if (dbLogger) {
+    // Don't await database logging to prevent blocking
+    dbLogger.log('warn', message, meta).catch(() => {
+      // Silently ignore database logging errors to prevent loops
+    });
+  }
 };
 
 logger.error = function(message, meta = {}) {
   originalError(message, meta);
-  // Disable database logging to prevent errors
-  // if (dbLogger) {
-  //   // Don't await database logging to prevent blocking
-  //   dbLogger.log('error', message, meta).catch(() => {
-  //     // Silently ignore database logging errors to prevent loops
-  //   });
-  // }
+  // Enable database logging for logs viewer
+  if (dbLogger) {
+    // Don't await database logging to prevent blocking
+    dbLogger.log('error', message, meta).catch(() => {
+      // Silently ignore database logging errors to prevent loops
+    });
+  }
 };
 
 logger.debug = function(message, meta = {}) {
   originalDebug(message, meta);
-  // Disable database logging to prevent errors
-  // if (dbLogger) {
-  //   // Don't await database logging to prevent blocking
-  //   dbLogger.log('debug', message, meta).catch(() => {
-  //     // Silently ignore database logging errors to prevent loops
-  //   });
-  // }
+  // Enable database logging for logs viewer
+  if (dbLogger) {
+    // Don't await database logging to prevent blocking
+    dbLogger.log('debug', message, meta).catch(() => {
+      // Silently ignore database logging errors to prevent loops
+    });
+  }
 };
 
 // Initialize database logger

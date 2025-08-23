@@ -1794,7 +1794,9 @@ router.get('/logs', async (req, res) => {
         search
       });
       logs = Array.isArray(dbLogs) ? dbLogs : [];
+      console.log('Database logs retrieved:', logs.length, 'entries');
     } catch (dbError) {
+      console.log('Database logs error:', dbError.message);
       logger.warn('Database logs not available:', dbError);
       logs = [];
     }
@@ -1803,7 +1805,9 @@ router.get('/logs', async (req, res) => {
     try {
       fileLogs = await getRecentFileLogs(level, 50);
       fileLogs = Array.isArray(fileLogs) ? fileLogs : [];
+      console.log('File logs retrieved:', fileLogs.length, 'entries');
     } catch (fileError) {
+      console.log('File logs error:', fileError.message);
       logger.warn('File logs not available:', fileError);
       fileLogs = [];
       // Add debug info about the error
@@ -1956,8 +1960,14 @@ router.delete('/logs/cleanup', async (req, res) => {
 // Helper function to get recent file logs
 async function getRecentFileLogs(level = null, limit = 50) {
   try {
-    // Use absolute path to ensure we're looking in the right place
-    const logDir = '/data/logs';
+    // Use config path to ensure we're looking in the right place
+    const logDir = config.logging.path || '/data/logs';
+    
+    // Ensure log directory exists
+    if (!fs.existsSync(logDir)) {
+      logger.warn('Log directory does not exist:', logDir);
+      return [];
+    }
     
     // Try multiple date formats to find the most recent log file
     const currentDate = new Date();
