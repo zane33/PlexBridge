@@ -911,7 +911,7 @@ class StreamManager {
     // Get configurable FFmpeg command line with proper transcoding
     let ffmpegCommand = settings?.plexlive?.transcoding?.mpegts?.ffmpegArgs || 
                        config.plexlive?.transcoding?.mpegts?.ffmpegArgs ||
-                       '-hide_banner -loglevel error -i [URL] -c:v libx264 -c:a aac -preset veryfast -profile:v main -level 3.1 -f mpegts -avoid_negative_ts make_zero -fflags +genpts pipe:1';
+                       '-hide_banner -loglevel error -reconnect 1 -reconnect_at_eof 1 -reconnect_streamed 1 -reconnect_delay_max 2 -i [URL] -c:v libx264 -c:a aac -preset veryfast -profile:v main -level 3.1 -f mpegts -mpegts_copyts 1 -avoid_negative_ts make_zero -fflags +genpts+igndts+discardcorrupt -copyts -muxdelay 0 -muxpreload 0 pipe:1';
     
     // Replace [URL] placeholder with actual stream URL
     ffmpegCommand = ffmpegCommand.replace('[URL]', finalUrl);
@@ -1483,7 +1483,7 @@ class StreamManager {
       // Get configurable FFmpeg command line
       let ffmpegCommand = settings?.plexlive?.transcoding?.mpegts?.ffmpegArgs || 
                          config.plexlive?.transcoding?.mpegts?.ffmpegArgs ||
-                         '-hide_banner -loglevel error -i [URL] -c:v copy -c:a copy -f mpegts pipe:1';
+                         '-hide_banner -loglevel error -reconnect 1 -reconnect_at_eof 1 -reconnect_streamed 1 -reconnect_delay_max 2 -i [URL] -c:v copy -c:a copy -f mpegts -mpegts_copyts 1 -avoid_negative_ts make_zero -fflags +genpts+igndts+discardcorrupt -copyts -muxdelay 0 -muxpreload 0 pipe:1';
       
       // Replace [URL] placeholder with actual stream URL
       ffmpegCommand = ffmpegCommand.replace('[URL]', finalStreamUrl);
