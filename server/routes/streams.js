@@ -34,14 +34,20 @@ router.get('/stream/:channelId/:filename?', async (req, res) => {
       queryParams: req.query
     });
     
-    // TEMPORARY: Console log for immediate debugging
-    console.log('STREAM DEBUG:', {
+    // TEMPORARY: Enhanced debugging for duplicate session investigation
+    console.log('STREAM REQUEST DEBUG:', {
       channelId,
       isSubFile,
       userAgent: req.get('User-Agent'),
       isPlexRequest,
       method: req.method,
-      clientIP: req.ip || req.connection.remoteAddress
+      clientIP: req.ip || req.connection.remoteAddress,
+      url: req.url,
+      headers: {
+        'user-agent': req.get('User-Agent'),
+        'range': req.get('Range'),
+        'connection': req.get('Connection')
+      }
     });
     
     // Handle HEAD requests for Plex (it sends HEAD first to check the stream)
@@ -173,71 +179,18 @@ router.get('/stream/:channelId/:filename?', async (req, res) => {
         res.status(500).send(`Failed to proxy sub-file: ${error.message}`);
       }
     } else {
-      // Define session variables for tracking
-      const clientIP = req.ip || req.connection.remoteAddress || 'unknown';
-      const userAgent = req.get('User-Agent') || 'unknown';
-      const clientIdentifier = `${clientIP}-${stream.id}-${channel.id}`; // Include stream/channel ID to make it unique per stream
-      
-      // Check if there's already an active session for this client+stream combination
-      const existingSession = streamSessionManager.getActiveSessionByClientAndStream(clientIdentifier, stream.id);
-      
-      let sessionId;
-      if (existingSession) {
-        // Reuse existing session
-        sessionId = existingSession.sessionId;
-        logger.info('Reusing existing stream session', { 
-          sessionId, 
-          channelId, 
-          channelName: channel.name,
-          clientIdentifier 
-        });
-      } else {
-        // Create new session
-        sessionId = uuidv4();
-        
-        // Start session tracking for non-subfile requests
-        try {
-          await streamSessionManager.startSession({
-            sessionId,
-            streamId: stream.id,
-            clientIP,
-            userAgent,
-            clientIdentifier,
-            channelName: channel.name,
-            channelNumber: channel.number,
-            streamUrl: targetUrl,
-            streamType: isPlexRequest ? 'mpegts' : 'hls'
-          });
-          
-          logger.info('New stream session started', { sessionId, channelId, channelName: channel.name });
-        } catch (sessionError) {
-          logger.warn('Failed to start session tracking', { sessionId, error: sessionError.message });
-        }
-      }
-      
-      // Set up session cleanup on client disconnect
-      req.on('close', async () => {
-        try {
-          await streamSessionManager.endSession(sessionId, 'client_disconnect');
-          logger.info('Stream session ended due to client disconnect', { sessionId, channelId });
-        } catch (error) {
-          logger.warn('Failed to end session on disconnect', { sessionId, error: error.message });
-        }
-      });
-      
-      // For main playlist requests
+      // For main playlist requests, let the streamManager handle session creation to avoid duplicates
       if (isPlexRequest && !isSubFile) {
         // Plex needs direct MPEG-TS stream, not HLS playlist
-        logger.info('Plex request detected - forcing MPEG-TS transcoding', { 
-          sessionId,
+        logger.info('Plex request detected - forwarding to streamManager', { 
           channelId, 
-          userAgent 
+          userAgent: req.get('User-Agent')
         });
         
-        // Force MPEG-TS transcoding for Plex compatibility
+        // Let streamManager handle session creation and MPEG-TS transcoding for Plex compatibility
         await streamManager.proxyPlexCompatibleStream(targetUrl, channel, req, res);
       } else {
-        // For regular requests, use the full stream manager with URL rewriting
+        // For regular requests, let streamManager handle session creation and URL rewriting
         await streamManager.proxyStreamWithChannel(targetUrl, channel, stream, req, res);
       }
     }

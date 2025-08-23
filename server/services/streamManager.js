@@ -515,8 +515,33 @@ class StreamManager {
       logger.stream('Creating stream proxy', { streamId, url: streamData.url });
 
       const clientIdentifier = this.generateClientIdentifier(req);
-      const sessionId = `${streamId}_${clientIdentifier}_${Date.now()}`;
       const { url, type, auth, headers: customHeaders = {} } = streamData;
+      
+      // Check for existing session to prevent duplicates
+      const streamSessionManager = require('./streamSessionManager');
+      const existingSession = streamSessionManager.getActiveSessionByClientAndStream(clientIdentifier, streamId);
+      
+      logger.info('Duplicate session check', {
+        clientIdentifier,
+        streamId,
+        existingSession: existingSession ? existingSession.sessionId : 'none',
+        userAgent: req.get('User-Agent'),
+        clientIP: req.ip
+      });
+      
+      let sessionId;
+      if (existingSession) {
+        logger.info('Found existing session - ending it to prevent duplicates', {
+          existingSessionId: existingSession.sessionId,
+          streamId,
+          clientIdentifier
+        });
+        
+        // End the existing session and create a new one (client likely reconnected)
+        await streamSessionManager.endSession(existingSession.sessionId, 'client_reconnect');
+      }
+      
+      sessionId = `${streamId}_${clientIdentifier}_${Date.now()}`;
       
       // Get channel information for real-time updates
       let channelInfo = null;
@@ -1543,7 +1568,31 @@ class StreamManager {
       // ===== ADD SESSION TRACKING FOR PLEX STREAMS =====
       const streamSessionManager = require('./streamSessionManager');
       const clientIdentifier = this.generateClientIdentifier(req);
-      const sessionId = `plex_${channel.id}_${clientIdentifier}_${Date.now()}`;
+      
+      // Check for existing session to prevent duplicates
+      const existingSession = streamSessionManager.getActiveSessionByClientAndStream(clientIdentifier, channel.id);
+      
+      logger.info('Plex duplicate session check', {
+        clientIdentifier,
+        channelId: channel.id,
+        existingSession: existingSession ? existingSession.sessionId : 'none',
+        userAgent: req.get('User-Agent'),
+        clientIP: req.ip
+      });
+      
+      let sessionId;
+      if (existingSession) {
+        logger.info('Found existing Plex session - ending it to prevent duplicates', {
+          existingSessionId: existingSession.sessionId,
+          channelId: channel.id,
+          clientIdentifier
+        });
+        
+        // End the existing session and create a new one (Plex likely reconnected)
+        await streamSessionManager.endSession(existingSession.sessionId, 'plex_reconnect');
+      }
+      
+      sessionId = `plex_${channel.id}_${clientIdentifier}_${Date.now()}`;
       
       // Create session info for tracking
       const streamInfo = {
