@@ -161,6 +161,12 @@ router.get('/stream/:channelId/:filename?', async (req, res) => {
         res.status(500).send(`Failed to proxy sub-file: ${error.message}`);
       }
     } else {
+      // Define session variables for tracking
+      const sessionId = uuidv4();
+      const clientIP = req.ip || req.connection.remoteAddress || 'unknown';
+      const userAgent = req.get('User-Agent') || 'unknown';
+      const clientIdentifier = `${clientIP}-${userAgent.substring(0, 50)}`;
+      
       // Start session tracking for non-subfile requests
       try {
         await streamSessionManager.startSession({
