@@ -99,3 +99,8 @@ services:
       timeout: 10s
       retries: 3
       start_period: 40s
+
+# Define named volumes for data persistence
+volumes:
+  plextv_data:
+    driver: local
