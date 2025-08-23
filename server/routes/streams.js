@@ -39,12 +39,15 @@ router.get('/stream/:channelId/:filename?', async (req, res) => {
       channelId,
       isSubFile,
       userAgent: req.get('User-Agent'),
-      isPlexRequest
+      isPlexRequest,
+      method: req.method,
+      clientIP: req.ip || req.connection.remoteAddress
     });
     
     // Handle HEAD requests for Plex (it sends HEAD first to check the stream)
+    // Don't create sessions for HEAD requests - they're just checking availability
     if (req.method === 'HEAD') {
-      logger.info('HEAD request for stream', { channelId, isPlexRequest });
+      logger.info('HEAD request for stream (not creating session)', { channelId, isPlexRequest });
       res.set({
         'Content-Type': 'video/mp2t',
         'Access-Control-Allow-Origin': '*',
@@ -171,28 +174,45 @@ router.get('/stream/:channelId/:filename?', async (req, res) => {
       }
     } else {
       // Define session variables for tracking
-      const sessionId = uuidv4();
       const clientIP = req.ip || req.connection.remoteAddress || 'unknown';
       const userAgent = req.get('User-Agent') || 'unknown';
-      const clientIdentifier = `${clientIP}-${userAgent.substring(0, 50)}`;
+      const clientIdentifier = `${clientIP}-${stream.id}-${channel.id}`; // Include stream/channel ID to make it unique per stream
       
-      // Start session tracking for non-subfile requests
-      try {
-        await streamSessionManager.startSession({
-          sessionId,
-          streamId: stream.id,
-          clientIP,
-          userAgent,
-          clientIdentifier,
+      // Check if there's already an active session for this client+stream combination
+      const existingSession = streamSessionManager.getActiveSessionByClientAndStream(clientIdentifier, stream.id);
+      
+      let sessionId;
+      if (existingSession) {
+        // Reuse existing session
+        sessionId = existingSession.sessionId;
+        logger.info('Reusing existing stream session', { 
+          sessionId, 
+          channelId, 
           channelName: channel.name,
-          channelNumber: channel.number,
-          streamUrl: targetUrl,
-          streamType: isPlexRequest ? 'mpegts' : 'hls'
+          clientIdentifier 
         });
+      } else {
+        // Create new session
+        sessionId = uuidv4();
         
-        logger.info('Stream session started', { sessionId, channelId, channelName: channel.name });
-      } catch (sessionError) {
-        logger.warn('Failed to start session tracking', { sessionId, error: sessionError.message });
+        // Start session tracking for non-subfile requests
+        try {
+          await streamSessionManager.startSession({
+            sessionId,
+            streamId: stream.id,
+            clientIP,
+            userAgent,
+            clientIdentifier,
+            channelName: channel.name,
+            channelNumber: channel.number,
+            streamUrl: targetUrl,
+            streamType: isPlexRequest ? 'mpegts' : 'hls'
+          });
+          
+          logger.info('New stream session started', { sessionId, channelId, channelName: channel.name });
+        } catch (sessionError) {
+          logger.warn('Failed to start session tracking', { sessionId, error: sessionError.message });
+        }
       }
       
       // Set up session cleanup on client disconnect

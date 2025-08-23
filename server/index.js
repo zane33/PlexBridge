@@ -170,7 +170,20 @@ app.use((err, req, res, next) => {
 
 // Graceful shutdown handler
 const gracefulShutdown = async (signal) => {
-  logger.info(`Received ${signal}. Starting graceful shutdown...`);
+  console.log('\n'.repeat(2));
+  console.log('-'.repeat(80));
+  console.log(`GRACEFUL SHUTDOWN INITIATED - Signal: ${signal}`);
+  console.log(`Time: ${new Date().toISOString()}`);
+  console.log(`PID: ${process.pid}`);
+  console.log(`Uptime: ${Math.round(process.uptime())} seconds`);
+  console.log('-'.repeat(80));
+  
+  logger.info('⚠️ GRACEFUL SHUTDOWN INITIATED', {
+    signal: signal,
+    pid: process.pid,
+    uptime: process.uptime(),
+    memoryUsage: process.memoryUsage()
+  });
   
   try {
     // Close server
@@ -232,27 +245,94 @@ process.on('SIGINT', () => gracefulShutdown('SIGINT'));
 
 // Handle uncaught exceptions
 process.on('uncaughtException', (err) => {
-  logger.error('Uncaught Exception:', err);
-  process.exit(1);
+  console.error('\n'.repeat(2));
+  console.error('!'.repeat(80));
+  console.error('CRITICAL ERROR - UNCAUGHT EXCEPTION');
+  console.error(`Time: ${new Date().toISOString()}`);
+  console.error(`PID: ${process.pid}`);
+  console.error('Error:', err);
+  console.error('Stack:', err.stack);
+  console.error('!'.repeat(80));
+  console.error('APPLICATION WILL RESTART');
+  console.error('!'.repeat(80));
+  console.error('\n'.repeat(2));
+  
+  logger.error('💥 CRITICAL: Uncaught Exception - Application Crashing', {
+    error: err.message,
+    stack: err.stack,
+    pid: process.pid,
+    uptime: process.uptime()
+  });
+  
+  // Record crash before exit
+  crashTracker.recordShutdown('CRASH').then(() => {
+    // Give time for logs to flush
+    setTimeout(() => process.exit(1), 1000);
+  }).catch(() => {
+    setTimeout(() => process.exit(1), 1000);
+  });
 });
 
 process.on('unhandledRejection', (reason, promise) => {
-  logger.error('Unhandled Rejection at:', promise, 'reason:', reason);
-  process.exit(1);
+  console.error('\n'.repeat(2));
+  console.error('!'.repeat(80));
+  console.error('CRITICAL ERROR - UNHANDLED PROMISE REJECTION');
+  console.error(`Time: ${new Date().toISOString()}`);
+  console.error(`PID: ${process.pid}`);
+  console.error('Reason:', reason);
+  console.error('Promise:', promise);
+  console.error('!'.repeat(80));
+  console.error('APPLICATION WILL RESTART');
+  console.error('!'.repeat(80));
+  console.error('\n'.repeat(2));
+  
+  logger.error('💥 CRITICAL: Unhandled Promise Rejection - Application Crashing', {
+    reason: reason,
+    promise: promise,
+    pid: process.pid,
+    uptime: process.uptime()
+  });
+  
+  // Record crash before exit
+  crashTracker.recordShutdown('UNHANDLED_REJECTION').then(() => {
+    // Give time for logs to flush
+    setTimeout(() => process.exit(1), 1000);
+  }).catch(() => {
+    setTimeout(() => process.exit(1), 1000);
+  });
 });
 
 // Initialize application with detailed error handling
 const initializeApp = async () => {
-  logger.info('Starting PlexBridge application initialization...');
+  // Generate startup identifier for tracking restarts
+  const startupId = require('crypto').randomBytes(4).toString('hex');
+  const startupTime = new Date().toISOString();
   
-  try {
-    // Log configuration info
-    logger.info(`Node.js version: ${process.version}`);
-    logger.info(`Platform: ${process.platform} ${process.arch}`);
-    logger.info(`Working directory: ${process.cwd()}`);
-    logger.info(`Environment: ${process.env.NODE_ENV || 'development'}`);
-    logger.info(`Data directory: ${config.paths.data}`);
-    logger.info(`Database path: ${config.database.path}`);
+  // Critical startup banner - visible in logs
+  console.log('\n'.repeat(3));
+  console.log('='.repeat(80));
+  console.log(`║ PLEXBRIDGE APPLICATION STARTUP - ${startupTime}`);
+  console.log(`║ Startup ID: ${startupId}`);
+  console.log(`║ Process PID: ${process.pid}`);
+  console.log(`║ Node Version: ${process.version}`);
+  console.log(`║ Platform: ${process.platform} ${process.arch}`);
+  console.log(`║ Memory: ${Math.round(process.memoryUsage().heapUsed / 1024 / 1024)}MB / ${Math.round(process.memoryUsage().heapTotal / 1024 / 1024)}MB`);
+  console.log('='.repeat(80));
+  console.log('\n');
+  
+  logger.info('='.repeat(80));
+  logger.info('🚀 PLEXBRIDGE APPLICATION STARTING');
+  logger.info(`Startup ID: ${startupId}`);
+  logger.info(`Process PID: ${process.pid}`);
+  logger.info(`Parent PID: ${process.ppid}`);
+  logger.info(`Node.js version: ${process.version}`);
+  logger.info(`Platform: ${process.platform} ${process.arch}`);
+  logger.info(`Working directory: ${process.cwd()}`);
+  logger.info(`Environment: ${process.env.NODE_ENV || 'development'}`);
+  logger.info(`Data directory: ${config.paths.data}`);
+  logger.info(`Database path: ${config.database.path}`);
+  logger.info(`Memory Usage: Heap ${Math.round(process.memoryUsage().heapUsed / 1024 / 1024)}MB / Total ${Math.round(process.memoryUsage().heapTotal / 1024 / 1024)}MB`);
+  logger.info('='.repeat(80));
     
     // Initialize database with retries
     let dbInitialized = false;
@@ -369,10 +449,12 @@ const initializeApp = async () => {
       const m3uImportRoutes = require('./routes/m3uImport');
       const plexSetupRoutes = require('./routes/plex-setup');
       const streamingRoutes = require('./routes/streaming');
+      const diagnosticsRoutes = require('./routes/diagnostics');
 
       // API Routes - MUST BE BEFORE STATIC FILES
       app.use('/', healthRoutes);  // Health check routes
       app.use('/', plexSetupRoutes);  // Plex setup guide
+      app.use('/api/diagnostics', diagnosticsRoutes);  // Diagnostics and crash tracking
       app.use('/api/streams/parse/m3u', m3uRoutes);
       app.use('/api/streams/import/m3u', m3uImportRoutes);
       app.use('/api/streaming', streamingRoutes);  // Enhanced streaming monitoring

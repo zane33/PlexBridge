@@ -46,6 +46,21 @@ class StreamSessionManager {
     } = sessionData;
 
     try {
+      // Check if there's already an active session for this client+stream
+      // This prevents duplicate sessions when Plex makes multiple requests
+      const existingSession = this.getActiveSessionByClientAndStream(clientIdentifier, streamId);
+      if (existingSession) {
+        logger.info('Session already exists for client+stream, updating last access', {
+          sessionId: existingSession.sessionId,
+          clientIdentifier,
+          streamId
+        });
+        
+        // Update last access time
+        existingSession.lastUpdate = Date.now();
+        return existingSession;
+      }
+      
       // Resolve client hostname asynchronously
       const hostname = await this.resolveHostname(clientIP);
       
@@ -248,6 +263,21 @@ class StreamSessionManager {
     }));
 
     return sessions;
+  }
+
+  /**
+   * Get active session by client identifier and stream ID
+   * This prevents duplicate sessions for the same client+stream combination
+   */
+  getActiveSessionByClientAndStream(clientIdentifier, streamId) {
+    for (const session of this.activeSessions.values()) {
+      if (session.clientIdentifier === clientIdentifier && 
+          session.streamId === streamId &&
+          session.status === 'active') {
+        return session;
+      }
+    }
+    return null;
   }
 
   /**
