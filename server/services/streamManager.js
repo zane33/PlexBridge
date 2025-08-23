@@ -1920,11 +1920,19 @@ class StreamManager {
         // Only rewrite if this is a master playlist (contains .m3u8 references)
         // Media playlists (containing .ts references) should be served as-is
         if (playlistContent.includes('.m3u8')) {
-          const baseUrl = `http://${req.get('host')}/stream/${channel.id}/`;
+          // Get advertised host from settings or environment
+          const settingsService = require('./settingsService');
+          const settings = await settingsService.getSettings();
+          const advertisedHost = settings?.plexlive?.network?.advertisedHost || 
+                                process.env.ADVERTISED_HOST || 
+                                config.plexlive?.network?.advertisedHost ||
+                                req.get('host');
+          const baseUrl = `http://${advertisedHost}/stream/${channel.id}/`;
           
           logger.info('Before URL rewriting', { 
             sampleContent: playlistContent.substring(0, 500),
-            baseUrl 
+            baseUrl,
+            advertisedHost 
           });
           
           // Rewrite relative URLs in HLS playlists
