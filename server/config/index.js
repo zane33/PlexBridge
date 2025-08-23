@@ -168,7 +168,7 @@ const defaultConfig = {
     device: {
       name: process.env.DEVICE_NAME || 'PlexTV',
       id: process.env.DEVICE_ID || 'PLEXTV001',
-      tunerCount: parseInt(process.env.TUNER_COUNT) || 4,
+      tunerCount: parseInt(process.env.TUNER_COUNT) || 5,
       firmware: process.env.FIRMWARE_VERSION || '1.0.0',
       baseUrl: process.env.BASE_URL || `http://${process.env.ADVERTISED_HOST || 'localhost'}:${process.env.HTTP_PORT || process.env.PORT || 3000}`
     },
@@ -253,6 +253,10 @@ function loadCustomConfig() {
       },
       device: {
         ...mergedConfig.plexlive.device,
+        name: process.env.DEVICE_NAME || mergedConfig.plexlive.device.name,
+        id: process.env.DEVICE_ID || mergedConfig.plexlive.device.id,
+        tunerCount: parseInt(process.env.TUNER_COUNT) || mergedConfig.plexlive.device.tunerCount,
+        firmware: process.env.FIRMWARE_VERSION || mergedConfig.plexlive.device.firmware,
         baseUrl: process.env.BASE_URL || `http://${process.env.ADVERTISED_HOST || 'localhost'}:${process.env.HTTP_PORT || process.env.PORT || mergedConfig.server.port}`
       }
     }

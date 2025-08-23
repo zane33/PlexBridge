@@ -94,7 +94,7 @@ const plexliveSettingsSchema = Joi.object({
   device: Joi.object({
     name: Joi.string().max(255).default('PlexTV'),
     id: Joi.string().alphanum().max(50).default('PLEXTV001'),
-    tunerCount: Joi.number().integer().min(1).max(32).default(4),
+    tunerCount: Joi.number().integer().min(1).max(32).default(5),
     firmware: Joi.string().pattern(/^\d+\.\d+\.\d+$/).default('1.0.0'),
     baseUrl: Joi.string().uri().default('http://localhost:3000')
   }).default(),

@@ -1050,7 +1050,7 @@ function Settings() {
                 <Grid item xs={12} md={6}>
                   <Typography gutterBottom>Virtual Tuner Count</Typography>
                   <Slider
-                    value={getSetting('plexlive.device.tunerCount', 4)}
+                    value={getSetting('plexlive.device.tunerCount', 5)}
                     onChange={(e, value) => updateSetting('plexlive.device.tunerCount', value)}
                     min={1}
                     max={32}
