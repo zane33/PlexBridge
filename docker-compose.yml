@@ -45,8 +45,8 @@ services:
       - ./config:/app/config:ro
       # Additional bind mount for easy access to data (optional)
       - ./data:/host-data
-      # Server code bind mount for development
-      - ./server:/app/server
+      # Server code bind mount for development (commented out for production)
+      # - ./server:/app/server
     environment:
       # Application environment
       - NODE_ENV=production
