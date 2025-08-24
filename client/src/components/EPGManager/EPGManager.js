@@ -129,6 +129,7 @@ function EPGManager() {
     url: '',
     refresh_interval: '4h',
     enabled: true,
+    category: '',
   });
   const { enqueueSnackbar } = useSnackbar();
   const theme = useTheme();
@@ -286,6 +287,7 @@ function EPGManager() {
       url: '',
       refresh_interval: '4h',
       enabled: true,
+      category: '',
     });
     setUrlTestResult(null);
     setDialogOpen(true);
@@ -298,6 +300,7 @@ function EPGManager() {
       url: source.url || '',
       refresh_interval: source.refresh_interval || '4h',
       enabled: source.enabled !== 0,
+      category: source.category || '',
     });
     setUrlTestResult(null);
     setDialogOpen(true);
@@ -574,6 +577,7 @@ function EPGManager() {
           <TableRow>
             <TableCell>Name</TableCell>
             <TableCell>URL</TableCell>
+            <TableCell>Category</TableCell>
             <TableCell>Interval</TableCell>
             <TableCell>Last Success</TableCell>
             <TableCell>Status</TableCell>
@@ -585,6 +589,7 @@ function EPGManager() {
             <TableRow key={index}>
               <TableCell><Skeleton width={120} /></TableCell>
               <TableCell><Skeleton width={200} /></TableCell>
+              <TableCell><Skeleton width={80} /></TableCell>
               <TableCell><Skeleton width={80} /></TableCell>
               <TableCell><Skeleton width={100} /></TableCell>
               <TableCell><Skeleton width={80} /></TableCell>
@@ -675,6 +680,7 @@ function EPGManager() {
                   <TableRow>
                     <TableCell sx={{ minWidth: 150 }}>Name</TableCell>
                     <TableCell sx={{ minWidth: 250, display: { xs: 'none', md: 'table-cell' } }}>URL</TableCell>
+                    <TableCell sx={{ minWidth: 100 }}>Category</TableCell>
                     <TableCell sx={{ minWidth: 100 }}>Interval</TableCell>
                     <TableCell sx={{ minWidth: 120, display: { xs: 'none', sm: 'table-cell' } }}>Last Success</TableCell>
                     <TableCell sx={{ minWidth: 100 }}>Status</TableCell>
@@ -705,6 +711,20 @@ function EPGManager() {
                         >
                           {source.url}
                         </Typography>
+                      </TableCell>
+                      <TableCell>
+                        {source.category ? (
+                          <Chip
+                            label={source.category}
+                            size="small"
+                            color="secondary"
+                            variant="outlined"
+                          />
+                        ) : (
+                          <Typography variant="body2" color="text.disabled">
+                            Auto
+                          </Typography>
+                        )}
                       </TableCell>
                       <TableCell>
                         <Chip
@@ -1249,6 +1269,29 @@ function EPGManager() {
                     </MenuItem>
                   ))}
                 </Select>
+              </FormControl>
+            </Grid>
+            
+            <Grid item xs={12}>
+              <FormControl fullWidth variant="outlined">
+                <InputLabel>Plex Category</InputLabel>
+                <Select
+                  value={formData.category}
+                  onChange={(e) => handleInputChange('category', e.target.value)}
+                  label="Plex Category"
+                  disabled={saving}
+                >
+                  <MenuItem value="">
+                    <em>Auto-detect from content</em>
+                  </MenuItem>
+                  <MenuItem value="News">News</MenuItem>
+                  <MenuItem value="Movie">Movie</MenuItem>
+                  <MenuItem value="Series">Series</MenuItem>
+                  <MenuItem value="Sports">Sports</MenuItem>
+                </Select>
+                <Typography variant="caption" color="text.secondary" sx={{ mt: 1, display: 'block' }}>
+                  Sets the default category for all programs from this EPG source. Plex uses this for filtering and organization.
+                </Typography>
               </FormControl>
             </Grid>
             

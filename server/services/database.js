@@ -267,6 +267,15 @@ class DatabaseService {
         logger.info('last_success column already exists in epg_sources table');
       }
 
+      // Add category column if it doesn't exist for Plex EPG categories
+      try {
+        this.db.prepare('ALTER TABLE epg_sources ADD COLUMN category TEXT').run();
+        logger.info('Added category column to epg_sources table');
+      } catch (error) {
+        // Column already exists, ignore error
+        logger.info('category column already exists in epg_sources table');
+      }
+
       // **CRITICAL FIX**: Drop and recreate epg_programs table without foreign key constraint
       // The foreign key constraint was preventing programs from being stored because
       // channel_id contains EPG channel IDs, not internal channel table IDs

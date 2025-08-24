@@ -27,6 +27,13 @@ async function handleXMLTVRequest(req, res) {
 
     let programs;
     let channels;
+    let epgSourceCategories = new Map();
+
+    // Fetch EPG source categories for category mapping
+    const epgSources = await database.all('SELECT id, category FROM epg_sources WHERE category IS NOT NULL');
+    epgSources.forEach(source => {
+      epgSourceCategories.set(source.id, source.category);
+    });
 
     if (channelId) {
       // Single channel
@@ -44,8 +51,8 @@ async function handleXMLTVRequest(req, res) {
       programs = generateSampleEPGData(channels);
     }
 
-    // Generate XMLTV format
-    const xmltv = generateXMLTV(channels, programs);
+    // Generate XMLTV format with categories
+    const xmltv = generateXMLTV(channels, programs, epgSourceCategories);
     
     res.set('Content-Type', 'application/xml');
     res.send(xmltv);
@@ -263,7 +270,7 @@ router.get('/grid', async (req, res) => {
 });
 
 // Helper function to generate XMLTV format
-function generateXMLTV(channels, programs) {
+function generateXMLTV(channels, programs, epgSourceCategories = new Map()) {
   const escapeXML = (str) => {
     if (!str) return '';
     return str.replace(/&/g, '&amp;')
@@ -349,8 +356,19 @@ function generateXMLTV(channels, programs) {
       xml += `    <desc lang="en">${escapeXML(program.description)}</desc>\n`;
     }
     
-    if (program.category) {
-      xml += `    <category lang="en">${escapeXML(program.category)}</category>\n`;
+    // Use category from EPG source if set, otherwise use program's category
+    let categoryToUse = program.category;
+    
+    // Try to find the source category if available
+    if (epgSourceCategories.size > 0 && program.source_id) {
+      const sourceCategory = epgSourceCategories.get(program.source_id);
+      if (sourceCategory) {
+        categoryToUse = sourceCategory;
+      }
+    }
+    
+    if (categoryToUse) {
+      xml += `    <category lang="en">${escapeXML(categoryToUse)}</category>\n`;
     }
     
     // Add sub-title (episode title) if available

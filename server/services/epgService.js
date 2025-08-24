@@ -824,10 +824,12 @@ class EPGService {
 
       // Query database
       const programs = await database.all(`
-        SELECT * FROM epg_programs 
-        WHERE channel_id = ? 
-        AND start_time <= ? 
-        AND end_time >= ?
+        SELECT p.*, ec.source_id 
+        FROM epg_programs p
+        LEFT JOIN epg_channels ec ON ec.epg_id = p.channel_id
+        WHERE p.channel_id = ? 
+        AND p.start_time <= ? 
+        AND p.end_time >= ?
         ORDER BY start_time
       `, [channelId, endTime, startTime]);
 
@@ -852,9 +854,10 @@ class EPGService {
       }
 
       const programs = await database.all(`
-        SELECT p.*, c.name as channel_name, c.number as channel_number
+        SELECT p.*, c.name as channel_name, c.number as channel_number, ec.source_id
         FROM epg_programs p
         JOIN channels c ON c.epg_id = p.channel_id
+        LEFT JOIN epg_channels ec ON ec.epg_id = p.channel_id
         WHERE p.start_time <= ? 
         AND p.end_time >= ?
         ORDER BY c.number, p.start_time
@@ -890,12 +893,12 @@ class EPGService {
 
   async addSource(sourceData) {
     try {
-      const { id, name, url, refresh_interval = '4h' } = sourceData;
+      const { id, name, url, refresh_interval = '4h', category = null } = sourceData;
       
       await database.run(`
-        INSERT INTO epg_sources (id, name, url, refresh_interval, enabled)
-        VALUES (?, ?, ?, ?, 1)
-      `, [id, name, url, refresh_interval]);
+        INSERT INTO epg_sources (id, name, url, refresh_interval, enabled, category)
+        VALUES (?, ?, ?, ?, 1, ?)
+      `, [id, name, url, refresh_interval, category]);
 
       // Only schedule refresh if service is initialized
       if (this.isInitialized) {

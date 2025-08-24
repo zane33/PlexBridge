@@ -24,9 +24,7 @@
 
 services:
   plextv:
-    build:
-      context: .
-      dockerfile: Dockerfile
+    image: plexbridge:latest
     container_name: plextv
     restart: unless-stopped
     logging:
@@ -52,12 +50,12 @@ services:
       - NODE_ENV=production
       
       # Network configuration - customize these for your deployment
-      - HOST_IP=192.168.4.82                # Bind address (0.0.0.0 for all interfaces)
+      - HOST_IP=0.0.0.0                    # Bind address (0.0.0.0 for all interfaces)
       - HTTP_PORT=3000                     # Main HTTP server port
       - STREAM_PORT=3000                   # Streaming port (usually same as HTTP_PORT)
       - DISCOVERY_PORT=1900                # SSDP discovery port
-      - ADVERTISED_HOST=192.168.4.82        # Hostname/IP that clients should connect to
-      - BASE_URL=http://192.168.4.82:3000   # Complete base URL for the service
+      - ADVERTISED_HOST=host.docker.internal  # Use Docker Desktop's special hostname
+      - BASE_URL=http://localhost:3000     # Complete base URL for the service
       # - IPV6_ENABLED=false               # Enable/disable IPv6 support
       
       # Storage paths
@@ -105,7 +103,3 @@ services:
 volumes:
   plextv_data:
     driver: local
-    driver_opts:
-      type: none
-      o: bind
-      device: ./data

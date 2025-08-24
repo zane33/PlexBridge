@@ -39,7 +39,8 @@ const epgSourceSchema = Joi.object({
   name: Joi.string().required().max(255),
   url: Joi.string().uri().required(),
   refresh_interval: Joi.string().pattern(/^\d+[hmd]$/).default('4h'),
-  enabled: Joi.boolean().default(true)
+  enabled: Joi.boolean().default(true),
+  category: Joi.string().valid('News', 'Movie', 'Series', 'Sports').allow(null, '').optional()
 });
 
 // Settings validation schemas
@@ -912,9 +913,9 @@ router.put('/epg/sources/:id', validate(epgSourceSchema), async (req, res) => {
     
     const result = await database.run(`
       UPDATE epg_sources 
-      SET name = ?, url = ?, refresh_interval = ?, enabled = ?
+      SET name = ?, url = ?, refresh_interval = ?, enabled = ?, category = ?
       WHERE id = ?
-    `, [data.name, data.url, data.refresh_interval, data.enabled ? 1 : 0, req.params.id]);
+    `, [data.name, data.url, data.refresh_interval, data.enabled ? 1 : 0, data.category || null, req.params.id]);
 
     if (result.changes === 0) {
       return res.status(404).json({ error: 'EPG source not found' });

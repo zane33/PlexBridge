@@ -95,6 +95,8 @@ PlexBridge/
 
 ### **Critical Streaming Architecture Knowledge (August 2025)**
 
+**IMPORTANT**: WHEN DEPLOYING TO DOCKER DESKTOP, MAKE SURE TO USE THE docker-local.yml FILE AS THE COMPOSE FILE!!
+
 **IMPORTANT**: For complete streaming implementation details, see [docs/Streaming-Architecture-Guide.md](docs/Streaming-Architecture-Guide.md)
 
 #### Key Streaming Insights:
