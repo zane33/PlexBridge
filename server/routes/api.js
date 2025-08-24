@@ -2485,16 +2485,20 @@ router.post('/backup/import', async (req, res) => {
           try {
             await database.run(`
               INSERT OR ${clearExisting ? 'REPLACE' : 'IGNORE'} INTO epg_sources 
-              (id, name, url, refresh_interval, enabled, created_at, updated_at) 
-              VALUES (?, ?, ?, ?, ?, ?, ?)
+              (id, name, url, refresh_interval, enabled, last_refresh, created_at, updated_at, last_error, last_success, category) 
+              VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             `, [
               epgSource.id,
               epgSource.name,
               epgSource.url,
               epgSource.refresh_interval,
               epgSource.enabled,
+              epgSource.last_refresh || null,
               epgSource.created_at || new Date().toISOString(),
-              new Date().toISOString()
+              new Date().toISOString(),
+              epgSource.last_error || null,
+              epgSource.last_success || null,
+              epgSource.category || null
             ]);
             results.imported.epgSources++;
           } catch (error) {
