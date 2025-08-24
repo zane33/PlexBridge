@@ -317,33 +317,54 @@ function Dashboard() {
       const sessions = sessionsResponse.data.streams || [];
       setStreamingSessions(sessions);
       
-      // Calculate capacity metrics from current settings and active sessions
-      const maxStreams = currentSettings?.plexlive?.streaming?.maxConcurrentStreams || 5;
-      const activeCount = sessions.length;
-      const utilizationPercentage = maxStreams > 0 ? Math.round((activeCount / maxStreams) * 100) : 0;
-      
-      const capacityData = {
-        totalActiveStreams: activeCount,
-        maxConcurrentStreams: maxStreams,
-        utilizationPercentage: utilizationPercentage,
-        availableStreams: Math.max(0, maxStreams - activeCount),
-        status: utilizationPercentage > 90 ? 'critical' : utilizationPercentage > 70 ? 'warning' : 'normal'
-      };
+      // Use capacity data from API response if available, otherwise calculate
+      let capacityData;
+      if (sessionsResponse.data.capacity) {
+        // Use the backend-calculated capacity data
+        capacityData = sessionsResponse.data.capacity;
+      } else {
+        // Fallback: Calculate capacity metrics from current settings and active sessions
+        const maxStreams = currentSettings?.plexlive?.streaming?.maxConcurrentStreams || 5;
+        const activeCount = sessions.length;
+        const utilizationPercentage = maxStreams > 0 ? Math.round((activeCount / maxStreams) * 100) : 0;
+        
+        capacityData = {
+          totalActiveStreams: activeCount,
+          maxConcurrentStreams: maxStreams,
+          utilizationPercentage: utilizationPercentage,
+          availableStreams: Math.max(0, maxStreams - activeCount),
+          status: utilizationPercentage > 90 ? 'critical' : utilizationPercentage > 70 ? 'warning' : 'normal'
+        };
+      }
       setStreamingCapacity(capacityData);
       
-      // Calculate bandwidth stats from active sessions
-      const totalBandwidth = sessions.reduce((sum, session) => sum + (session.currentBitrate || 0), 0);
-      const peakBandwidth = Math.max(...sessions.map(s => s.peakBitrate || 0), 0);
-      const avgBandwidth = sessions.length > 0 ? totalBandwidth / sessions.length : 0;
-      const totalDataTransferred = sessions.reduce((sum, session) => sum + (session.bytesTransferred || 0), 0);
-      
-      const bandwidthData = {
-        totalBandwidthUsage: totalBandwidth,
-        peakBandwidthUsage: peakBandwidth,
-        averageBandwidthPerSession: avgBandwidth,
-        totalDataTransferred: totalDataTransferred,
-        activeSessionCount: sessions.length
-      };
+      // Use bandwidth data from API response if available, otherwise calculate
+      let bandwidthData;
+      if (sessionsResponse.data.bandwidth) {
+        // Use the backend-calculated bandwidth data with proper mapping
+        const backendBandwidth = sessionsResponse.data.bandwidth;
+        bandwidthData = {
+          totalBandwidthUsage: backendBandwidth.totalCurrentBitrate || 0,
+          peakBandwidthUsage: backendBandwidth.peakSessionBitrate || 0,
+          averageBandwidthPerSession: backendBandwidth.averageSessionBitrate || 0,
+          totalDataTransferred: backendBandwidth.totalBytesTransferred || 0,
+          activeSessionCount: sessions.length
+        };
+      } else {
+        // Fallback: Calculate bandwidth stats from active sessions
+        const totalBandwidth = sessions.reduce((sum, session) => sum + (session.currentBitrate || 0), 0);
+        const peakBandwidth = Math.max(...sessions.map(s => s.peakBitrate || 0), 0);
+        const avgBandwidth = sessions.length > 0 ? totalBandwidth / sessions.length : 0;
+        const totalDataTransferred = sessions.reduce((sum, session) => sum + (session.bytesTransferred || 0), 0);
+        
+        bandwidthData = {
+          totalBandwidthUsage: totalBandwidth,
+          peakBandwidthUsage: peakBandwidth,
+          averageBandwidthPerSession: avgBandwidth,
+          totalDataTransferred: totalDataTransferred,
+          activeSessionCount: sessions.length
+        };
+      }
       setStreamingBandwidth(bandwidthData);
       
       // Calculate session statistics

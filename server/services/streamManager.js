@@ -1876,6 +1876,7 @@ class StreamManager {
   // Proxy web-compatible streams with channel context  
   async proxyWebCompatibleStreamWithChannel(streamUrl, streamType, channel, req, res) {
     const axios = require('axios');
+    const { PassThrough } = require('stream');
     
     try {
       logger.info('Starting web-compatible stream with channel context', {
@@ -1884,6 +1885,24 @@ class StreamManager {
         channelNumber: channel.number,
         streamType,
         clientIP: req.ip
+      });
+      
+      // Create session for bandwidth tracking
+      const streamSessionManager = require('./streamSessionManager');
+      const clientIdentifier = this.generateClientIdentifier(req);
+      const sessionId = `${channel.id}_${clientIdentifier}_${Date.now()}`;
+      
+      // Start session tracking for direct proxy streams
+      await streamSessionManager.startSession({
+        sessionId,
+        streamId: channel.id,
+        clientIP: req.ip,
+        userAgent: req.get('User-Agent'),
+        clientIdentifier,
+        channelName: channel.name,
+        channelNumber: channel.number,
+        streamUrl,
+        streamType: `direct-${streamType}`
       });
       
       // Set appropriate content type for stream type
@@ -1975,10 +1994,52 @@ class StreamManager {
           });
         }
         
+        // For HLS playlists, track the playlist size but don't use PassThrough for text content
+        const playlistSize = Buffer.from(playlistContent, 'utf8').length;
+        streamSessionManager.updateSessionMetrics(sessionId, {
+          bytesTransferred: playlistSize,
+          currentBitrate: 0 // Playlist has no significant bitrate
+        });
+        
         res.send(playlistContent);
+        
+        // End session after playlist is sent (HLS playlists are quick responses)
+        setTimeout(async () => {
+          await streamSessionManager.endSession(sessionId, 'normal');
+        }, 100);
       } else {
-        // For non-HLS, pipe directly  
-        response.data.pipe(res);
+        // For non-HLS, pipe with bandwidth tracking
+        const bandwidthTracker = new PassThrough();
+        let bytesTransferred = 0;
+        let lastUpdateTime = Date.now();
+        let lastBytes = 0;
+        
+        bandwidthTracker.on('data', (chunk) => {
+          bytesTransferred += chunk.length;
+          
+          const now = Date.now();
+          if (now - lastUpdateTime >= 2000) { // Update every 2 seconds
+            const timeDiff = now - lastUpdateTime;
+            const bytesDiff = bytesTransferred - lastBytes;
+            const currentBitrate = Math.round((bytesDiff * 8) / (timeDiff / 1000)); // bits per second
+            
+            // Update session metrics
+            streamSessionManager.updateSessionMetrics(sessionId, {
+              bytesTransferred,
+              currentBitrate
+            });
+            
+            lastUpdateTime = now;
+            lastBytes = bytesTransferred;
+          }
+        });
+        
+        bandwidthTracker.on('end', async () => {
+          await streamSessionManager.endSession(sessionId, 'normal');
+        });
+        
+        // Pipe: response -> bandwidth tracker -> client
+        response.data.pipe(bandwidthTracker).pipe(res);
         
         response.data.on('error', (error) => {
           logger.error('Stream pipe error with channel context', { 
@@ -1988,13 +2049,23 @@ class StreamManager {
             clientIP: req.ip,
             error: error.message 
           });
+          streamSessionManager.endSession(sessionId, 'error');
           if (!res.headersSent) {
             res.status(500).end();
           }
         });
+        
+        req.on('close', async () => {
+          await streamSessionManager.endSession(sessionId, 'disconnect');
+        });
       }
 
     } catch (error) {
+      // End session on error
+      if (sessionId) {
+        await streamSessionManager.endSession(sessionId, 'error');
+      }
+      
       // If direct streaming fails, fall back to transcoding
       logger.error('Direct streaming failed, falling back to transcoding', { 
         channelId: channel.id,
@@ -2052,8 +2123,40 @@ class StreamManager {
         }
       });
 
-      // Pipe the response directly
-      response.data.pipe(res);
+      // Pipe with bandwidth tracking for legacy compatibility
+      const { PassThrough } = require('stream');
+      const bandwidthTracker = new PassThrough();
+      let bytesTransferred = 0;
+      let lastUpdateTime = Date.now();
+      let lastBytes = 0;
+      
+      // Generate minimal session tracking for legacy method
+      const clientIdentifier = this.generateClientIdentifier(req);
+      const sessionId = `legacy_${Date.now()}_${clientIdentifier}`;
+      
+      bandwidthTracker.on('data', (chunk) => {
+        bytesTransferred += chunk.length;
+        
+        const now = Date.now();
+        if (now - lastUpdateTime >= 2000) { // Update every 2 seconds
+          const timeDiff = now - lastUpdateTime;
+          const bytesDiff = bytesTransferred - lastBytes;
+          const currentBitrate = Math.round((bytesDiff * 8) / (timeDiff / 1000));
+          
+          logger.debug('Legacy stream bandwidth', {
+            sessionId,
+            bytesTransferred,
+            currentBitrate,
+            url: streamUrl
+          });
+          
+          lastUpdateTime = now;
+          lastBytes = bytesTransferred;
+        }
+      });
+      
+      // Pipe: response -> bandwidth tracker -> client
+      response.data.pipe(bandwidthTracker).pipe(res);
       
       response.data.on('error', (error) => {
         logger.error('Stream pipe error', { url: streamUrl, error: error.message });

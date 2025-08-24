@@ -1521,10 +1521,10 @@ router.get('/server/info', async (req, res) => {
 router.get('/streams/active', async (req, res) => {
   try {
     // Get max concurrent streams from settings
-    let maxConcurrentStreams = 10;
+    let maxConcurrentStreams = 5;
     try {
-      maxConcurrentStreams = await settingsService.getSetting('plexlive.streaming.maxConcurrentStreams', 10);
-      maxConcurrentStreams = parseInt(maxConcurrentStreams) || 10;
+      maxConcurrentStreams = await settingsService.getSetting('plexlive.streaming.maxConcurrentStreams', 5);
+      maxConcurrentStreams = parseInt(maxConcurrentStreams) || 5;
     } catch (error) {
       logger.warn('Failed to get max concurrent streams for active streams endpoint:', error);
     }
