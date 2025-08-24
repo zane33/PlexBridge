@@ -218,6 +218,77 @@ router.get('/tuner.json', (req, res) => {
   }
 });
 
+// Channel lineup scan endpoint - Used by Plex for rescan functionality
+router.post('/lineup.post', async (req, res) => {
+  try {
+    logger.info('Plex channel rescan triggered', { userAgent: req.get('User-Agent') });
+    
+    // Plex uses this endpoint to trigger a channel scan
+    // We return the current lineup immediately since we're always "scanned"
+    const channels = await database.all(`
+      SELECT c.*, s.url, s.type 
+      FROM channels c 
+      LEFT JOIN streams s ON c.id = s.channel_id 
+      WHERE c.enabled = 1 AND s.enabled = 1
+      ORDER BY c.number
+    `);
+
+    // Get current settings to determine advertised host
+    const settingsService = require('../services/settingsService');
+    const config = require('../config');
+    const settings = await settingsService.getSettings();
+    
+    // Priority order: Environment variable > Settings > Config > Host header fallback
+    let baseHost = process.env.ADVERTISED_HOST ||
+                  settings?.plexlive?.network?.advertisedHost ||
+                  config.plexlive?.network?.advertisedHost ||
+                  config.network?.advertisedHost ||
+                  req.get('host') ||
+                  `localhost:${config.server?.port || process.env.HTTP_PORT || process.env.PORT || 3000}`;
+    
+    // Ensure we have port if not included
+    if (!baseHost.includes(':')) {
+      const streamingPort = settings?.plexlive?.network?.streamingPort || 
+                           config.plexlive?.network?.streamingPort || 
+                           config.server?.port || 
+                           process.env.HTTP_PORT || 
+                           process.env.PORT || 
+                           3000;
+      baseHost += `:${streamingPort}`;
+    }
+    
+    // Ensure we have http:// prefix
+    const baseURL = baseHost.startsWith('http') ? baseHost : `http://${baseHost}`;
+    
+    const lineup = channels.map(channel => ({
+      GuideNumber: channel.number.toString(),
+      GuideName: channel.name,
+      URL: `${baseURL}/stream/${channel.id}`,
+      HD: 1, // Assume HD for all channels
+      DRM: 0, // No DRM
+      Favorite: 0,
+      
+      // EPG Information for this channel
+      EPGAvailable: true,
+      EPGSource: `${baseURL}/epg/xmltv.xml`,
+      EPGURL: `${baseURL}/epg/xmltv.xml`,
+      GuideURL: `${baseURL}/epg/xmltv/${channel.id}`,
+      EPGChannelID: channel.epg_id || channel.id
+    }));
+
+    logger.info('Channel rescan completed', { 
+      channelCount: lineup.length,
+      userAgent: req.get('User-Agent')
+    });
+
+    // Return the lineup to Plex
+    res.json(lineup);
+  } catch (error) {
+    logger.error('Channel lineup scan error:', error);
+    res.status(500).json({ error: 'Channel scan failed' });
+  }
+});
+
 // Auto-discovery endpoint (alternative)
 router.get('/auto/:device', async (req, res) => {
   try {
