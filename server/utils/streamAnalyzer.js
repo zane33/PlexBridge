@@ -162,6 +162,8 @@ function analyzeStreamComplexity(m3u8Content, baseUrl = '') {
  * @returns {boolean} True if the URL pattern suggests complexity
  */
 function isComplexStreamUrl(streamUrl) {
+  const urlLower = streamUrl.toLowerCase();
+  
   const complexIndicators = [
     streamUrl.length > 300,
     streamUrl.includes('amagi.tv'),
@@ -170,6 +172,14 @@ function isComplexStreamUrl(streamUrl) {
     streamUrl.includes('seen-ad='),
     streamUrl.match(/[a-f0-9]{64,}/), // Long hex tokens
   ];
+  
+  // CRITICAL FIX: Direct .ts streams need transcoding for Plex compatibility
+  // MPEG Transport Streams (.ts) are not directly compatible with web browsers
+  // and need to be transcoded to MPEG-TS format for Plex
+  const isTSStream = urlLower.includes('.ts') || urlLower.includes('.mpegts') || urlLower.includes('.mts');
+  if (isTSStream && !urlLower.includes('.m3u8')) { // Exclude HLS playlists that reference .ts files
+    return true; // All direct .ts streams need transcoding
+  }
   
   // Special handling for known problematic domains that often have complex segments
   // even when the main URL appears simple

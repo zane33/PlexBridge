@@ -35,7 +35,12 @@ class StreamManager {
       }
       
       // CRITICAL FIX: Detect MPEG Transport Stream (.ts) files
-      if (urlLower.includes('.ts') || urlLower.includes('.mpegts') || urlLower.includes('.mts')) {
+      // These need transcoding for Plex compatibility
+      if (urlLower.includes('.ts') && !urlLower.includes('.m3u8')) {
+        return { type: 'ts', protocol: 'http' };
+      }
+      
+      if (urlLower.includes('.mpegts') || urlLower.includes('.mts')) {
         return { type: 'ts', protocol: 'http' };
       }
       
@@ -959,8 +964,22 @@ class StreamManager {
                    config.plexlive?.transcoding?.mpegts?.hlsProtocolArgs ||
                    '-allowed_extensions ALL -protocol_whitelist file,http,https,tcp,tls,pipe,crypto';
       
-      // For redirected streams, add additional HLS options for better compatibility
-      if (finalUrl !== url) {
+      // ENHANCED: Special handling for Amagi CDN streams (Sky News Now)
+      if (finalUrl.includes('amagi.tv') || finalUrl.includes('tsv2.amagi.tv')) {
+        // Amagi CDN requires special HLS handling for dynamic tokens
+        hlsArgs += ' -http_seekable 0 -multiple_requests 1 -http_persistent 0';
+        hlsArgs += ' -live_start_index -1 -hls_segment_start_number 0';  // Handle live HLS better
+        hlsArgs += ' -reconnect 1 -reconnect_streamed 1 -reconnect_delay_max 4';  // Better reconnection
+        hlsArgs += ' -rw_timeout 30000000';  // 30 second timeout for network operations
+        
+        logger.stream('Applied Amagi CDN optimizations', {
+          originalUrl: url,
+          finalUrl: finalUrl,
+          optimizations: 'dynamic_tokens,live_hls,extended_timeout'
+        });
+      }
+      // For other redirected streams, add standard HLS options
+      else if (finalUrl !== url) {
         hlsArgs += ' -http_seekable 0 -multiple_requests 1 -http_persistent 0';
         logger.stream('Added HLS compatibility options for redirected stream', {
           originalUrl: url,
@@ -1568,8 +1587,23 @@ class StreamManager {
                      config.plexlive?.transcoding?.mpegts?.hlsProtocolArgs ||
                      '-allowed_extensions ALL -protocol_whitelist file,http,https,tcp,tls,pipe,crypto';
         
-        // For redirected streams (like TVNZ), add additional HLS options for better compatibility
-        if (finalStreamUrl !== streamUrl) {
+        // ENHANCED: Special handling for Amagi CDN streams (Sky News Now)
+        if (finalStreamUrl.includes('amagi.tv') || finalStreamUrl.includes('tsv2.amagi.tv')) {
+          // Amagi CDN requires special HLS handling for dynamic tokens
+          hlsArgs += ' -http_seekable 0 -multiple_requests 1 -http_persistent 0';
+          hlsArgs += ' -live_start_index -1 -hls_segment_start_number 0';  // Handle live HLS better
+          hlsArgs += ' -reconnect 1 -reconnect_streamed 1 -reconnect_delay_max 4';  // Better reconnection
+          hlsArgs += ' -rw_timeout 30000000';  // 30 second timeout for network operations
+          
+          logger.info('Applied Amagi CDN optimizations for Plex stream', {
+            channelId: channel.id,
+            originalUrl: streamUrl,
+            finalUrl: finalStreamUrl,
+            optimizations: 'dynamic_tokens,live_hls,extended_timeout'
+          });
+        }
+        // For other redirected streams (like TVNZ), add standard HLS options
+        else if (finalStreamUrl !== streamUrl) {
           hlsArgs += ' -http_seekable 0 -multiple_requests 1 -http_persistent 0';
           
           logger.info('Added HLS compatibility options for redirected stream', {
