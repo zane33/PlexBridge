@@ -1808,14 +1808,8 @@ router.get('/server/info', async (req, res) => {
 // STREAM MANAGEMENT API
 router.get('/streams/active', async (req, res) => {
   try {
-    // Get max concurrent streams from settings
-    let maxConcurrentStreams = 10;
-    try {
-      maxConcurrentStreams = await settingsService.getSetting('plexlive.streaming.maxConcurrentStreams', 10);
-      maxConcurrentStreams = parseInt(maxConcurrentStreams) || 10;
-    } catch (error) {
-      logger.warn('Failed to get max concurrent streams for active streams endpoint:', error);
-    }
+    // Get max concurrent streams from settings using centralized method
+    const maxConcurrentStreams = await settingsService.getMaxConcurrentStreams();
     
     logger.info('Getting active streams with enhanced session data...');
     const activeStreams = await streamManager.getActiveStreams();
@@ -1920,15 +1914,8 @@ router.get('/metrics', async (req, res) => {
       }
     }
 
-    // Get real max concurrent streams from settings first
-    let maxConcurrentStreams = 10; // fallback default
-    try {
-      maxConcurrentStreams = await settingsService.getSetting('plexlive.streaming.maxConcurrentStreams', 10);
-      maxConcurrentStreams = parseInt(maxConcurrentStreams) || 10;
-    } catch (settingsError) {
-      logger.warn('Failed to get max concurrent streams from settings, using fallback:', settingsError);
-      maxConcurrentStreams = parseInt(process.env.MAX_CONCURRENT_STREAMS) || 10;
-    }
+    // Get real max concurrent streams from settings using centralized method
+    const maxConcurrentStreams = await settingsService.getMaxConcurrentStreams();
 
     // Get active streams safely
     let activeStreams = [];

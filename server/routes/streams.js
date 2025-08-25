@@ -283,10 +283,9 @@ router.get('/streams/convert/hls/:streamId', async (req, res) => {
 // Active streams endpoint - Enhanced to return Promise-based data from session manager
 router.get('/streams/active', async (req, res) => {
   try {
-    // Get max concurrent streams from settings
+    // Get max concurrent streams from settings using centralized method
     const settingsService = require('../services/settingsService');
-    const settings = await settingsService.getSettings();
-    const maxConcurrent = settings?.plexlive?.streaming?.maxConcurrentStreams || 10;
+    const maxConcurrent = await settingsService.getMaxConcurrentStreams();
     
     // Use streamSessionManager for more accurate session tracking
     const activeSessions = streamSessionManager.getActiveSessions();
