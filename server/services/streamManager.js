@@ -921,7 +921,7 @@ class StreamManager {
     let finalUrl = url;
     
     try {
-      // Check if URL redirects
+      // Check if URL redirects (common for broadcast streams)
       if (url.includes('mjh.nz') || url.includes('tvnz')) {
         const response = await axios.head(url, {
           maxRedirects: 5,
@@ -953,22 +953,35 @@ class StreamManager {
     // Get configurable FFmpeg command line with proper transcoding
     let ffmpegCommand;
     
-    // Use VLC-like FFmpeg args for Amagi streams to handle beacon/tracking segments
+    // Determine FFmpeg configuration based on stream provider
+    let streamProvider = 'generic';
+    let useSpecialConfig = false;
+    
     if (finalUrl.includes('amagi.tv') || finalUrl.includes('tsv2.amagi.tv')) {
-      // VLC-like approach: Skip TLS verification and handle errors gracefully
-      // This mimics how VLC handles problematic HLS streams with tracking URLs
-      ffmpegCommand = '-hide_banner -v info ' +  // Keep some logging to see what's working
-                     '-tls_verify 0 ' +  // Disable TLS certificate verification like VLC
+      streamProvider = 'amagi';
+      useSpecialConfig = true;
+      // Enhanced configuration for Amagi CDN streams with beacon/tracking segments
+      // Disable TLS verification and enable robust reconnection handling
+      ffmpegCommand = '-hide_banner -v info ' +
+                     '-tls_verify 0 ' +  // Skip certificate verification for tracking URLs
                      '-reconnect 1 -reconnect_streamed 1 -reconnect_on_network_error 1 ' +
                      '-reconnect_delay_max 5 ' +
                      '-i [URL] ' +
                      '-c:v copy -c:a copy ' +
                      '-f mpegts ' +
                      'pipe:1';
+      logger.info(`Stream session using enhanced ${streamProvider} configuration`, {
+        provider: streamProvider,
+        features: ['tls_bypass', 'reconnect_enabled', 'beacon_tolerant']
+      });
     } else {
       ffmpegCommand = settings?.plexlive?.transcoding?.mpegts?.ffmpegArgs || 
                        config.plexlive?.transcoding?.mpegts?.ffmpegArgs ||
                        '-hide_banner -loglevel error -reconnect 1 -reconnect_at_eof 1 -reconnect_streamed 1 -reconnect_delay_max 2 -i [URL] -c:v copy -c:a copy -bsf:v dump_extra -f mpegts -mpegts_copyts 1 -avoid_negative_ts make_zero -fflags +genpts+igndts+discardcorrupt -copyts -muxdelay 0 -muxpreload 0 -flush_packets 1 -max_delay 0 -max_muxing_queue_size 9999 pipe:1';
+      logger.info(`Stream session using standard configuration`, {
+        provider: streamProvider,
+        features: ['standard_hls', 'error_correction', 'timestamp_handling']
+      });
     }
     
     // Replace [URL] placeholder with actual stream URL
@@ -1548,7 +1561,7 @@ class StreamManager {
         const axios = require('axios');
         logger.info('Resolving stream redirects', { channelId: channel.id, streamUrl });
         
-        // For TVNZ and mjh.nz streams, follow redirects properly
+        // For broadcast streams that use redirects, follow them properly
         if (streamUrl.includes('mjh.nz') || streamUrl.includes('tvnz')) {
           // Use a HEAD request without following redirects to get the Location header
           const response = await axios.head(streamUrl, {
@@ -1567,7 +1580,7 @@ class StreamManager {
           if (response.status === 302 && response.headers.location) {
             finalStreamUrl = response.headers.location;
             
-            logger.info('TVNZ/mjh.nz redirect resolved', {
+            logger.info('Broadcast stream redirect resolved', {
               channelId: channel.id,
               originalUrl: streamUrl,
               finalUrl: finalStreamUrl,
@@ -1575,7 +1588,7 @@ class StreamManager {
               redirected: true
             });
           } else {
-            logger.warn('TVNZ/mjh.nz redirect not found', {
+            logger.warn('Broadcast stream redirect not found', {
               channelId: channel.id,
               status: response.status,
               headers: response.headers
@@ -1629,22 +1642,35 @@ class StreamManager {
       // Get configurable FFmpeg command line
       let ffmpegCommand;
       
-      // Use VLC-like FFmpeg args for Amagi streams to handle beacon/tracking segments
+      // Determine FFmpeg configuration based on stream provider  
+      let streamProvider = 'generic';
+      let useSpecialConfig = false;
+      
       if (finalStreamUrl.includes('amagi.tv') || finalStreamUrl.includes('tsv2.amagi.tv')) {
-        // VLC-like approach: Skip TLS verification and handle errors gracefully
-        // This mimics how VLC handles problematic HLS streams with tracking URLs
-        ffmpegCommand = '-hide_banner -v info ' +  // Keep some logging to see what's working
-                       '-tls_verify 0 ' +  // Disable TLS certificate verification like VLC
+        streamProvider = 'amagi';
+        useSpecialConfig = true;
+        // Enhanced configuration for Amagi CDN streams with beacon/tracking segments
+        // Disable TLS verification and enable robust reconnection handling
+        ffmpegCommand = '-hide_banner -v info ' +
+                       '-tls_verify 0 ' +  // Skip certificate verification for tracking URLs
                        '-reconnect 1 -reconnect_streamed 1 -reconnect_on_network_error 1 ' +
                        '-reconnect_delay_max 5 ' +
                        '-i [URL] ' +
                        '-c:v copy -c:a copy ' +
                        '-f mpegts ' +
                        'pipe:1';
+        logger.info(`Plex stream using enhanced ${streamProvider} configuration`, {
+          provider: streamProvider,
+          features: ['tls_bypass', 'reconnect_enabled', 'beacon_tolerant']
+        });
       } else {
         ffmpegCommand = settings?.plexlive?.transcoding?.mpegts?.ffmpegArgs || 
                          config.plexlive?.transcoding?.mpegts?.ffmpegArgs ||
                          '-hide_banner -loglevel error -reconnect 1 -reconnect_at_eof 1 -reconnect_streamed 1 -reconnect_delay_max 2 -i [URL] -c:v copy -c:a copy -bsf:v dump_extra -f mpegts -mpegts_copyts 1 -avoid_negative_ts make_zero -fflags +genpts+igndts+discardcorrupt -copyts -muxdelay 0 -muxpreload 0 -flush_packets 1 -max_delay 0 -max_muxing_queue_size 9999 pipe:1';
+        logger.info(`Plex stream using standard configuration`, {
+          provider: streamProvider,
+          features: ['standard_hls', 'error_correction', 'timestamp_handling']
+        });
       }
       
       // Replace [URL] placeholder with actual stream URL
@@ -1709,7 +1735,7 @@ class StreamManager {
             });
           }
         }
-        // For other redirected streams (like TVNZ), add standard HLS options
+        // For other redirected broadcast streams, add standard HLS options
         else if (finalStreamUrl !== streamUrl) {
           hlsArgs += ' -http_seekable 0 -multiple_requests 1 -http_persistent 0';
           
@@ -1727,32 +1753,52 @@ class StreamManager {
       // Parse command line into arguments array
       const args = ffmpegCommand.split(' ').filter(arg => arg.trim() !== '');
 
-      // Log the exact command being executed
-      logger.info('Executing FFmpeg command', {
+      // Enhanced logging for stream session initialization
+      const streamInfo = {
         channelId: channel.id,
-        command: `${config.streams.ffmpegPath} ${args.join(' ')}`,
-        finalStreamUrl,
-        clientIP: req.ip
-      });
+        channelName: channel.name,
+        streamUrl: finalStreamUrl,
+        clientIP: req.ip,
+        userAgent: req.get('user-agent') || 'unknown',
+        streamProvider: streamProvider,
+        useSpecialConfig: useSpecialConfig,
+        sessionId: sessionId
+      };
 
-      console.log('DEBUG: Starting FFmpeg with args', { 
-        ffmpegPath: config.streams.ffmpegPath, 
-        args: args.slice(0, 5) + '...' // Show first few args
+      logger.info('Stream session starting', streamInfo);
+
+      // Log the exact FFmpeg command being executed (truncated for readability)
+      const commandPreview = args.length > 10 ? args.slice(0, 10).join(' ') + '...' : args.join(' ');
+      logger.info('FFmpeg command execution', {
+        channelId: channel.id,
+        channelName: channel.name,
+        ffmpegPath: config.streams.ffmpegPath,
+        commandPreview: commandPreview,
+        totalArgs: args.length,
+        streamProvider: streamProvider,
+        sessionId: sessionId
       });
 
       const ffmpegProcess = spawn(config.streams.ffmpegPath, args);
       
       if (!ffmpegProcess.pid) {
-        console.log('DEBUG: FFmpeg failed to start');
+        logger.error('FFmpeg process failed to start', {
+          channelId: channel.id,
+          channelName: channel.name,
+          streamUrl: finalStreamUrl,
+          error: 'Process spawn failed',
+          sessionId: sessionId
+        });
         throw new Error('Failed to start FFmpeg MPEG-TS transcoding process');
       }
 
-      console.log('DEBUG: FFmpeg started successfully', { pid: ffmpegProcess.pid });
-
-      logger.info('FFmpeg MPEG-TS process started', { 
+      logger.info('FFmpeg process started successfully', { 
         channelId: channel.id,
+        channelName: channel.name,
         pid: ffmpegProcess.pid,
-        clientIP: req.ip
+        clientIP: req.ip,
+        streamProvider: streamProvider,
+        sessionId: sessionId
       });
 
       // ===== ADD SESSION TRACKING FOR PLEX STREAMS =====
@@ -1863,7 +1909,7 @@ class StreamManager {
         currentBitrate: 0
       });
 
-      // Handle process events with session cleanup
+      // Handle process events with enhanced error logging
       ffmpegProcess.on('error', (error) => {
         const stats = this.streamStats.get(sessionId);
         if (stats) {
@@ -1875,25 +1921,51 @@ class StreamManager {
           });
         }
         
-        logger.error('FFmpeg MPEG-TS process error', { 
+        logger.error('FFmpeg process encountered error', { 
           channelId: channel.id,
-          sessionId,
-          error: error.message 
+          channelName: channel.name,
+          sessionId: sessionId,
+          streamProvider: streamProvider,
+          error: error.message,
+          errorCode: error.code,
+          errorErrno: error.errno,
+          streamUrl: finalStreamUrl,
+          clientIP: req.ip,
+          uptime: stats ? Date.now() - stats.startTime : 0,
+          bytesTransferred: stats ? stats.bytesTransferred : 0
         });
         
-        // Clean up session
-        this.cleanupStream(sessionId, 'ffmpeg_error');
+        // Clean up session with detailed reason
+        this.cleanupStream(sessionId, `ffmpeg_error: ${error.message}`);
         
         if (!res.headersSent) {
-          res.status(500).send('Transcoding failed');
+          res.status(500).json({
+            error: 'Stream transcoding failed',
+            details: error.message,
+            sessionId: sessionId
+          });
         }
       });
 
-      ffmpegProcess.on('close', (code) => {
-        logger.info('FFmpeg MPEG-TS process closed', { 
+      ffmpegProcess.on('close', (code, signal) => {
+        const stats = this.streamStats.get(sessionId);
+        const endTime = Date.now();
+        const duration = stats ? endTime - stats.startTime : 0;
+        
+        logger.info('FFmpeg process terminated', { 
           channelId: channel.id,
-          sessionId,
-          exitCode: code 
+          channelName: channel.name,
+          sessionId: sessionId,
+          streamProvider: streamProvider,
+          exitCode: code,
+          signal: signal,
+          duration: duration,
+          durationFormatted: duration > 0 ? `${Math.round(duration / 1000)}s` : '0s',
+          bytesTransferred: stats ? stats.bytesTransferred : 0,
+          avgBitrate: stats ? stats.avgBitrate : 0,
+          errorCount: stats ? stats.errors : 0,
+          clientIP: req.ip,
+          streamUrl: finalStreamUrl 
         });
         
         // Clean up session

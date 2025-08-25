@@ -24,6 +24,7 @@
 
 services:
   plextv:
+    build: .
     image: plexbridge:latest
     container_name: plextv
     restart: unless-stopped
