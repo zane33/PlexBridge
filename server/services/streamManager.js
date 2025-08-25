@@ -1753,8 +1753,13 @@ class StreamManager {
       // Parse command line into arguments array
       const args = ffmpegCommand.split(' ').filter(arg => arg.trim() !== '');
 
+      // Generate session ID early for logging
+      const streamSessionManager = require('./streamSessionManager');
+      const clientIdentifier = this.generateClientIdentifier(req);
+      const sessionId = `plex_${channel.id}_${clientIdentifier}_${Date.now()}`;
+
       // Enhanced logging for stream session initialization
-      const streamInfo = {
+      const streamStartInfo = {
         channelId: channel.id,
         channelName: channel.name,
         streamUrl: finalStreamUrl,
@@ -1765,7 +1770,7 @@ class StreamManager {
         sessionId: sessionId
       };
 
-      logger.info('Stream session starting', streamInfo);
+      logger.info('Stream session starting', streamStartInfo);
 
       // Log the exact FFmpeg command being executed (truncated for readability)
       const commandPreview = args.length > 10 ? args.slice(0, 10).join(' ') + '...' : args.join(' ');
@@ -1802,9 +1807,6 @@ class StreamManager {
       });
 
       // ===== ADD SESSION TRACKING FOR PLEX STREAMS =====
-      const streamSessionManager = require('./streamSessionManager');
-      const clientIdentifier = this.generateClientIdentifier(req);
-      
       // Check for existing session to prevent duplicates
       const existingSession = streamSessionManager.getActiveSessionByClientAndStream(clientIdentifier, channel.id);
       
@@ -1816,7 +1818,6 @@ class StreamManager {
         clientIP: req.ip
       });
       
-      let sessionId;
       if (existingSession) {
         logger.info('Found existing Plex session - ending it to prevent duplicates', {
           existingSessionId: existingSession.sessionId,
@@ -1827,8 +1828,6 @@ class StreamManager {
         // End the existing session and create a new one (Plex likely reconnected)
         await streamSessionManager.endSession(existingSession.sessionId, 'plex_reconnect');
       }
-      
-      sessionId = `plex_${channel.id}_${clientIdentifier}_${Date.now()}`;
       
       // Create session info for tracking
       const streamInfo = {
