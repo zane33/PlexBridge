@@ -955,9 +955,9 @@ class StreamManager {
     
     // Use VLC-like FFmpeg args for Amagi streams to handle beacon/tracking segments
     if (finalUrl.includes('amagi.tv') || finalUrl.includes('tsv2.amagi.tv')) {
-      // VLC-like approach: Skip TLS verification and ignore beacon segments
+      // VLC-like approach: Skip TLS verification and handle errors gracefully
       // This mimics how VLC handles problematic HLS streams with tracking URLs
-      ffmpegCommand = '-hide_banner -loglevel error ' +
+      ffmpegCommand = '-hide_banner -v info ' +  // Keep some logging to see what's working
                      '-tls_verify 0 ' +  // Disable TLS certificate verification like VLC
                      '-reconnect 1 -reconnect_streamed 1 -reconnect_on_network_error 1 ' +
                      '-reconnect_delay_max 5 ' +
@@ -1631,9 +1631,9 @@ class StreamManager {
       
       // Use VLC-like FFmpeg args for Amagi streams to handle beacon/tracking segments
       if (finalStreamUrl.includes('amagi.tv') || finalStreamUrl.includes('tsv2.amagi.tv')) {
-        // VLC-like approach: Skip TLS verification and ignore beacon segments
+        // VLC-like approach: Skip TLS verification and handle errors gracefully
         // This mimics how VLC handles problematic HLS streams with tracking URLs
-        ffmpegCommand = '-hide_banner -loglevel error ' +
+        ffmpegCommand = '-hide_banner -v info ' +  // Keep some logging to see what's working
                        '-tls_verify 0 ' +  // Disable TLS certificate verification like VLC
                        '-reconnect 1 -reconnect_streamed 1 -reconnect_on_network_error 1 ' +
                        '-reconnect_delay_max 5 ' +
