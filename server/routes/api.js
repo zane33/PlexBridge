@@ -35,13 +35,34 @@ const streamSchema = Joi.object({
   enabled: Joi.boolean().default(true)
 });
 
+// Define genre options for each primary category
+const SECONDARY_GENRES = {
+  Series: ['Drama', 'Comedy', 'Crime', 'Reality', 'Documentary', 'Action', 'Adventure', 'Animation', 'Family', 'Fantasy', 'Game show', 'Horror', 'Mystery', 'Romance', 'Science Fiction', 'Sitcom', 'Talk show', 'Thriller'],
+  Movie: ['Action', 'Adventure', 'Animation', 'Comedy', 'Crime', 'Documentary', 'Drama', 'Family', 'Fantasy', 'Horror', 'Musical', 'Mystery', 'Romance', 'Science Fiction', 'Thriller', 'War', 'Western'],
+  News: ['News bulletin', 'Current affairs', 'Weather', 'News magazine', 'Sports news', 'Business news'],
+  Sports: ['Football', 'Basketball', 'Tennis', 'Baseball', 'Soccer', 'Hockey', 'Golf', 'Sports talk', 'Sports magazine', 'Sports event', 'Racing', 'Wrestling']
+};
+
 const epgSourceSchema = Joi.object({
   name: Joi.string().required().max(255),
   url: Joi.string().uri().required(),
   refresh_interval: Joi.string().pattern(/^\d+[hmd]$/).default('4h'),
   enabled: Joi.boolean().default(true),
-  category: Joi.string().valid('News', 'Movie', 'Series', 'Sports').allow(null, '').optional()
-});
+  category: Joi.string().valid('News', 'Movie', 'Series', 'Sports').allow(null, '').optional(),
+  secondary_genres: Joi.array().items(Joi.string().max(100)).max(10).optional().allow(null, '')
+}).custom((value, helpers) => {
+  // Validate secondary genres match the primary category
+  if (value.secondary_genres && Array.isArray(value.secondary_genres) && value.secondary_genres.length > 0 && value.category) {
+    const validGenres = SECONDARY_GENRES[value.category] || [];
+    const invalidGenres = value.secondary_genres.filter(genre => !validGenres.includes(genre));
+    if (invalidGenres.length > 0) {
+      return helpers.error('custom', { 
+        message: `Invalid secondary genres for category "${value.category}": ${invalidGenres.join(', ')}. Valid genres are: ${validGenres.join(', ')}` 
+      });
+    }
+  }
+  return value;
+}, 'secondary_genres validation');
 
 // Settings validation schemas
 const plexliveSettingsSchema = Joi.object({
@@ -790,6 +811,19 @@ router.post('/epg/initialize', async (req, res) => {
   }
 });
 
+// Get secondary genre options
+router.get('/epg/secondary-genres', (req, res) => {
+  try {
+    res.status(200).json({
+      genres: SECONDARY_GENRES,
+      categories: Object.keys(SECONDARY_GENRES)
+    });
+  } catch (error) {
+    logger.error('Secondary genres error:', error);
+    res.status(500).json({ error: 'Failed to fetch secondary genres' });
+  }
+});
+
 router.get('/epg/sources', async (req, res) => {
   try {
     // Always return JSON content-type header
@@ -911,11 +945,14 @@ router.put('/epg/sources/:id', validate(epgSourceSchema), async (req, res) => {
       return res.status(400).json({ error: errorMessage });
     }
     
+    // Convert secondary_genres array to JSON string for storage
+    const secondaryGenresJson = data.secondary_genres && data.secondary_genres.length > 0 ? JSON.stringify(data.secondary_genres) : null;
+    
     const result = await database.run(`
       UPDATE epg_sources 
-      SET name = ?, url = ?, refresh_interval = ?, enabled = ?, category = ?
+      SET name = ?, url = ?, refresh_interval = ?, enabled = ?, category = ?, secondary_genres = ?
       WHERE id = ?
-    `, [data.name, data.url, data.refresh_interval, data.enabled ? 1 : 0, data.category || null, req.params.id]);
+    `, [data.name, data.url, data.refresh_interval, data.enabled ? 1 : 0, data.category || null, secondaryGenresJson, req.params.id]);
 
     if (result.changes === 0) {
       return res.status(404).json({ error: 'EPG source not found' });

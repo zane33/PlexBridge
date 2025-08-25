@@ -3,6 +3,7 @@ const router = express.Router();
 const epgService = require('../services/epgService');
 const database = require('../services/database');
 const logger = require('../utils/logger');
+const { generateXMLTVCategories } = require('../utils/plexCategories');
 
 // XMLTV format EPG endpoint - both with and without .xml extension for Plex compatibility
 // IMPORTANT: The .xml route MUST come before the parameterized route to avoid conflicts
@@ -29,10 +30,23 @@ async function handleXMLTVRequest(req, res) {
     let channels;
     let epgSourceCategories = new Map();
 
-    // Fetch EPG source categories for category mapping
-    const epgSources = await database.all('SELECT id, category FROM epg_sources WHERE category IS NOT NULL');
+    // Fetch EPG source categories and secondary genres for category mapping
+    const epgSources = await database.all('SELECT id, category, secondary_genres FROM epg_sources');
+    const epgSourceSecondaryGenres = new Map();
     epgSources.forEach(source => {
-      epgSourceCategories.set(source.id, source.category);
+      if (source.category) {
+        epgSourceCategories.set(source.id, source.category);
+      }
+      if (source.secondary_genres) {
+        try {
+          const genres = JSON.parse(source.secondary_genres);
+          if (Array.isArray(genres) && genres.length > 0) {
+            epgSourceSecondaryGenres.set(source.id, genres);
+          }
+        } catch (error) {
+          logger.warn(`Failed to parse secondary genres for source ${source.id}:`, error);
+        }
+      }
     });
 
     if (channelId) {
@@ -51,8 +65,8 @@ async function handleXMLTVRequest(req, res) {
       programs = generateSampleEPGData(channels);
     }
 
-    // Generate XMLTV format with categories
-    const xmltv = generateXMLTV(channels, programs, epgSourceCategories);
+    // Generate XMLTV format with categories and secondary genres
+    const xmltv = generateXMLTV(channels, programs, epgSourceCategories, epgSourceSecondaryGenres);
     
     res.set('Content-Type', 'application/xml');
     res.send(xmltv);
@@ -270,7 +284,26 @@ router.get('/grid', async (req, res) => {
 });
 
 // Helper function to generate XMLTV format
-function generateXMLTV(channels, programs, epgSourceCategories = new Map()) {
+function generateXMLTV(channels, programs, epgSourceCategories = new Map(), epgSourceSecondaryGenres = new Map()) {
+  // Create channel to EPG source mapping for category lookup
+  const channelToEPGSource = new Map();
+  
+  // For now, we need to determine which EPG source provides data for each channel
+  // This is a simplified approach - in a full implementation, this mapping should be stored in DB
+  channels.forEach(channel => {
+    // Try to match channel to EPG source based on EPG data origin
+    // For TVNZ channels (epg_id starts with numbers or mjh-), use Freeview source
+    if (channel.epg_id && (channel.epg_id.match(/^\d/) || channel.epg_id.startsWith('mjh-'))) {
+      // Find the Freeview EPG source ID
+      for (const [sourceId, category] of epgSourceCategories.entries()) {
+        // This is a temporary solution - ideally this mapping should be in the database
+        if (category) { // If source has a category set, it's likely the one being used
+          channelToEPGSource.set(channel.epg_id, sourceId);
+          break;
+        }
+      }
+    }
+  });
   const escapeXML = (str) => {
     if (!str) return '';
     return str.replace(/&/g, '&amp;')
@@ -358,17 +391,34 @@ function generateXMLTV(channels, programs, epgSourceCategories = new Map()) {
     
     // Use category from EPG source if set, otherwise use program's category
     let categoryToUse = program.category;
+    let secondaryGenresToUse = null;
     
-    // Try to find the source category if available
-    if (epgSourceCategories.size > 0 && program.source_id) {
-      const sourceCategory = epgSourceCategories.get(program.source_id);
+    // Try to find the source category and secondary genres if available
+    // Map from program.channel_id to EPG source
+    // program.channel_id corresponds to channel.epg_id, so use that for mapping
+    const epgSourceId = channelToEPGSource.get(program.channel_id);
+    if (epgSourceId) {
+      const sourceCategory = epgSourceCategories.get(epgSourceId);
       if (sourceCategory) {
         categoryToUse = sourceCategory;
       }
+      
+      const sourceSecondaryGenres = epgSourceSecondaryGenres.get(epgSourceId);
+      if (sourceSecondaryGenres) {
+        secondaryGenresToUse = sourceSecondaryGenres;
+      }
     }
     
+    // Generate multiple Plex-compatible category tags with custom secondary genres
     if (categoryToUse) {
-      xml += `    <category lang="en">${escapeXML(categoryToUse)}</category>\n`;
+      const categoryElements = generateXMLTVCategories(
+        categoryToUse, 
+        program.title || '', 
+        program.description || '',
+        'en',
+        secondaryGenresToUse
+      );
+      xml += categoryElements + '\n';
     }
     
     // Add sub-title (episode title) if available

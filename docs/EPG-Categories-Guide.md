@@ -2,7 +2,13 @@
 
 ## Overview
 
-PlexBridge now supports EPG (Electronic Program Guide) categories that are fully compatible with Plex Media Server's Live TV & DVR functionality. This feature allows you to categorize your IPTV content according to Plex's supported categories, enabling better organization, filtering, and user experience in Plex's Live TV interface.
+PlexBridge now supports **Enhanced EPG Categories** with full Plex Media Server compatibility. This advanced system ensures your IPTV recordings are properly classified and routed to the correct Plex libraries (TV Shows vs Movies), eliminating the issue where all content defaults to the Movies collection.
+
+### 🎯 **Key Features**
+- **Multi-Genre Classification**: Automatically adds multiple category tags for precise Plex recognition
+- **Intelligent Content Detection**: Analyzes program titles and descriptions for optimal genre assignment
+- **Plex Library Routing**: Ensures recordings go to correct libraries (TV Shows, Movies, News, Sports)
+- **Enhanced User Interface**: Clear category descriptions with helpful tooltips
 
 ## Table of Contents
 
@@ -14,44 +20,90 @@ PlexBridge now supports EPG (Electronic Program Guide) categories that are fully
 6. [Best Practices](#best-practices)
 7. [Troubleshooting](#troubleshooting)
 
-## Plex-Supported Categories
+## Enhanced Plex-Compatible Categories
 
-Plex recognizes four primary content categories for Live TV:
+PlexBridge now supports **intelligent multi-genre classification** that maps simple category selections to comprehensive Plex-compatible tags:
 
-- **News** - News channels and current affairs programming
-- **Movie** - Movie channels and film-focused content
-- **Series** - TV series, shows, and episodic content
-- **Sports** - Sports channels and athletic events
+### 📺 **Series/TV Shows**
+- **User Selection**: "TV Series (Shows, episodic content)"
+- **Generated Tags**: `<category>Series</category>` + intelligent subgenre detection
+- **Subgenres**: Drama, Comedy, Crime, Reality, Documentary, Animation, Children's, etc.
+- **Result**: Recordings properly route to **TV Shows** library
 
-These categories are used by Plex to:
-- Filter content in the Program Guide
-- Organize recordings
-- Provide appropriate metadata handling
-- Apply content-specific features (e.g., sports scores)
+### 🎬 **Movies**
+- **User Selection**: "Movies (Films, documentaries)"
+- **Generated Tags**: `<category>Movie</category>` + intelligent genre detection
+- **Subgenres**: Action, Drama, Comedy, Horror, Thriller, Documentary, etc.
+- **Result**: Recordings properly route to **Movies** library
+
+### 📰 **News**
+- **User Selection**: "News (News bulletins, current affairs)"
+- **Generated Tags**: `<category>News</category>` + `<category>News bulletin</category>`
+- **Result**: Recordings route to **News** section
+
+### ⚽ **Sports**
+- **User Selection**: "Sports (Live events, sports talk)"
+- **Generated Tags**: `<category>Sports</category>` + event type detection
+- **Subgenres**: Sports event, Sports talk, Football, Basketball, etc.
+- **Result**: Recordings route to **Sports** section
+
+### 🔄 **Auto-detect**
+- **User Selection**: "Auto-detect (Use original EPG categories)"
+- **Behavior**: Preserves original XMLTV categories from EPG source
+- **Result**: Uses source-provided categorization
 
 ## How It Works
 
-### Category Assignment Flow
+### Enhanced Category Assignment Flow
 
 ```
-EPG Source → Category Setting → Program Data → XMLTV Export → Plex Import
-     ↓             ↓                 ↓              ↓              ↓
-  [URL/File]   [News/Movie/     [Inherits      [<category>]   [Filtered
-               Series/Sports]     Category]      XML Tag]       Views]
+EPG Source → Category Selection → Smart Analysis → Multi-Tag Generation → Plex Import
+     ↓             ↓                    ↓                 ↓                  ↓
+  [XMLTV]    [Movie/Series/      [Title/Desc     [<category>Movie</category>  [TV Shows
+   Source]    News/Sports/        Analysis]       <category>Drama</category>    Library]
+              Auto-detect]                        <category>Crime</category>]
 ```
 
-### Category Hierarchy
+### 🧠 **Intelligent Detection System**
 
-1. **Source Level**: Categories are set at the EPG source level
-2. **Program Level**: All programs from a source inherit its category
-3. **Channel Mapping**: Categories apply to all channels using that EPG source
-4. **Plex Display**: Categories appear in Plex's Live TV guide filters
+PlexBridge analyzes program metadata to determine optimal subgenres:
+
+1. **Title Analysis**: Recognizes patterns like "CSI:", "The Tonight Show", "NBA Finals"
+2. **Description Parsing**: Extracts genre hints from program descriptions
+3. **Keyword Matching**: Identifies content type from common terms
+4. **Context Awareness**: Considers source category as primary classification
+
+### 🎯 **Multi-Tag Strategy**
+
+Each program receives multiple category tags for maximum Plex compatibility:
+- **Primary Category**: Content type (Movie/Series/News/Sports)
+- **Genre Tags**: Specific subgenres for better organization
+- **Content Hints**: Additional classification metadata
 
 ## Implementation Details
 
+### 🔧 **System Architecture**
+
+The enhanced category system uses a modular approach:
+
+1. **Plex Categories Utility** (`/server/utils/plexCategories.js`)
+   - Smart genre detection algorithms
+   - Plex-compatible category mapping
+   - Multi-tag XML generation
+
+2. **Enhanced XMLTV Generation** (Updated `/server/routes/epg.js`)
+   - Integrates intelligent category detection
+   - Outputs multiple category tags per program
+   - Maintains backwards compatibility
+
+3. **Improved User Interface** (Updated `/client/src/components/EPGManager.js`)
+   - Descriptive category labels
+   - Helpful tooltips explaining Plex library routing
+   - Clear guidance on category selection
+
 ### Database Schema
 
-The EPG sources table includes a `category` column:
+The EPG sources table includes a `category` column for simple user selections:
 
 ```sql
 CREATE TABLE epg_sources (
@@ -60,7 +112,7 @@ CREATE TABLE epg_sources (
     url TEXT NOT NULL,
     refresh_interval TEXT DEFAULT '4h',
     enabled INTEGER DEFAULT 1,
-    category TEXT,  -- Stores: 'News', 'Movie', 'Series', 'Sports', or NULL
+    category TEXT,  -- User selection: 'News', 'Movie', 'Series', 'Sports', or NULL
     last_refresh DATETIME,
     last_success DATETIME,
     last_error TEXT,
@@ -68,6 +120,8 @@ CREATE TABLE epg_sources (
     updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
 );
 ```
+
+**Note**: The simple category values are mapped to complex Plex genres at XMLTV generation time.
 
 ### Backend API
 
@@ -100,30 +154,52 @@ The EPG Manager component provides a dropdown selector:
 </Select>
 ```
 
-### XMLTV Generation
+### Enhanced XMLTV Generation
 
-Categories are included in the XMLTV output for Plex:
+The new system generates multiple category tags for each program using intelligent detection:
 
 ```javascript
-// In generateXMLTV function
-if (categoryToUse) {
-  xml += `    <category lang="en">${escapeXML(categoryToUse)}</category>\n`;
-}
+// Enhanced generateXMLTV function with Plex Categories utility
+const plexCategories = require('../utils/plexCategories');
+
+// Generate multiple category tags for better Plex recognition
+const categoryTags = plexCategories.generateCategoryTags(program, categoryToUse);
+categoryTags.forEach(tag => {
+  xml += `    <category lang="en">${escapeXML(tag)}</category>\n`;
+});
+```
+
+**Example Output**:
+```xml
+<!-- For a crime drama series -->
+<category lang="en">Series</category>
+<category lang="en">Crime</category>
+<category lang="en">Drama</category>
+
+<!-- For an action movie -->
+<category lang="en">Movie</category>
+<category lang="en">Action</category>
+
+<!-- For sports content -->
+<category lang="en">Sports</category>
+<category lang="en">Sports event</category>
 ```
 
 ## Configuration
 
-### Via Web Interface
+### Via Enhanced Web Interface
 
 1. Navigate to **EPG Manager** in PlexBridge
 2. Click **Add Source** or edit an existing source
-3. Select a category from the **Plex Category** dropdown:
-   - **Auto-detect**: No category override (uses original EPG data)
-   - **News**: For news channels
-   - **Movie**: For movie channels
-   - **Series**: For TV series channels
-   - **Sports**: For sports channels
-4. Save the EPG source
+3. Select a category from the **Plex Category** dropdown (with enhanced descriptions):
+   - **Auto-detect (Use original EPG categories)**: Preserves source categorization
+   - **News (News bulletins, current affairs)**: Routes recordings to News section
+   - **Movies (Films, documentaries)**: Routes recordings to Movies library
+   - **TV Series (Shows, episodic content)**: Routes recordings to TV Shows library
+   - **Sports (Live events, sports talk)**: Routes recordings to Sports section
+4. Use the helpful **info tooltip** (ℹ️) for guidance on library routing
+5. Review the help text: "Plex will use this to determine if recordings go to your TV Shows or Movies library"
+6. Save the EPG source
 
 ### Via API
 
@@ -155,39 +231,67 @@ curl -X PUT http://localhost:3000/api/epg/sources/{source-id} \
   }'
 ```
 
-## XMLTV Output
+## Enhanced XMLTV Output
 
-### Without Category Override
+### 🔄 Auto-detect Mode (No Category Override)
 
-Original EPG data categories are preserved:
+Original EPG data categories are preserved with potential enhancement:
 
 ```xml
 <programme start="20250824120000 +0000" stop="20250824130000 +0000" channel="channel-1">
-  <title lang="en">Original Program Title</title>
-  <category lang="en">Documentary</category>  <!-- Original category -->
+  <title lang="en">Nature Documentary</title>
+  <category lang="en">Documentary</category>  <!-- Original category preserved -->
 </programme>
 ```
 
-### With Category Override
+### 🎬 Movie Category Selection
 
-All programs inherit the source's category:
+Programs get movie classification with intelligent subgenre detection:
 
 ```xml
 <programme start="20250824120000 +0000" stop="20250824130000 +0000" channel="channel-1">
-  <title lang="en">Program Title</title>
-  <category lang="en">Sports</category>  <!-- Override from EPG source -->
+  <title lang="en">Mission: Impossible</title>
+  <category lang="en">Movie</category>        <!-- Primary: Movie -->
+  <category lang="en">Action</category>       <!-- Detected: Action subgenre -->
+  <category lang="en">Thriller</category>     <!-- Detected: Thriller subgenre -->
 </programme>
 ```
 
-### Multiple Categories
+### 📺 Series Category Selection
 
-When needed, multiple category tags can be included:
+TV series get proper episodic classification:
 
 ```xml
 <programme start="20250824120000 +0000" stop="20250824130000 +0000" channel="channel-1">
-  <title lang="en">Sports News</title>
-  <category lang="en">Sports</category>  <!-- Primary category -->
-  <category lang="en">News</category>    <!-- Secondary category -->
+  <title lang="en">CSI: Crime Scene Investigation</title>
+  <category lang="en">Series</category>       <!-- Primary: TV Series -->
+  <category lang="en">Crime</category>        <!-- Detected: Crime subgenre -->
+  <category lang="en">Drama</category>        <!-- Detected: Drama subgenre -->
+</programme>
+```
+
+### ⚽ Sports Category Selection
+
+Sports content gets event-specific classification:
+
+```xml
+<programme start="20250824120000 +0000" stop="20250824130000 +0000" channel="channel-1">
+  <title lang="en">NBA Finals Game 7</title>
+  <category lang="en">Sports</category>       <!-- Primary: Sports -->
+  <category lang="en">Sports event</category> <!-- Detected: Live event -->
+  <category lang="en">Basketball</category>   <!-- Detected: Basketball -->
+</programme>
+```
+
+### 📰 News Category Selection
+
+News content gets appropriate bulletin classification:
+
+```xml
+<programme start="20250824120000 +0000" stop="20250824130000 +0000" channel="channel-1">
+  <title lang="en">Evening News</title>
+  <category lang="en">News</category>         <!-- Primary: News -->
+  <category lang="en">News bulletin</category><!-- Standard: News bulletin -->
 </programme>
 ```
 
@@ -231,22 +335,67 @@ For channels with mixed content:
 
 ## Troubleshooting
 
-### Categories Not Appearing in Plex
+### ❌ Recordings Still Going to Movies Collection
 
-1. **Check XMLTV Export**
+**Symptom**: All recordings default to Movies library despite setting categories
+
+**Solution**:
+1. **Verify Enhanced Categories in XMLTV Output**:
    ```bash
-   curl http://localhost:3000/api/epg/xmltv > test.xml
-   grep "<category" test.xml
+   curl http://localhost:8080/epg/xmltv.xml | grep -A 5 -B 5 "<category"
+   ```
+   Should show multiple category tags per program.
+
+2. **Check EPG Source Configuration**:
+   ```bash
+   curl http://localhost:8080/api/epg-sources
+   ```
+   Verify category field is set correctly.
+
+3. **Force Plex Guide Refresh**:
+   - Plex Settings → Live TV & DVR → DVR Settings
+   - Click "Refresh Guide" and wait for completion
+   - May take up to 30 minutes for changes to take effect
+
+4. **Clear Plex Metadata Cache**:
+   - Stop Plex Media Server
+   - Delete metadata cache for Live TV content
+   - Restart Plex and refresh guide data
+
+### ❌ Categories Not Appearing in Plex Guide Filters
+
+**Symptom**: Program guide doesn't show category filter buttons
+
+**Solution**:
+1. **Verify Multi-Tag XMLTV Output**:
+   ```bash
+   curl http://localhost:8080/epg/xmltv.xml | grep "<category" | head -20
+   ```
+   Should show entries like:
+   ```
+   <category lang="en">Series</category>
+   <category lang="en">Drama</category>
    ```
 
-2. **Verify EPG Source Settings**
+2. **Check Plex Guide Settings**:
+   - Ensure "Show categories" is enabled in Plex Live TV settings
+   - Verify channel lineup is properly configured
+
+### ❌ Auto-detect Not Working
+
+**Symptom**: Auto-detect mode doesn't preserve original EPG categories
+
+**Solution**:
+1. **Verify Original EPG Data**:
    ```bash
-   curl http://localhost:3000/api/epg/sources
+   # Check what categories exist in source XMLTV
+   curl "YOUR_EPG_SOURCE_URL" | grep "<category"
    ```
 
-3. **Force EPG Refresh in Plex**
-   - Go to Plex Settings → Live TV & DVR
-   - Click "Refresh Guide"
+2. **Test Category Processing**:
+   - Set EPG source to specific category (Series/Movie)
+   - Verify multiple tags appear in output
+   - Switch back to Auto-detect and compare
 
 ### Category Override Not Working
 
@@ -407,4 +556,22 @@ Potential improvements for EPG categories:
 
 ## Conclusion
 
-EPG categories in PlexBridge provide a powerful way to organize and filter IPTV content in Plex Media Server. By properly categorizing your EPG sources, you enhance the Live TV experience with better organization, filtering, and content discovery. The implementation follows Plex's standards while remaining flexible enough to handle various EPG source formats and content types.
+The **Enhanced EPG Categories** system in PlexBridge solves the critical issue of IPTV recordings defaulting to the Movies collection. This intelligent multi-genre classification system ensures proper content routing to the correct Plex libraries while maintaining user-friendly configuration.
+
+### ✅ **What This Update Delivers**
+
+- **🎯 Accurate Library Routing**: TV series recordings go to TV Shows library, movies to Movies library
+- **🧠 Intelligent Genre Detection**: Automatic subgenre classification for better organization  
+- **🔄 Backwards Compatibility**: Existing configurations continue working without changes
+- **📱 Enhanced User Interface**: Clear category descriptions and helpful guidance tooltips
+- **⚡ Real-time Processing**: Category mapping happens dynamically at XMLTV generation time
+
+### 🚀 **Getting Started**
+
+1. **Update PlexBridge** to the latest version with enhanced categories
+2. **Configure EPG Sources** using the improved EPG Manager interface
+3. **Select Appropriate Categories** based on your content type (Series/Movies/News/Sports)
+4. **Refresh Plex Guide** to see the enhanced categorization in action
+5. **Enjoy Proper Library Organization** with recordings in the correct Plex sections
+
+The implementation follows Plex's XMLTV standards while providing intelligent content analysis that adapts to your specific IPTV sources and content types. Your recordings will now be properly organized, making it easier to find and manage your Live TV content within Plex Media Server.

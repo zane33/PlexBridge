@@ -44,6 +44,7 @@ import {
   Accordion,
   AccordionSummary,
   AccordionDetails,
+  Autocomplete,
 } from '@mui/material';
 import {
   Add as AddIcon,
@@ -124,12 +125,14 @@ function EPGManager() {
   const [tempEpgId, setTempEpgId] = useState('');
   const [testingUrl, setTestingUrl] = useState(false);
   const [urlTestResult, setUrlTestResult] = useState(null);
+  const [secondaryGenres, setSecondaryGenres] = useState({});
   const [formData, setFormData] = useState({
     name: '',
     url: '',
     refresh_interval: '4h',
     enabled: true,
     category: '',
+    secondary_genres: [],
   });
   const { enqueueSnackbar } = useSnackbar();
   const theme = useTheme();
@@ -157,6 +160,7 @@ function EPGManager() {
     fetchEpgSources();
     fetchChannels();
     fetchEpgStatus();
+    fetchSecondaryGenres();
   }, []);
 
   useEffect(() => {
@@ -166,6 +170,16 @@ function EPGManager() {
       fetchAvailableEpgIds();
     }
   }, [activeTab]);
+
+  const fetchSecondaryGenres = async () => {
+    try {
+      const response = await api.get('/api/epg/secondary-genres');
+      setSecondaryGenres(response.data.genres || {});
+    } catch (error) {
+      console.error('Failed to fetch secondary genres:', error);
+      enqueueSnackbar('Failed to load genre options', { variant: 'warning' });
+    }
+  };
 
   const fetchAvailableEpgIds = async () => {
     try {
@@ -288,6 +302,7 @@ function EPGManager() {
       refresh_interval: '4h',
       enabled: true,
       category: '',
+      secondary_genres: [],
     });
     setUrlTestResult(null);
     setDialogOpen(true);
@@ -295,12 +310,27 @@ function EPGManager() {
 
   const handleEdit = (source) => {
     setEditingSource(source);
+    
+    // Parse secondary_genres from JSON string if it exists
+    let parsedSecondaryGenres = [];
+    try {
+      if (source.secondary_genres && typeof source.secondary_genres === 'string') {
+        parsedSecondaryGenres = JSON.parse(source.secondary_genres);
+      } else if (Array.isArray(source.secondary_genres)) {
+        parsedSecondaryGenres = source.secondary_genres;
+      }
+    } catch (error) {
+      console.warn('Failed to parse secondary genres:', error);
+      parsedSecondaryGenres = [];
+    }
+    
     setFormData({
       name: source.name || '',
       url: source.url || '',
       refresh_interval: source.refresh_interval || '4h',
       enabled: source.enabled !== 0,
       category: source.category || '',
+      secondary_genres: parsedSecondaryGenres,
     });
     setUrlTestResult(null);
     setDialogOpen(true);
@@ -714,12 +744,48 @@ function EPGManager() {
                       </TableCell>
                       <TableCell>
                         {source.category ? (
-                          <Chip
-                            label={source.category}
-                            size="small"
-                            color="secondary"
-                            variant="outlined"
-                          />
+                          <Box>
+                            <Chip
+                              label={source.category}
+                              size="small"
+                              color="secondary"
+                              variant="outlined"
+                            />
+                            {(() => {
+                              try {
+                                const secondaryGenres = source.secondary_genres && typeof source.secondary_genres === 'string' 
+                                  ? JSON.parse(source.secondary_genres)
+                                  : Array.isArray(source.secondary_genres) ? source.secondary_genres : [];
+                                
+                                return secondaryGenres.length > 0 && (
+                                  <Box mt={0.5} display="flex" flexWrap="wrap" gap={0.5}>
+                                    {secondaryGenres.slice(0, 3).map((genre, index) => (
+                                      <Chip
+                                        key={index}
+                                        label={genre}
+                                        size="small"
+                                        color="primary"
+                                        variant="outlined"
+                                        sx={{ fontSize: '0.7rem', height: '20px' }}
+                                      />
+                                    ))}
+                                    {secondaryGenres.length > 3 && (
+                                      <Chip
+                                        label={`+${secondaryGenres.length - 3} more`}
+                                        size="small"
+                                        color="default"
+                                        variant="outlined"
+                                        sx={{ fontSize: '0.7rem', height: '20px' }}
+                                      />
+                                    )}
+                                  </Box>
+                                );
+                              } catch (error) {
+                                console.warn('Failed to parse secondary genres for display:', error);
+                                return null;
+                              }
+                            })()}
+                          </Box>
                         ) : (
                           <Typography variant="body2" color="text.disabled">
                             Auto
@@ -1273,27 +1339,106 @@ function EPGManager() {
             </Grid>
             
             <Grid item xs={12}>
+              <Box display="flex" alignItems="center" gap={1} mb={1}>
+                <Typography variant="body2" sx={{ fontWeight: 500 }}>
+                  Plex Category
+                </Typography>
+                <Tooltip 
+                  title="Categories help Plex organize recordings into the correct library (TV Shows vs Movies). PlexBridge automatically adds appropriate genre tags for better classification."
+                  arrow
+                  placement="top"
+                >
+                  <InfoIcon sx={{ fontSize: 16, color: 'text.secondary', cursor: 'help' }} />
+                </Tooltip>
+              </Box>
               <FormControl fullWidth variant="outlined">
                 <InputLabel>Plex Category</InputLabel>
                 <Select
                   value={formData.category}
-                  onChange={(e) => handleInputChange('category', e.target.value)}
+                  onChange={(e) => {
+                    const newCategory = e.target.value;
+                    handleInputChange('category', newCategory);
+                    // Clear secondary genres when primary category changes
+                    if (newCategory !== formData.category) {
+                      handleInputChange('secondary_genres', []);
+                    }
+                  }}
                   label="Plex Category"
                   disabled={saving}
                 >
                   <MenuItem value="">
-                    <em>Auto-detect from content</em>
+                    <em>Auto-detect (Use original EPG categories)</em>
                   </MenuItem>
-                  <MenuItem value="News">News</MenuItem>
-                  <MenuItem value="Movie">Movie</MenuItem>
-                  <MenuItem value="Series">Series</MenuItem>
-                  <MenuItem value="Sports">Sports</MenuItem>
+                  <MenuItem value="News">News (News bulletins, current affairs)</MenuItem>
+                  <MenuItem value="Movie">Movies (Films, documentaries)</MenuItem>
+                  <MenuItem value="Series">TV Series (Shows, episodic content)</MenuItem>
+                  <MenuItem value="Sports">Sports (Live events, sports talk)</MenuItem>
                 </Select>
                 <Typography variant="caption" color="text.secondary" sx={{ mt: 1, display: 'block' }}>
-                  Sets the default category for all programs from this EPG source. Plex uses this for filtering and organization.
+                  Plex will use this to determine if recordings go to your TV Shows or Movies library
                 </Typography>
               </FormControl>
             </Grid>
+            
+            {/* Secondary Genres Selection - Only show if primary category is selected */}
+            {formData.category && secondaryGenres[formData.category] && (
+              <Grid item xs={12}>
+                <Box display="flex" alignItems="center" gap={1} mb={1}>
+                  <Typography variant="body2" sx={{ fontWeight: 500 }}>
+                    Secondary Genres (Optional)
+                  </Typography>
+                  <Tooltip 
+                    title={`Select specific genres for ${formData.category} content. These will enhance Plex's classification and add more detailed metadata to your programs.`}
+                    arrow
+                    placement="top"
+                  >
+                    <InfoIcon sx={{ fontSize: 16, color: 'text.secondary', cursor: 'help' }} />
+                  </Tooltip>
+                </Box>
+                <Autocomplete
+                  multiple
+                  id="secondary-genres"
+                  options={secondaryGenres[formData.category] || []}
+                  value={formData.secondary_genres || []}
+                  onChange={(event, newValue) => {
+                    handleInputChange('secondary_genres', newValue);
+                  }}
+                  filterSelectedOptions
+                  disabled={saving}
+                  renderTags={(value, getTagProps) =>
+                    value.map((option, index) => (
+                      <Chip
+                        variant="outlined"
+                        label={option}
+                        color="primary"
+                        size="small"
+                        {...getTagProps({ index })}
+                        key={option}
+                      />
+                    ))
+                  }
+                  renderInput={(params) => (
+                    <TextField
+                      {...params}
+                      variant="outlined"
+                      label="Select Secondary Genres"
+                      placeholder={formData.secondary_genres?.length === 0 ? "Choose genres..." : "Add more genres..."}
+                      helperText={`Available genres for ${formData.category} content. Leave empty to use auto-detection.`}
+                    />
+                  )}
+                  sx={{
+                    '& .MuiAutocomplete-tag': {
+                      margin: '2px',
+                    }
+                  }}
+                />
+                <Box mt={1}>
+                  <Typography variant="caption" color="text.secondary">
+                    💡 Tip: Select 2-3 relevant genres for best results. These will be combined with the primary category.
+                  </Typography>
+                </Box>
+              </Grid>
+            )}
             
             <Grid item xs={12}>
               <FormControlLabel

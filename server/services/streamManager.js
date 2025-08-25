@@ -904,7 +904,7 @@ class StreamManager {
     let finalUrl = url;
     
     try {
-      // Check if URL redirects (like TVNZ streams)
+      // Check if URL redirects
       if (url.includes('mjh.nz') || url.includes('tvnz')) {
         const response = await axios.head(url, {
           maxRedirects: 5,
@@ -947,7 +947,7 @@ class StreamManager {
                    config.plexlive?.transcoding?.mpegts?.hlsProtocolArgs ||
                    '-allowed_extensions ALL -protocol_whitelist file,http,https,tcp,tls,pipe,crypto';
       
-      // For redirected streams (like TVNZ), add additional HLS options for better compatibility
+      // For redirected streams, add additional HLS options for better compatibility
       if (finalUrl !== url) {
         hlsArgs += ' -http_seekable 0 -multiple_requests 1 -http_persistent 0';
         logger.stream('Added HLS compatibility options for redirected stream', {

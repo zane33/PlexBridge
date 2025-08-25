@@ -276,6 +276,15 @@ class DatabaseService {
         logger.info('category column already exists in epg_sources table');
       }
 
+      // Add secondary_genres column if it doesn't exist for custom secondary genres
+      try {
+        this.db.prepare('ALTER TABLE epg_sources ADD COLUMN secondary_genres TEXT').run();
+        logger.info('Added secondary_genres column to epg_sources table');
+      } catch (error) {
+        // Column already exists, ignore error
+        logger.info('secondary_genres column already exists in epg_sources table');
+      }
+
       // **CRITICAL FIX**: Drop and recreate epg_programs table without foreign key constraint
       // The foreign key constraint was preventing programs from being stored because
       // channel_id contains EPG channel IDs, not internal channel table IDs

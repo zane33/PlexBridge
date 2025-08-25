@@ -893,12 +893,15 @@ class EPGService {
 
   async addSource(sourceData) {
     try {
-      const { id, name, url, refresh_interval = '4h', category = null } = sourceData;
+      const { id, name, url, refresh_interval = '4h', category = null, secondary_genres = null } = sourceData;
+      
+      // Convert secondary_genres array to JSON string for storage
+      const secondaryGenresJson = secondary_genres && secondary_genres.length > 0 ? JSON.stringify(secondary_genres) : null;
       
       await database.run(`
-        INSERT INTO epg_sources (id, name, url, refresh_interval, enabled, category)
-        VALUES (?, ?, ?, ?, 1, ?)
-      `, [id, name, url, refresh_interval, category]);
+        INSERT INTO epg_sources (id, name, url, refresh_interval, enabled, category, secondary_genres)
+        VALUES (?, ?, ?, ?, 1, ?, ?)
+      `, [id, name, url, refresh_interval, category, secondaryGenresJson]);
 
       // Only schedule refresh if service is initialized
       if (this.isInitialized) {
