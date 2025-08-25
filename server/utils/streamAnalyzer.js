@@ -171,7 +171,22 @@ function isComplexStreamUrl(streamUrl) {
     streamUrl.match(/[a-f0-9]{64,}/), // Long hex tokens
   ];
   
-  return complexIndicators.filter(Boolean).length >= 2;
+  // Special handling for known problematic domains that often have complex segments
+  // even when the main URL appears simple
+  const knownComplexDomains = [
+    'amagi.tv',           // Server-side ad insertion, complex segment URLs
+    'tsv2.amagi.tv',      // Amagi CDN with token-based segments
+    'cdn-apse1-prod.tsv2.amagi.tv', // Regional Amagi CDN
+    'cdn-uw2-prod.tsv2.amagi.tv',   // US West Amagi CDN
+    'cdn-ue1-prod.tsv2.amagi.tv'    // US East Amagi CDN
+  ];
+  
+  const hasKnownComplexDomain = knownComplexDomains.some(domain => streamUrl.includes(domain));
+  
+  // If it's a known complex domain, lower the threshold
+  const threshold = hasKnownComplexDomain ? 1 : 2;
+  
+  return complexIndicators.filter(Boolean).length >= threshold;
 }
 
 /**

@@ -126,6 +126,7 @@ class StreamSessionManager {
   updateSessionMetrics(sessionId, metrics) {
     const session = this.activeSessions.get(sessionId);
     if (!session) {
+      logger.debug('UpdateSessionMetrics: Session not found', { sessionId });
       return false;
     }
 
@@ -171,6 +172,16 @@ class StreamSessionManager {
         const totalBitrate = recentSamples.reduce((sum, sample) => sum + sample.bitrate, 0);
         session.avgBitrate = Math.round(totalBitrate / recentSamples.length);
       }
+      
+      // Debug log for bandwidth tracking
+      logger.debug('Session bandwidth metrics updated', {
+        sessionId,
+        currentBitrate,
+        avgBitrate: session.avgBitrate,
+        peakBitrate: session.peakBitrate,
+        bytesTransferred,
+        sampleCount: recentSamples.length
+      });
     }
 
     // Update session in memory
