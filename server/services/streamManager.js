@@ -966,16 +966,21 @@ class StreamManager {
       
       // ENHANCED: Special handling for Amagi CDN streams (Sky News Now)
       if (finalUrl.includes('amagi.tv') || finalUrl.includes('tsv2.amagi.tv')) {
-        // Amagi CDN requires special HLS handling for dynamic tokens
-        hlsArgs += ' -http_seekable 0 -multiple_requests 1 -http_persistent 0';
-        hlsArgs += ' -live_start_index -1 -hls_segment_start_number 0';  // Handle live HLS better
+        // Amagi CDN requires special HLS handling for dynamic tokens and master playlists
+        hlsArgs += ' -http_seekable 0 -multiple_requests 1 -http_persistent 1';  // Keep connections alive for token reuse
+        hlsArgs += ' -live_start_index -1';  // Start from the latest segment for live streams
         hlsArgs += ' -reconnect 1 -reconnect_streamed 1 -reconnect_delay_max 4';  // Better reconnection
         hlsArgs += ' -rw_timeout 30000000';  // 30 second timeout for network operations
+        hlsArgs += ' -max_reload 1000';  // Allow many playlist reloads for live streams
         
-        logger.stream('Applied Amagi CDN optimizations', {
+        // CRITICAL: Handle master playlists - select best quality stream automatically
+        // This tells FFmpeg to pick the highest bandwidth stream from the master playlist
+        ffmpegCommand = ffmpegCommand.replace('-c:v copy', '-map 0:p:0 -c:v copy');
+        
+        logger.stream('Applied Amagi CDN optimizations with master playlist handling', {
           originalUrl: url,
           finalUrl: finalUrl,
-          optimizations: 'dynamic_tokens,live_hls,extended_timeout'
+          optimizations: 'master_playlist,dynamic_tokens,live_hls,extended_timeout,persistent_connections'
         });
       }
       // For other redirected streams, add standard HLS options
@@ -1589,17 +1594,22 @@ class StreamManager {
         
         // ENHANCED: Special handling for Amagi CDN streams (Sky News Now)
         if (finalStreamUrl.includes('amagi.tv') || finalStreamUrl.includes('tsv2.amagi.tv')) {
-          // Amagi CDN requires special HLS handling for dynamic tokens
-          hlsArgs += ' -http_seekable 0 -multiple_requests 1 -http_persistent 0';
-          hlsArgs += ' -live_start_index -1 -hls_segment_start_number 0';  // Handle live HLS better
+          // Amagi CDN requires special HLS handling for dynamic tokens and master playlists
+          hlsArgs += ' -http_seekable 0 -multiple_requests 1 -http_persistent 1';  // Keep connections alive for token reuse
+          hlsArgs += ' -live_start_index -1';  // Start from the latest segment for live streams
           hlsArgs += ' -reconnect 1 -reconnect_streamed 1 -reconnect_delay_max 4';  // Better reconnection
           hlsArgs += ' -rw_timeout 30000000';  // 30 second timeout for network operations
+          hlsArgs += ' -max_reload 1000';  // Allow many playlist reloads for live streams
           
-          logger.info('Applied Amagi CDN optimizations for Plex stream', {
+          // CRITICAL: Handle master playlists - select best quality stream automatically
+          // This tells FFmpeg to pick the highest bandwidth stream from the master playlist
+          ffmpegCommand = ffmpegCommand.replace('-c:v copy', '-map 0:p:0 -c:v copy');
+          
+          logger.info('Applied Amagi CDN optimizations with master playlist handling for Plex stream', {
             channelId: channel.id,
             originalUrl: streamUrl,
             finalUrl: finalStreamUrl,
-            optimizations: 'dynamic_tokens,live_hls,extended_timeout'
+            optimizations: 'master_playlist,dynamic_tokens,live_hls,extended_timeout,persistent_connections'
           });
         }
         // For other redirected streams (like TVNZ), add standard HLS options
