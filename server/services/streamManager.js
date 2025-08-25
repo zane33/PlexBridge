@@ -968,16 +968,19 @@ class StreamManager {
       if (finalUrl.includes('amagi.tv') || finalUrl.includes('tsv2.amagi.tv')) {
         // Amagi CDN requires special HLS handling for dynamic tokens and master playlists
         hlsArgs += ' -http_seekable 0 -multiple_requests 1 -http_persistent 1';  // Keep connections alive for token reuse
-        hlsArgs += ' -live_start_index -1';  // Start from the latest segment for live streams
+        hlsArgs += ' -live_start_index 0';  // Start from beginning for faster startup (Plex compatibility)
         hlsArgs += ' -reconnect 1 -reconnect_streamed 1 -reconnect_delay_max 4';  // Better reconnection
-        hlsArgs += ' -rw_timeout 30000000';  // 30 second timeout for network operations
-        hlsArgs += ' -max_reload 1000';  // Allow many playlist reloads for live streams
+        hlsArgs += ' -rw_timeout 10000000';  // 10 second timeout to avoid Plex 25s timeout
+        hlsArgs += ' -max_reload 10';  // Limit reloads to prevent delays (Plex compatibility)
         
-        // CRITICAL: Handle master playlists - select highest quality stream (last program)
-        // This must be inserted AFTER the input URL but BEFORE codec options
-        // For HLS master playlists, the last program (p:3) is typically the highest quality (1080p)
-        // We use -map 0:p:3 to select the 4th program which is the 1920x1080 stream
-        ffmpegCommand = ffmpegCommand.replace('-i ' + finalUrl, '-i ' + finalUrl + ' -map 0:p:3');
+        // CRITICAL: Handle master playlists - let FFmpeg auto-select best stream for faster startup
+        // For Plex compatibility, we need fast stream startup, so we let FFmpeg auto-select
+        // the best available stream rather than forcing a specific program which can be slow
+        // This should provide better compatibility with Plex's strict timeout requirements
+        logger.stream('Using FFmpeg auto-selection for master playlist (faster startup for Plex)', {
+          originalUrl: url,
+          finalUrl: finalUrl
+        });
         
         logger.stream('Applied Amagi CDN optimizations with master playlist handling', {
           originalUrl: url,
@@ -1596,18 +1599,28 @@ class StreamManager {
         
         // ENHANCED: Special handling for Amagi CDN streams (Sky News Now)
         if (finalStreamUrl.includes('amagi.tv') || finalStreamUrl.includes('tsv2.amagi.tv')) {
+          logger.info('PLEX STREAM DEBUG: Starting Amagi CDN stream processing', {
+            channelId: channel.id,
+            originalUrl: streamUrl,
+            finalUrl: finalStreamUrl,
+            isPlexRequest: true
+          });
           // Amagi CDN requires special HLS handling for dynamic tokens and master playlists
           hlsArgs += ' -http_seekable 0 -multiple_requests 1 -http_persistent 1';  // Keep connections alive for token reuse
-          hlsArgs += ' -live_start_index -1';  // Start from the latest segment for live streams
+          hlsArgs += ' -live_start_index 0';  // Start from beginning for faster startup (Plex compatibility)
           hlsArgs += ' -reconnect 1 -reconnect_streamed 1 -reconnect_delay_max 4';  // Better reconnection
-          hlsArgs += ' -rw_timeout 30000000';  // 30 second timeout for network operations
-          hlsArgs += ' -max_reload 1000';  // Allow many playlist reloads for live streams
+          hlsArgs += ' -rw_timeout 10000000';  // 10 second timeout to avoid Plex 25s timeout
+          hlsArgs += ' -max_reload 10';  // Limit reloads to prevent delays (Plex compatibility)
           
-          // CRITICAL: Handle master playlists - select highest quality stream (last program)
-          // This must be inserted AFTER the input URL but BEFORE codec options
-          // For HLS master playlists, the last program (p:3) is typically the highest quality (1080p)
-          // We use -map 0:p:3 to select the 4th program which is the 1920x1080 stream
-          ffmpegCommand = ffmpegCommand.replace('-i ' + finalStreamUrl, '-i ' + finalStreamUrl + ' -map 0:p:3');
+          // CRITICAL: Handle master playlists - let FFmpeg auto-select best stream for faster startup
+          // For Plex compatibility, we need fast stream startup, so we let FFmpeg auto-select
+          // the best available stream rather than forcing a specific program which can be slow
+          // This should provide better compatibility with Plex's strict timeout requirements
+          logger.info('Using FFmpeg auto-selection for master playlist (faster startup for Plex)', {
+            channelId: channel.id,
+            originalUrl: streamUrl,
+            finalUrl: finalStreamUrl
+          });
           
           logger.info('Applied Amagi CDN optimizations with master playlist handling for Plex stream', {
             channelId: channel.id,

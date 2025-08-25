@@ -86,8 +86,9 @@ class StreamSessionManager {
         peakBitrate: 0,
         errorCount: 0,
         
-        // Status
-        status: 'active'
+        // Status - start with 'connecting' and update to 'streaming' once data flows
+        status: 'connecting',
+        streamingStatus: 'Starting stream...'
       };
 
       // Store in memory for real-time access
@@ -146,6 +147,15 @@ class StreamSessionManager {
     // Update peak bitrate
     if (currentBitrate > session.peakBitrate) {
       session.peakBitrate = currentBitrate;
+    }
+
+    // Update status to streaming once data starts flowing
+    if (currentBitrate > 0 && session.status === 'connecting') {
+      session.status = 'streaming';
+      session.streamingStatus = 'Streaming Now';
+    } else if (bytesTransferred > 0 && session.status === 'connecting') {
+      session.status = 'streaming';
+      session.streamingStatus = 'Streaming Now';
     }
 
     // Add bandwidth sample for average calculation

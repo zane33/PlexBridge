@@ -286,7 +286,7 @@ router.get('/streams/active', async (req, res) => {
     // Get max concurrent streams from settings
     const settingsService = require('../services/settingsService');
     const settings = await settingsService.getSettings();
-    const maxConcurrent = settings?.plexlive?.streaming?.maxConcurrentStreams || 5;
+    const maxConcurrent = settings?.plexlive?.streaming?.maxConcurrentStreams || 10;
     
     // Use streamSessionManager for more accurate session tracking
     const activeSessions = streamSessionManager.getActiveSessions();

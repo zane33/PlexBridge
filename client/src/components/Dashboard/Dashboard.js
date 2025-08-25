@@ -1318,6 +1318,7 @@ function Dashboard() {
                   <TableRow>
                     <TableCell>Client Info</TableCell>
                     <TableCell>Channel</TableCell>
+                    <TableCell>Status</TableCell>
                     <TableCell>Duration</TableCell>
                     <TableCell>Current Bitrate</TableCell>
                     <TableCell>Data Transferred</TableCell>
@@ -1345,7 +1346,7 @@ function Dashboard() {
                               {session.clientIP}
                             </Typography>
                             <Typography variant="caption" color="text.secondary">
-                              {session.hostname || 'Resolving...'}
+                              {session.clientHostname || session.hostname || 'Resolving...'}
                             </Typography>
                           </Box>
                         </Box>
@@ -1361,6 +1362,27 @@ function Dashboard() {
                               Channel {session.channelNumber || 'N/A'}
                             </Typography>
                           </Box>
+                        </Box>
+                      </TableCell>
+                      <TableCell>
+                        <Box sx={{ display: 'flex', alignItems: 'center' }}>
+                          <Box
+                            sx={{
+              width: 8,
+              height: 8,
+              borderRadius: '50%',
+              bgcolor: session.status === 'streaming' ? 'success.main' : 
+                       session.status === 'connecting' ? 'warning.main' : 'error.main',
+              mr: 1,
+              animation: session.status === 'streaming' ? 'pulse 2s infinite' : 'none'
+            }}
+                          />
+                          <Typography variant="body2" fontWeight="bold" color={
+                            session.status === 'streaming' ? 'success.main' : 
+                            session.status === 'connecting' ? 'warning.main' : 'error.main'
+                          }>
+                            {session.streamingStatus || session.status || 'Unknown'}
+                          </Typography>
                         </Box>
                       </TableCell>
                       <TableCell>
