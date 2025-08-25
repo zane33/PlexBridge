@@ -4,7 +4,6 @@ const database = require('../services/database');
 const streamManager = require('../services/streamManager');
 const streamSessionManager = require('../services/streamSessionManager');
 const streamPreviewService = require('../services/streamPreviewService');
-const { isComplexStreamUrl } = require('../utils/streamAnalyzer');
 const logger = require('../utils/logger');
 const { v4: uuidv4 } = require('uuid');
 
@@ -180,54 +179,12 @@ router.get('/stream/:channelId/:filename?', async (req, res) => {
         res.status(500).send(`Failed to proxy sub-file: ${error.message}`);
       }
     } else {
-      // Check for automatic transcoding needs based on stream complexity
-      let shouldForceTranscode = req.query.transcode === 'true';
-      
-      // Parse protocol options to check for auto-transcoding settings
-      let protocolOptions = {};
-      try {
-        protocolOptions = stream.protocol_options ? JSON.parse(stream.protocol_options) : {};
-      } catch (e) {
-        logger.warn('Failed to parse protocol options', { channelId, error: e.message });
-      }
-      
-      // Auto-transcoding logic for complex streams
-      if (!shouldForceTranscode && isPlexRequest && stream.type === 'hls') {
-        // Check if transcoding was automatically recommended during stream creation
-        if (protocolOptions.forceTranscode) {
-          shouldForceTranscode = true;
-          logger.info('Auto-transcoding enabled due to stream complexity analysis', { 
-            channelId, 
-            streamName: stream.name 
-          });
-        }
-        // Quick URL pattern check as fallback
-        else if (isComplexStreamUrl(stream.url)) {
-          shouldForceTranscode = true;
-          logger.info('Auto-transcoding enabled due to complex URL pattern', { 
-            channelId, 
-            streamName: stream.name,
-            urlLength: stream.url.length 
-          });
-        }
-      }
-      
-      // Apply transcoding parameter if needed
-      if (shouldForceTranscode && !req.query.transcode) {
-        req.query.transcode = 'true';
-        logger.info('Transcoding parameter automatically applied', { 
-          channelId, 
-          streamName: stream.name 
-        });
-      }
-      
       // For main playlist requests, let the streamManager handle session creation to avoid duplicates
       if (isPlexRequest && !isSubFile) {
         // Plex needs direct MPEG-TS stream, not HLS playlist
         logger.info('Plex request detected - forwarding to streamManager', { 
           channelId, 
-          userAgent: req.get('User-Agent'),
-          forceTranscode: shouldForceTranscode
+          userAgent: req.get('User-Agent')
         });
         
         // Let streamManager handle session creation and MPEG-TS transcoding for Plex compatibility
