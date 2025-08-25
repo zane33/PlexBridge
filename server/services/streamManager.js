@@ -2644,14 +2644,8 @@ streamManager.emitMetricsUpdate = async function() {
     const cacheService = require('./cacheService');
     const epgService = require('./epgService');
     
-    // Get max concurrent streams from settings
-    let maxConcurrentStreams = 10;
-    try {
-      maxConcurrentStreams = await settingsService.getSetting('plexlive.streaming.maxConcurrentStreams', 10);
-      maxConcurrentStreams = parseInt(maxConcurrentStreams) || 10;
-    } catch (err) {
-      logger.warn('Failed to get max concurrent streams for metrics update:', err);
-    }
+    // Get max concurrent streams from settings using centralized method
+    const maxConcurrentStreams = await settingsService.getMaxConcurrentStreams();
     
     // Get active streams
     const activeStreams = this.getActiveStreams() || [];
