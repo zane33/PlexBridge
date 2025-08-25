@@ -973,9 +973,10 @@ class StreamManager {
         hlsArgs += ' -rw_timeout 30000000';  // 30 second timeout for network operations
         hlsArgs += ' -max_reload 1000';  // Allow many playlist reloads for live streams
         
-        // CRITICAL: Handle master playlists - select best quality stream automatically
-        // This tells FFmpeg to pick the highest bandwidth stream from the master playlist
-        ffmpegCommand = ffmpegCommand.replace('-c:v copy', '-map 0:p:0 -c:v copy');
+        // CRITICAL: Handle master playlists - select first program (best quality) automatically
+        // This must be inserted AFTER the input URL but BEFORE codec options
+        // The -map 0:p:0 tells FFmpeg to select program 0 from the master playlist
+        ffmpegCommand = ffmpegCommand.replace('-i ' + finalUrl, '-i ' + finalUrl + ' -map 0:p:0');
         
         logger.stream('Applied Amagi CDN optimizations with master playlist handling', {
           originalUrl: url,
@@ -1601,9 +1602,10 @@ class StreamManager {
           hlsArgs += ' -rw_timeout 30000000';  // 30 second timeout for network operations
           hlsArgs += ' -max_reload 1000';  // Allow many playlist reloads for live streams
           
-          // CRITICAL: Handle master playlists - select best quality stream automatically
-          // This tells FFmpeg to pick the highest bandwidth stream from the master playlist
-          ffmpegCommand = ffmpegCommand.replace('-c:v copy', '-map 0:p:0 -c:v copy');
+          // CRITICAL: Handle master playlists - select first program (best quality) automatically
+          // This must be inserted AFTER the input URL but BEFORE codec options
+          // The -map 0:p:0 tells FFmpeg to select program 0 from the master playlist
+          ffmpegCommand = ffmpegCommand.replace('-i ' + finalStreamUrl, '-i ' + finalStreamUrl + ' -map 0:p:0');
           
           logger.info('Applied Amagi CDN optimizations with master playlist handling for Plex stream', {
             channelId: channel.id,
