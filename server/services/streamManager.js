@@ -951,21 +951,30 @@ class StreamManager {
     }
     
     // Get configurable FFmpeg command line with proper transcoding
-    let ffmpegCommand = settings?.plexlive?.transcoding?.mpegts?.ffmpegArgs || 
+    let ffmpegCommand;
+    
+    // Use simpler FFmpeg args for Amagi streams to avoid TLS/beacon issues
+    if (finalUrl.includes('amagi.tv') || finalUrl.includes('tsv2.amagi.tv')) {
+      ffmpegCommand = '-hide_banner -loglevel error -i [URL] -c:v copy -c:a copy -f mpegts pipe:1';
+    } else {
+      ffmpegCommand = settings?.plexlive?.transcoding?.mpegts?.ffmpegArgs || 
                        config.plexlive?.transcoding?.mpegts?.ffmpegArgs ||
                        '-hide_banner -loglevel error -reconnect 1 -reconnect_at_eof 1 -reconnect_streamed 1 -reconnect_delay_max 2 -i [URL] -c:v copy -c:a copy -bsf:v dump_extra -f mpegts -mpegts_copyts 1 -avoid_negative_ts make_zero -fflags +genpts+igndts+discardcorrupt -copyts -muxdelay 0 -muxpreload 0 -flush_packets 1 -max_delay 0 -max_muxing_queue_size 9999 pipe:1';
+    }
     
     // Replace [URL] placeholder with actual stream URL
     ffmpegCommand = ffmpegCommand.replace('[URL]', finalUrl);
     
-    // Add HLS-specific arguments if needed
-    if (finalUrl.includes('.m3u8')) {
+    // Add HLS-specific arguments if needed (but skip for Amagi streams)
+    if (finalUrl.includes('.m3u8') && !finalUrl.includes('amagi.tv') && !finalUrl.includes('tsv2.amagi.tv')) {
       let hlsArgs = settings?.plexlive?.transcoding?.mpegts?.hlsProtocolArgs || 
                    config.plexlive?.transcoding?.mpegts?.hlsProtocolArgs ||
                    '-allowed_extensions ALL -protocol_whitelist file,http,https,tcp,tls,pipe,crypto';
       
       // VLC-style approach: Parse master playlist and use direct stream URL like VLC does
-      if (finalUrl.includes('amagi.tv') || finalUrl.includes('tsv2.amagi.tv')) {
+      // NOTE: Disabled for Amagi streams as they use token-based auth that expires
+      // The master playlist handles auth better than direct stream URLs
+      if (false && (finalUrl.includes('amagi.tv') || finalUrl.includes('tsv2.amagi.tv'))) {
         try {
           // Fetch the master playlist like VLC does
           const axios = require('axios');
@@ -995,11 +1004,13 @@ class StreamManager {
           }
           
           if (targetStreamUrl) {
+            // Update ffmpeg command to use the selected stream URL instead of master playlist
+            ffmpegCommand = ffmpegCommand.replace(finalUrl, targetStreamUrl);
             finalUrl = targetStreamUrl;
             const quality = targetStreamUrl.includes('1920x1080') ? '1080p' : targetStreamUrl.includes('1280x720') ? '720p' : 'unknown';
             logger.stream(`VLC-style approach: Using direct ${quality} stream URL`, {
               originalUrl: url,
-              masterPlaylist: finalUrl,
+              masterPlaylist: url,
               directStreamUrl: targetStreamUrl,
               selectedQuality: quality
             });
@@ -1607,21 +1618,30 @@ class StreamManager {
       const settings = await settingsService.getSettings();
       
       // Get configurable FFmpeg command line
-      let ffmpegCommand = settings?.plexlive?.transcoding?.mpegts?.ffmpegArgs || 
+      let ffmpegCommand;
+      
+      // Use simpler FFmpeg args for Amagi streams to avoid TLS/beacon issues
+      if (finalStreamUrl.includes('amagi.tv') || finalStreamUrl.includes('tsv2.amagi.tv')) {
+        ffmpegCommand = '-hide_banner -loglevel error -i [URL] -c:v copy -c:a copy -f mpegts pipe:1';
+      } else {
+        ffmpegCommand = settings?.plexlive?.transcoding?.mpegts?.ffmpegArgs || 
                          config.plexlive?.transcoding?.mpegts?.ffmpegArgs ||
                          '-hide_banner -loglevel error -reconnect 1 -reconnect_at_eof 1 -reconnect_streamed 1 -reconnect_delay_max 2 -i [URL] -c:v copy -c:a copy -bsf:v dump_extra -f mpegts -mpegts_copyts 1 -avoid_negative_ts make_zero -fflags +genpts+igndts+discardcorrupt -copyts -muxdelay 0 -muxpreload 0 -flush_packets 1 -max_delay 0 -max_muxing_queue_size 9999 pipe:1';
+      }
       
       // Replace [URL] placeholder with actual stream URL
       ffmpegCommand = ffmpegCommand.replace('[URL]', finalStreamUrl);
       
-      // Add HLS-specific arguments if needed
-      if (finalStreamUrl.includes('.m3u8')) {
+      // Add HLS-specific arguments if needed (but skip for Amagi streams)
+      if (finalStreamUrl.includes('.m3u8') && !finalStreamUrl.includes('amagi.tv') && !finalStreamUrl.includes('tsv2.amagi.tv')) {
         let hlsArgs = settings?.plexlive?.transcoding?.mpegts?.hlsProtocolArgs || 
                      config.plexlive?.transcoding?.mpegts?.hlsProtocolArgs ||
                      '-allowed_extensions ALL -protocol_whitelist file,http,https,tcp,tls,pipe,crypto';
         
         // VLC-style approach: Parse master playlist and use direct stream URL like VLC does
-        if (finalStreamUrl.includes('amagi.tv') || finalStreamUrl.includes('tsv2.amagi.tv')) {
+        // NOTE: Disabled for Amagi streams as they use token-based auth that expires
+        // The master playlist handles auth better than direct stream URLs
+        if (false && (finalStreamUrl.includes('amagi.tv') || finalStreamUrl.includes('tsv2.amagi.tv'))) {
           try {
             // Fetch the master playlist like VLC does
             const axios = require('axios');
@@ -1651,12 +1671,14 @@ class StreamManager {
             }
             
             if (targetStreamUrl) {
+              // Update ffmpeg command to use the selected stream URL instead of master playlist
+              ffmpegCommand = ffmpegCommand.replace(finalStreamUrl, targetStreamUrl);
               finalStreamUrl = targetStreamUrl;
               const quality = targetStreamUrl.includes('1920x1080') ? '1080p' : targetStreamUrl.includes('1280x720') ? '720p' : 'unknown';
               logger.info(`VLC-style approach: Using direct ${quality} stream URL (Plex)`, {
                 channelId: channel.id,
                 originalUrl: streamUrl,
-                masterPlaylist: finalStreamUrl,
+                masterPlaylist: streamUrl,
                 directStreamUrl: targetStreamUrl,
                 selectedQuality: quality
               });
