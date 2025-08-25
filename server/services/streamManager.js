@@ -964,29 +964,52 @@ class StreamManager {
                    config.plexlive?.transcoding?.mpegts?.hlsProtocolArgs ||
                    '-allowed_extensions ALL -protocol_whitelist file,http,https,tcp,tls,pipe,crypto';
       
-      // ENHANCED: Special handling for Amagi CDN streams (Sky News Now)
+      // VLC-style approach: Parse master playlist and use direct stream URL like VLC does
       if (finalUrl.includes('amagi.tv') || finalUrl.includes('tsv2.amagi.tv')) {
-        // Amagi CDN requires special HLS handling for dynamic tokens and master playlists
-        hlsArgs += ' -http_seekable 0 -multiple_requests 1 -http_persistent 1';  // Keep connections alive for token reuse
-        hlsArgs += ' -live_start_index 0';  // Start from beginning for faster startup (Plex compatibility)
-        hlsArgs += ' -reconnect 1 -reconnect_streamed 1 -reconnect_delay_max 4';  // Better reconnection
-        hlsArgs += ' -rw_timeout 10000000';  // 10 second timeout to avoid Plex 25s timeout
-        hlsArgs += ' -max_reload 10';  // Limit reloads to prevent delays (Plex compatibility)
-        
-        // CRITICAL: Handle master playlists - let FFmpeg auto-select best stream for faster startup
-        // For Plex compatibility, we need fast stream startup, so we let FFmpeg auto-select
-        // the best available stream rather than forcing a specific program which can be slow
-        // This should provide better compatibility with Plex's strict timeout requirements
-        logger.stream('Using FFmpeg auto-selection for master playlist (faster startup for Plex)', {
-          originalUrl: url,
-          finalUrl: finalUrl
-        });
-        
-        logger.stream('Applied Amagi CDN optimizations with master playlist handling', {
-          originalUrl: url,
-          finalUrl: finalUrl,
-          optimizations: 'master_playlist,dynamic_tokens,live_hls,extended_timeout,persistent_connections'
-        });
+        try {
+          // Fetch the master playlist like VLC does
+          const axios = require('axios');
+          const response = await axios.get(finalUrl, { timeout: 10000 });
+          const playlist = response.data;
+          
+          // Parse for highest quality up to 1080p (like VLC would select)
+          const lines = playlist.split('\n');
+          let targetStreamUrl = null;
+          
+          // Look for 1080p first (highest quality)
+          for (let i = 0; i < lines.length; i++) {
+            if (lines[i].includes('1920x1080') && lines[i + 1] && lines[i + 1].startsWith('https://')) {
+              targetStreamUrl = lines[i + 1].trim();
+              break;
+            }
+          }
+          
+          // Fallback to 720p if 1080p not found
+          if (!targetStreamUrl) {
+            for (let i = 0; i < lines.length; i++) {
+              if (lines[i].includes('1280x720') && lines[i + 1] && lines[i + 1].startsWith('https://')) {
+                targetStreamUrl = lines[i + 1].trim();
+                break;
+              }
+            }
+          }
+          
+          if (targetStreamUrl) {
+            finalUrl = targetStreamUrl;
+            const quality = targetStreamUrl.includes('1920x1080') ? '1080p' : targetStreamUrl.includes('1280x720') ? '720p' : 'unknown';
+            logger.stream(`VLC-style approach: Using direct ${quality} stream URL`, {
+              originalUrl: url,
+              masterPlaylist: finalUrl,
+              directStreamUrl: targetStreamUrl,
+              selectedQuality: quality
+            });
+          }
+        } catch (error) {
+          logger.stream('Failed to parse master playlist, using original URL', {
+            originalUrl: url,
+            error: error.message
+          });
+        }
       }
       // For other redirected streams, add standard HLS options
       else if (finalUrl !== url) {
@@ -1597,37 +1620,54 @@ class StreamManager {
                      config.plexlive?.transcoding?.mpegts?.hlsProtocolArgs ||
                      '-allowed_extensions ALL -protocol_whitelist file,http,https,tcp,tls,pipe,crypto';
         
-        // ENHANCED: Special handling for Amagi CDN streams (Sky News Now)
+        // VLC-style approach: Parse master playlist and use direct stream URL like VLC does
         if (finalStreamUrl.includes('amagi.tv') || finalStreamUrl.includes('tsv2.amagi.tv')) {
-          logger.info('PLEX STREAM DEBUG: Starting Amagi CDN stream processing', {
-            channelId: channel.id,
-            originalUrl: streamUrl,
-            finalUrl: finalStreamUrl,
-            isPlexRequest: true
-          });
-          // Amagi CDN requires special HLS handling for dynamic tokens and master playlists
-          hlsArgs += ' -http_seekable 0 -multiple_requests 1 -http_persistent 1';  // Keep connections alive for token reuse
-          hlsArgs += ' -live_start_index 0';  // Start from beginning for faster startup (Plex compatibility)
-          hlsArgs += ' -reconnect 1 -reconnect_streamed 1 -reconnect_delay_max 4';  // Better reconnection
-          hlsArgs += ' -rw_timeout 10000000';  // 10 second timeout to avoid Plex 25s timeout
-          hlsArgs += ' -max_reload 10';  // Limit reloads to prevent delays (Plex compatibility)
-          
-          // CRITICAL: Handle master playlists - let FFmpeg auto-select best stream for faster startup
-          // For Plex compatibility, we need fast stream startup, so we let FFmpeg auto-select
-          // the best available stream rather than forcing a specific program which can be slow
-          // This should provide better compatibility with Plex's strict timeout requirements
-          logger.info('Using FFmpeg auto-selection for master playlist (faster startup for Plex)', {
-            channelId: channel.id,
-            originalUrl: streamUrl,
-            finalUrl: finalStreamUrl
-          });
-          
-          logger.info('Applied Amagi CDN optimizations with master playlist handling for Plex stream', {
-            channelId: channel.id,
-            originalUrl: streamUrl,
-            finalUrl: finalStreamUrl,
-            optimizations: 'master_playlist,dynamic_tokens,live_hls,extended_timeout,persistent_connections'
-          });
+          try {
+            // Fetch the master playlist like VLC does
+            const axios = require('axios');
+            const response = await axios.get(finalStreamUrl, { timeout: 10000 });
+            const playlist = response.data;
+            
+            // Parse for highest quality up to 1080p (like VLC would select)
+            const lines = playlist.split('\n');
+            let targetStreamUrl = null;
+            
+            // Look for 1080p first (highest quality)
+            for (let i = 0; i < lines.length; i++) {
+              if (lines[i].includes('1920x1080') && lines[i + 1] && lines[i + 1].startsWith('https://')) {
+                targetStreamUrl = lines[i + 1].trim();
+                break;
+              }
+            }
+            
+            // Fallback to 720p if 1080p not found
+            if (!targetStreamUrl) {
+              for (let i = 0; i < lines.length; i++) {
+                if (lines[i].includes('1280x720') && lines[i + 1] && lines[i + 1].startsWith('https://')) {
+                  targetStreamUrl = lines[i + 1].trim();
+                  break;
+                }
+              }
+            }
+            
+            if (targetStreamUrl) {
+              finalStreamUrl = targetStreamUrl;
+              const quality = targetStreamUrl.includes('1920x1080') ? '1080p' : targetStreamUrl.includes('1280x720') ? '720p' : 'unknown';
+              logger.info(`VLC-style approach: Using direct ${quality} stream URL (Plex)`, {
+                channelId: channel.id,
+                originalUrl: streamUrl,
+                masterPlaylist: finalStreamUrl,
+                directStreamUrl: targetStreamUrl,
+                selectedQuality: quality
+              });
+            }
+          } catch (error) {
+            logger.info('Failed to parse master playlist, using original URL (Plex)', {
+              channelId: channel.id,
+              originalUrl: streamUrl,
+              error: error.message
+            });
+          }
         }
         // For other redirected streams (like TVNZ), add standard HLS options
         else if (finalStreamUrl !== streamUrl) {
