@@ -953,9 +953,18 @@ class StreamManager {
     // Get configurable FFmpeg command line with proper transcoding
     let ffmpegCommand;
     
-    // Use simpler FFmpeg args for Amagi streams to avoid TLS/beacon issues
+    // Use VLC-like FFmpeg args for Amagi streams to handle beacon/tracking segments
     if (finalUrl.includes('amagi.tv') || finalUrl.includes('tsv2.amagi.tv')) {
-      ffmpegCommand = '-hide_banner -loglevel error -i [URL] -c:v copy -c:a copy -f mpegts pipe:1';
+      // VLC-like approach: Skip TLS verification and ignore beacon segments
+      // This mimics how VLC handles problematic HLS streams with tracking URLs
+      ffmpegCommand = '-hide_banner -loglevel error ' +
+                     '-tls_verify 0 ' +  // Disable TLS certificate verification like VLC
+                     '-reconnect 1 -reconnect_streamed 1 -reconnect_on_network_error 1 ' +
+                     '-reconnect_delay_max 5 ' +
+                     '-i [URL] ' +
+                     '-c:v copy -c:a copy ' +
+                     '-f mpegts ' +
+                     'pipe:1';
     } else {
       ffmpegCommand = settings?.plexlive?.transcoding?.mpegts?.ffmpegArgs || 
                        config.plexlive?.transcoding?.mpegts?.ffmpegArgs ||
@@ -1620,9 +1629,18 @@ class StreamManager {
       // Get configurable FFmpeg command line
       let ffmpegCommand;
       
-      // Use simpler FFmpeg args for Amagi streams to avoid TLS/beacon issues
+      // Use VLC-like FFmpeg args for Amagi streams to handle beacon/tracking segments
       if (finalStreamUrl.includes('amagi.tv') || finalStreamUrl.includes('tsv2.amagi.tv')) {
-        ffmpegCommand = '-hide_banner -loglevel error -i [URL] -c:v copy -c:a copy -f mpegts pipe:1';
+        // VLC-like approach: Skip TLS verification and ignore beacon segments
+        // This mimics how VLC handles problematic HLS streams with tracking URLs
+        ffmpegCommand = '-hide_banner -loglevel error ' +
+                       '-tls_verify 0 ' +  // Disable TLS certificate verification like VLC
+                       '-reconnect 1 -reconnect_streamed 1 -reconnect_on_network_error 1 ' +
+                       '-reconnect_delay_max 5 ' +
+                       '-i [URL] ' +
+                       '-c:v copy -c:a copy ' +
+                       '-f mpegts ' +
+                       'pipe:1';
       } else {
         ffmpegCommand = settings?.plexlive?.transcoding?.mpegts?.ffmpegArgs || 
                          config.plexlive?.transcoding?.mpegts?.ffmpegArgs ||
