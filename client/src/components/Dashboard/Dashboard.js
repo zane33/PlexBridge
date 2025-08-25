@@ -216,7 +216,16 @@ function Dashboard() {
         }
       }
       if (data.bandwidth) {
-        setStreamingBandwidth(data.bandwidth);
+        // Map the backend bandwidth format to the Dashboard's expected format
+        const mappedBandwidth = {
+          totalBandwidthUsage: data.bandwidth.totalCurrentBitrate || 0,
+          peakBandwidthUsage: data.bandwidth.peakSessionBitrate || 0,
+          averageBandwidthPerSession: data.bandwidth.averageSessionBitrate || 0,
+          totalDataTransferred: data.bandwidth.totalBytesTransferred || 0,
+          activeSessionCount: data.sessions ? data.sessions.length : 0
+        };
+        setStreamingBandwidth(mappedBandwidth);
+        console.log('Updated bandwidth from Socket.IO:', mappedBandwidth);
       }
     });
 
@@ -434,14 +443,20 @@ function Dashboard() {
             setStreamingCapacity(activeResponse.value.data.data.capacity);
           }
           
-          if (activeResponse.value.data.data.bandwidth) {
-            const dedicatedBandwidth = activeResponse.value.data.data.bandwidth;
+          if (activeResponse.value.data.bandwidth || activeResponse.value.data.data?.bandwidth) {
+            const dedicatedBandwidth = activeResponse.value.data.bandwidth || activeResponse.value.data.data.bandwidth;
             setStreamingBandwidth({
               totalBandwidthUsage: dedicatedBandwidth.totalCurrentBitrate || 0,
               peakBandwidthUsage: dedicatedBandwidth.peakSessionBitrate || 0,
               averageBandwidthPerSession: dedicatedBandwidth.averageSessionBitrate || 0,
               totalDataTransferred: dedicatedBandwidth.totalBytesTransferred || 0,
               activeSessionCount: sessions.length
+            });
+            console.log('Set bandwidth data from API response:', {
+              totalBandwidthUsage: dedicatedBandwidth.totalCurrentBitrate || 0,
+              peakBandwidthUsage: dedicatedBandwidth.peakSessionBitrate || 0,
+              averageBandwidthPerSession: dedicatedBandwidth.averageSessionBitrate || 0,
+              totalDataTransferred: dedicatedBandwidth.totalBytesTransferred || 0
             });
           }
           

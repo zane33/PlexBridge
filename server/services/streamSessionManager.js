@@ -538,13 +538,16 @@ class StreamSessionManager {
             channelNumber: session.channelNumber,
             clientIP: session.clientIP,
             clientHostname: session.clientHostname,
+            hostname: session.clientHostname, // For Dashboard compatibility
             duration: session.duration,
             durationFormatted: session.durationFormatted,
             currentBitrate: session.currentBitrate,
             avgBitrate: session.avgBitrate,
             peakBitrate: session.peakBitrate,
             bytesTransferred: session.bytesTransferred,
-            errorCount: session.errorCount
+            errorCount: session.errorCount,
+            status: session.status,
+            streamingStatus: session.streamingStatus
           }))
         });
       }
