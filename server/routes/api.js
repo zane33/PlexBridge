@@ -6,6 +6,7 @@ const streamManager = require('../services/streamManager');
 const epgService = require('../services/epgService');
 const settingsService = require('../services/settingsService');
 const logger = require('../utils/logger');
+const { analyzeRemoteStream, isComplexStreamUrl } = require('../utils/streamAnalyzer');
 const { v4: uuidv4 } = require('uuid');
 const Joi = require('joi');
 const fs = require('fs');
@@ -448,10 +449,246 @@ router.get('/streams/:id', async (req, res) => {
   }
 });
 
+// Stream complexity analysis endpoint
+router.post('/streams/analyze', async (req, res) => {
+  try {
+    const { url } = req.body;
+    
+    if (!url) {
+      return res.status(400).json({ error: 'Stream URL is required' });
+    }
+
+    // Validate URL format
+    try {
+      new URL(url);
+    } catch (e) {
+      return res.status(400).json({ error: 'Invalid URL format' });
+    }
+
+    // Analyze the stream for complexity
+    const analysis = await analyzeRemoteStream(url, {
+      timeout: 15000,
+      headers: {
+        'User-Agent': 'PlexBridge/1.0 Stream Analyzer'
+      }
+    });
+
+    logger.info('Stream analysis completed', { 
+      url: url.substring(0, 100) + (url.length > 100 ? '...' : ''),
+      needsTranscoding: analysis.needsTranscoding,
+      complexityScore: analysis.complexityScore 
+    });
+
+    res.json(analysis);
+  } catch (error) {
+    logger.error('Stream analysis error:', error);
+    res.status(500).json({ error: 'Failed to analyze stream' });
+  }
+});
+
+// Bulk analyze and update existing streams for complexity
+router.post('/streams/bulk-analyze', async (req, res) => {
+  try {
+    logger.info('Starting bulk stream complexity analysis');
+    
+    // Get all HLS streams
+    const streams = await database.all('SELECT * FROM streams WHERE type = ? AND enabled = 1', ['hls']);
+    logger.info(`Found ${streams.length} HLS streams to analyze`);
+    
+    const results = {
+      total: streams.length,
+      analyzed: 0,
+      updated: 0,
+      errors: 0,
+      complex: [],
+      simple: [],
+      failed: []
+    };
+    
+    for (const stream of streams) {
+      try {
+        results.analyzed++;
+        
+        // Quick URL pattern check first (faster)
+        const isQuickComplex = isComplexStreamUrl(stream.url);
+        
+        // For URLs that might be complex, do full analysis
+        let needsTranscoding = isQuickComplex;
+        let analysis = { complexityScore: 0, reasons: [] };
+        
+        if (isQuickComplex || stream.url.length > 300) {
+          try {
+            analysis = await analyzeRemoteStream(stream.url, {
+              timeout: 10000,
+              headers: { 'User-Agent': 'PlexBridge/1.0 Bulk Analyzer' }
+            });
+            needsTranscoding = analysis.needsTranscoding;
+          } catch (analysisError) {
+            // Fall back to URL pattern detection if remote analysis fails
+            needsTranscoding = isQuickComplex;
+            logger.warn(`Remote analysis failed for ${stream.name}, using pattern detection`, { 
+              error: analysisError.message, 
+              urlLength: stream.url.length,
+              patternDetected: isQuickComplex 
+            });
+          }
+        }
+        
+        // Check current protocol options
+        let currentOptions = {};
+        try {
+          currentOptions = stream.protocol_options ? JSON.parse(stream.protocol_options) : {};
+        } catch (e) {
+          logger.warn(`Failed to parse protocol_options for stream ${stream.id}`);
+        }
+        
+        const currentForceTranscode = currentOptions.forceTranscode || false;
+        
+        // Update if transcoding recommendation changed
+        if (needsTranscoding !== currentForceTranscode) {
+          const newOptions = { ...currentOptions, forceTranscode: needsTranscoding };
+          
+          await database.run(
+            'UPDATE streams SET protocol_options = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?',
+            [JSON.stringify(newOptions), stream.id]
+          );
+          
+          results.updated++;
+          
+          logger.info(`Updated stream complexity setting`, {
+            streamName: stream.name,
+            streamId: stream.id,
+            forceTranscode: needsTranscoding,
+            complexityScore: analysis.complexityScore,
+            reasons: analysis.reasons?.slice(0, 3) // First 3 reasons
+          });
+        }
+        
+        // Track results
+        if (needsTranscoding) {
+          results.complex.push({
+            id: stream.id,
+            name: stream.name,
+            url: stream.url.substring(0, 100) + (stream.url.length > 100 ? '...' : ''),
+            complexityScore: analysis.complexityScore,
+            reasons: analysis.reasons || []
+          });
+        } else {
+          results.simple.push({
+            id: stream.id,
+            name: stream.name,
+            url: stream.url.substring(0, 100) + (stream.url.length > 100 ? '...' : '')
+          });
+        }
+        
+      } catch (error) {
+        results.errors++;
+        results.failed.push({
+          id: stream.id,
+          name: stream.name,
+          error: error.message
+        });
+        
+        logger.error(`Error analyzing stream ${stream.name}:`, error);
+      }
+    }
+    
+    logger.info('Bulk stream analysis completed', {
+      total: results.total,
+      analyzed: results.analyzed,
+      updated: results.updated,
+      complex: results.complex.length,
+      simple: results.simple.length,
+      errors: results.errors
+    });
+    
+    res.json(results);
+  } catch (error) {
+    logger.error('Bulk stream analysis error:', error);
+    res.status(500).json({ error: 'Failed to perform bulk stream analysis' });
+  }
+});
+
+// Debug endpoint for testing pattern detection
+router.post('/streams/test-pattern', async (req, res) => {
+  try {
+    const { url } = req.body;
+    
+    if (!url) {
+      return res.status(400).json({ error: 'URL is required' });
+    }
+    
+    const isComplex = isComplexStreamUrl(url);
+    const indicators = {
+      lengthOver300: url.length > 300,
+      hasAmagi: url.includes('amagi.tv'),
+      hasBeacon: url.includes('/beacon/'),
+      hasRedirect: url.includes('redirect_url'),
+      hasAdParams: url.includes('seen-ad='),
+      hasLongHexTokens: !!url.match(/[a-f0-9]{64,}/)
+    };
+    
+    const trueCount = Object.values(indicators).filter(Boolean).length;
+    
+    res.json({
+      url: url.substring(0, 100) + (url.length > 100 ? '...' : ''),
+      urlLength: url.length,
+      isComplex: isComplex,
+      indicators: indicators,
+      trueIndicators: trueCount,
+      threshold: 2
+    });
+  } catch (error) {
+    logger.error('Pattern test error:', error);
+    res.status(500).json({ error: 'Failed to test pattern' });
+  }
+});
+
 router.post('/streams', validate(streamSchema), async (req, res) => {
   try {
     const id = uuidv4();
     const data = req.validatedBody;
+
+    // Automatically analyze M3U8 streams for complexity
+    let streamAnalysis = null;
+    let recommendedProtocolOptions = data.protocol_options || {};
+
+    if (data.type === 'hls' && data.url) {
+      try {
+        // Quick URL pattern check first
+        if (isComplexStreamUrl(data.url)) {
+          logger.info('Complex stream URL detected, enabling transcoding', { 
+            url: data.url.substring(0, 100) + '...',
+            streamName: data.name 
+          });
+          recommendedProtocolOptions.forceTranscode = true;
+        } else {
+          // For shorter URLs, do a quick analysis
+          streamAnalysis = await analyzeRemoteStream(data.url, {
+            timeout: 10000,
+            headers: { 'User-Agent': 'PlexBridge/1.0' }
+          });
+
+          if (streamAnalysis.needsTranscoding) {
+            logger.info('Stream analysis recommends transcoding', { 
+              streamName: data.name,
+              reasons: streamAnalysis.reasons,
+              complexityScore: streamAnalysis.complexityScore 
+            });
+            recommendedProtocolOptions.forceTranscode = true;
+          }
+        }
+      } catch (error) {
+        logger.warn('Stream analysis failed, using fallback detection', { 
+          error: error.message,
+          streamName: data.name 
+        });
+        // Fallback to simple URL pattern analysis
+        if (isComplexStreamUrl(data.url)) {
+          recommendedProtocolOptions.forceTranscode = true;
+        }
+      }
+    }
 
     await database.run(`
       INSERT INTO streams (id, channel_id, name, url, type, backup_urls, auth_username, auth_password, headers, protocol_options, enabled)
@@ -466,13 +703,27 @@ router.post('/streams', validate(streamSchema), async (req, res) => {
       data.auth_username || null,
       data.auth_password || null,
       JSON.stringify(data.headers || {}),
-      JSON.stringify(data.protocol_options || {}),
+      JSON.stringify(recommendedProtocolOptions),
       data.enabled ? 1 : 0  // Convert boolean to integer for SQLite
     ]);
 
     const stream = await database.get('SELECT * FROM streams WHERE id = ?', [id]);
     
-    logger.info('Stream created', { id, name: data.name, url: data.url });
+    // Add analysis results to response if available
+    if (streamAnalysis || recommendedProtocolOptions.forceTranscode) {
+      stream.autoAnalysis = {
+        transcodeRecommended: !!recommendedProtocolOptions.forceTranscode,
+        analysis: streamAnalysis,
+        appliedOptions: recommendedProtocolOptions
+      };
+    }
+    
+    logger.info('Stream created with auto-analysis', { 
+      id, 
+      name: data.name, 
+      url: data.url.substring(0, 100) + (data.url.length > 100 ? '...' : ''),
+      forceTranscode: !!recommendedProtocolOptions.forceTranscode
+    });
     res.status(201).json(stream);
   } catch (error) {
     logger.error('Stream create error:', {
