@@ -1817,45 +1817,19 @@ router.get('/streams/active', async (req, res) => {
       logger.warn('Failed to get max concurrent streams for active streams endpoint:', error);
     }
     
-    logger.info('Getting active streams with enhanced session data...');
+    logger.info('Getting active streams...');
     const activeStreams = await streamManager.getActiveStreams();
-    
     logger.info('Getting streams by channel...');
     const streamsByChannel = streamManager.getStreamsByChannel();
-    
     logger.info('Getting concurrency metrics...');
     const concurrencyMetrics = streamManager.getConcurrencyMetrics(maxConcurrentStreams);
-    
-    // Get enhanced bandwidth and capacity data from StreamSessionManager
-    const streamSessionManager = require('../services/streamSessionManager');
-    
-    logger.info('Getting capacity metrics...');
-    const capacity = streamSessionManager.getCapacityMetrics(maxConcurrentStreams);
-    
-    logger.info('Getting bandwidth statistics...');
-    const bandwidth = streamSessionManager.getBandwidthStats();
-    
-    logger.info('Active streams endpoint data prepared successfully with enhanced analytics');
+    logger.info('Active streams endpoint data prepared successfully');
     
     res.json({
       streams: activeStreams, // Dashboard expects "streams" property
       activeStreams, // Keep for backward compatibility
       streamsByChannel,
-      metrics: concurrencyMetrics, // Keep for backward compatibility
-      
-      // Enhanced analytics data that Dashboard expects
-      capacity: capacity,
-      bandwidth: bandwidth,
-      
-      // Summary for convenience
-      summary: {
-        totalSessions: activeStreams.length,
-        availableSlots: capacity.availableStreams,
-        utilizationPercent: capacity.utilizationPercentage,
-        totalBandwidth: bandwidth.formattedStats.totalBandwidth,
-        status: capacity.status
-      },
-      
+      metrics: concurrencyMetrics,
       timestamp: new Date().toISOString()
     });
   } catch (error) {

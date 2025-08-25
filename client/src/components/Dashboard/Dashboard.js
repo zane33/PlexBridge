@@ -312,12 +312,9 @@ function Dashboard() {
 
   const fetchStreamingData = async () => {
     try {
-      console.log('Fetching streaming data from enhanced API...');
-      
-      // Primary: Use the enhanced /streams/active endpoint that now returns bandwidth and capacity data
+      // Use existing working API endpoint for now
       const sessionsResponse = await api.get('/streams/active');
       const sessions = sessionsResponse.data.streams || [];
-      console.log('Received sessions data:', sessions.length, 'sessions');
       setStreamingSessions(sessions);
       
       // Use capacity data from API response if available, otherwise calculate
@@ -325,7 +322,6 @@ function Dashboard() {
       if (sessionsResponse.data.capacity) {
         // Use the backend-calculated capacity data
         capacityData = sessionsResponse.data.capacity;
-        console.log('Using backend capacity data:', capacityData);
       } else {
         // Fallback: Calculate capacity metrics from current settings and active sessions
         const maxStreams = currentSettings?.plexlive?.streaming?.maxConcurrentStreams || 5;
@@ -339,11 +335,10 @@ function Dashboard() {
           availableStreams: Math.max(0, maxStreams - activeCount),
           status: utilizationPercentage > 90 ? 'critical' : utilizationPercentage > 70 ? 'warning' : 'normal'
         };
-        console.log('Using calculated capacity data:', capacityData);
       }
       setStreamingCapacity(capacityData);
       
-      // Use bandwidth data from API response if available, otherwise try dedicated API or calculate
+      // Use bandwidth data from API response if available, otherwise calculate
       let bandwidthData;
       if (sessionsResponse.data.bandwidth) {
         // Use the backend-calculated bandwidth data with proper mapping
@@ -355,39 +350,20 @@ function Dashboard() {
           totalDataTransferred: backendBandwidth.totalBytesTransferred || 0,
           activeSessionCount: sessions.length
         };
-        console.log('Using backend bandwidth data:', backendBandwidth);
       } else {
-        // Fallback: Try dedicated bandwidth API endpoint
-        try {
-          console.log('Attempting to fetch bandwidth from dedicated API...');
-          const bandwidthResponse = await api.get('/api/streaming/bandwidth');
-          const dedicatedBandwidth = bandwidthResponse.data.data.overall;
-          
-          bandwidthData = {
-            totalBandwidthUsage: dedicatedBandwidth.totalCurrentBitrate || 0,
-            peakBandwidthUsage: dedicatedBandwidth.peakSessionBitrate || 0,
-            averageBandwidthPerSession: dedicatedBandwidth.averageSessionBitrate || 0,
-            totalDataTransferred: dedicatedBandwidth.totalBytesTransferred || 0,
-            activeSessionCount: sessions.length
-          };
-          console.log('Using dedicated bandwidth API data:', dedicatedBandwidth);
-        } catch (bandwidthError) {
-          console.warn('Dedicated bandwidth API failed, calculating from sessions:', bandwidthError);
-          // Last fallback: Calculate bandwidth stats from active sessions
-          const totalBandwidth = sessions.reduce((sum, session) => sum + (session.currentBitrate || 0), 0);
-          const peakBandwidth = Math.max(...sessions.map(s => s.peakBitrate || 0), 0);
-          const avgBandwidth = sessions.length > 0 ? totalBandwidth / sessions.length : 0;
-          const totalDataTransferred = sessions.reduce((sum, session) => sum + (session.bytesTransferred || 0), 0);
-          
-          bandwidthData = {
-            totalBandwidthUsage: totalBandwidth,
-            peakBandwidthUsage: peakBandwidth,
-            averageBandwidthPerSession: avgBandwidth,
-            totalDataTransferred: totalDataTransferred,
-            activeSessionCount: sessions.length
-          };
-          console.log('Using calculated bandwidth data:', bandwidthData);
-        }
+        // Fallback: Calculate bandwidth stats from active sessions
+        const totalBandwidth = sessions.reduce((sum, session) => sum + (session.currentBitrate || 0), 0);
+        const peakBandwidth = Math.max(...sessions.map(s => s.peakBitrate || 0), 0);
+        const avgBandwidth = sessions.length > 0 ? totalBandwidth / sessions.length : 0;
+        const totalDataTransferred = sessions.reduce((sum, session) => sum + (session.bytesTransferred || 0), 0);
+        
+        bandwidthData = {
+          totalBandwidthUsage: totalBandwidth,
+          peakBandwidthUsage: peakBandwidth,
+          averageBandwidthPerSession: avgBandwidth,
+          totalDataTransferred: totalDataTransferred,
+          activeSessionCount: sessions.length
+        };
       }
       setStreamingBandwidth(bandwidthData);
       
@@ -412,51 +388,13 @@ function Dashboard() {
       };
       setStreamingStats(statsData);
       
-      console.log('Streaming data fetch completed successfully');
-      
     } catch (error) {
       console.error('Failed to fetch streaming data:', error);
-      
-      // Try to use dedicated streaming API as ultimate fallback
-      try {
-        console.log('Attempting fallback to dedicated streaming API...');
-        const [activeResponse, capacityResponse, bandwidthResponse] = await Promise.allSettled([
-          api.get('/api/streaming/active'),
-          api.get('/api/streaming/capacity'),
-          api.get('/api/streaming/bandwidth')
-        ]);
-        
-        if (activeResponse.status === 'fulfilled') {
-          const sessions = activeResponse.value.data.data.sessions || [];
-          setStreamingSessions(sessions);
-          
-          if (activeResponse.value.data.data.capacity) {
-            setStreamingCapacity(activeResponse.value.data.data.capacity);
-          }
-          
-          if (activeResponse.value.data.data.bandwidth) {
-            const dedicatedBandwidth = activeResponse.value.data.data.bandwidth;
-            setStreamingBandwidth({
-              totalBandwidthUsage: dedicatedBandwidth.totalCurrentBitrate || 0,
-              peakBandwidthUsage: dedicatedBandwidth.peakSessionBitrate || 0,
-              averageBandwidthPerSession: dedicatedBandwidth.averageSessionBitrate || 0,
-              totalDataTransferred: dedicatedBandwidth.totalBytesTransferred || 0,
-              activeSessionCount: sessions.length
-            });
-          }
-          
-          console.log('Fallback API data loaded successfully');
-        } else {
-          throw new Error('All API endpoints failed');
-        }
-      } catch (fallbackError) {
-        console.error('All streaming APIs failed:', fallbackError);
-        // Set empty/null fallbacks
-        setStreamingSessions([]);
-        setStreamingCapacity(null);
-        setStreamingStats(null);
-        setStreamingBandwidth(null);
-      }
+      // Set empty/null fallbacks
+      setStreamingSessions([]);
+      setStreamingCapacity(null);
+      setStreamingStats(null);
+      setStreamingBandwidth(null);
     }
   };
 

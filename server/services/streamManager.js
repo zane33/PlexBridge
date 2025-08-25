@@ -741,23 +741,11 @@ class StreamManager {
               stats.peakBitrate = Math.round(currentBps);
             }
 
-            // Update enhanced session tracking with comprehensive metrics
-            const updateResult = streamSessionManager.updateSessionMetrics(sessionId, {
+            // Update enhanced session tracking
+            streamSessionManager.updateSessionMetrics(sessionId, {
               bytesTransferred: stats.bytesTransferred,
               currentBitrate: stats.currentBitrate
             });
-            
-            // Log bandwidth update for debugging
-            if (stats.currentBitrate > 0) {
-              logger.debug('Bandwidth update for session', {
-                sessionId,
-                currentBitrate: stats.currentBitrate,
-                avgBitrate: stats.avgBitrate,
-                peakBitrate: stats.peakBitrate,
-                bytesTransferred: stats.bytesTransferred,
-                updateSuccessful: updateResult
-              });
-            }
           }
         }
       });
@@ -1251,19 +1239,8 @@ class StreamManager {
     const streams = [];
     const database = require('./database');
     
-    // Get enhanced session data from StreamSessionManager
-    const streamSessionManager = require('./streamSessionManager');
-    const enhancedSessions = streamSessionManager.getActiveSessions();
-    const sessionMap = new Map();
-    enhancedSessions.forEach(session => {
-      sessionMap.set(session.sessionId, session);
-    });
-    
     for (const [sessionId, stream] of this.activeStreams) {
       const stats = this.streamStats.get(sessionId);
-      
-      // Get enhanced session data if available
-      const enhancedSession = sessionMap.get(sessionId);
       
       // Get channel information from database
       let channelInfo = { name: 'Unknown Channel', number: 'N/A' };
@@ -1280,53 +1257,27 @@ class StreamManager {
         });
       }
       
-      // Combine StreamManager and StreamSessionManager data
       streams.push({
         sessionId,
         streamId: stream.streamId,
         startTime: stream.startTime,
-        duration: enhancedSession?.duration || (Date.now() - stream.startTime),
-        durationFormatted: enhancedSession?.durationFormatted || this.formatDuration(Date.now() - stream.startTime),
+        duration: Date.now() - stream.startTime,
         clientIP: stream.clientIP,
-        clientHostname: enhancedSession?.clientHostname || stream.clientIP,
         userAgent: stream.userAgent,
         clientIdentifier: stream.clientIdentifier,
         url: stream.url,
         type: stream.type,
         isUnique: stream.isUnique,
-        
-        // Enhanced bandwidth metrics from StreamSessionManager
-        bytesTransferred: enhancedSession?.bytesTransferred || stats?.bytesTransferred || 0,
-        currentBitrate: enhancedSession?.currentBitrate || stats?.currentBitrate || 0,
-        avgBitrate: enhancedSession?.avgBitrate || stats?.avgBitrate || 0,
-        peakBitrate: enhancedSession?.peakBitrate || stats?.peakBitrate || 0,
-        errorCount: enhancedSession?.errorCount || 0,
+        bytesTransferred: stats?.bytesTransferred || 0,
+        currentBitrate: stats?.currentBitrate || 0,
+        avgBitrate: stats?.avgBitrate || 0,
+        peakBitrate: stats?.peakBitrate || 0,
         lastUpdateTime: stats?.lastUpdateTime,
-        
-        // Channel information (prefer enhanced session data)
-        channelName: enhancedSession?.channelName || channelInfo.name,
-        channelNumber: enhancedSession?.channelNumber || channelInfo.number,
-        
-        // Status
-        status: enhancedSession?.status || 'active'
+        channelName: channelInfo.name,
+        channelNumber: channelInfo.number
       });
     }
     return streams;
-  }
-  
-  // Utility: Format duration in human-readable format
-  formatDuration(milliseconds) {
-    const seconds = Math.floor(milliseconds / 1000);
-    const minutes = Math.floor(seconds / 60);
-    const hours = Math.floor(minutes / 60);
-    
-    if (hours > 0) {
-      return `${hours}h ${minutes % 60}m ${seconds % 60}s`;
-    } else if (minutes > 0) {
-      return `${minutes}m ${seconds % 60}s`;
-    } else {
-      return `${seconds}s`;
-    }
   }
 
   // Get streams grouped by channel
@@ -1876,23 +1827,11 @@ class StreamManager {
               stats.avgBitrate = Math.round(totalBitrate / stats.bandwidthSamples.length);
             }
 
-            // Update enhanced session tracking with comprehensive metrics
-            const updateResult = streamSessionManager.updateSessionMetrics(sessionId, {
+            // Update enhanced session tracking
+            streamSessionManager.updateSessionMetrics(sessionId, {
               bytesTransferred: stats.bytesTransferred,
               currentBitrate: stats.currentBitrate
             });
-            
-            // Log bandwidth update for debugging
-            if (stats.currentBitrate > 0) {
-              logger.debug('Bandwidth update for session', {
-                sessionId,
-                currentBitrate: stats.currentBitrate,
-                avgBitrate: stats.avgBitrate,
-                peakBitrate: stats.peakBitrate,
-                bytesTransferred: stats.bytesTransferred,
-                updateSuccessful: updateResult
-              });
-            }
           }
         }
       });
