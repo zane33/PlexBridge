@@ -13,8 +13,6 @@ module.exports = defineConfig({
     trace: 'on-first-retry',
     screenshot: 'only-on-failure',
     video: 'retain-on-failure',
-    // Extended timeout for slower operations like deletion
-    actionTimeout: 30000,
   },
 
   projects: [

@@ -34,8 +34,9 @@ router.get('/active', async (req, res) => {
     // Get active sessions from enhanced session manager
     const activeSessions = streamSessionManager.getActiveSessions();
     
-    // Get capacity metrics using centralized method
-    const maxConcurrent = await settingsService.getMaxConcurrentStreams();
+    // Get capacity metrics
+    const settings = await settingsService.getSettings();
+    const maxConcurrent = settings?.plexlive?.streaming?.maxConcurrentStreams || 10;
     const capacity = streamSessionManager.getCapacityMetrics(maxConcurrent);
     
     // Get bandwidth statistics
@@ -83,7 +84,8 @@ router.get('/capacity', async (req, res) => {
   try {
     logger.info('Getting streaming capacity metrics');
 
-    const maxConcurrent = await settingsService.getMaxConcurrentStreams();
+    const settings = await settingsService.getSettings();
+    const maxConcurrent = settings?.plexlive?.streaming?.maxConcurrentStreams || 10;
     
     const capacity = streamSessionManager.getCapacityMetrics(maxConcurrent);
     const bandwidth = streamSessionManager.getBandwidthStats();
@@ -385,7 +387,8 @@ router.get('/stats', async (req, res) => {
   try {
     logger.info('Getting comprehensive streaming statistics');
 
-    const maxConcurrent = await settingsService.getMaxConcurrentStreams();
+    const settings = await settingsService.getSettings();
+    const maxConcurrent = settings?.plexlive?.streaming?.maxConcurrentStreams || 10;
     
     const capacity = streamSessionManager.getCapacityMetrics(maxConcurrent);
     const bandwidth = streamSessionManager.getBandwidthStats();
