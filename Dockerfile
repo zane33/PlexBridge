@@ -31,7 +31,9 @@ COPY package*.json ./
 
 # Install dependencies with npm configuration and rebuild native modules
 RUN npm config set registry https://registry.npmjs.org/ && \
-    npm ci --only=production && \
+    npm config set strict-ssl false && \
+    npm config set legacy-peer-deps true && \
+    npm ci --only=production --legacy-peer-deps && \
     npm rebuild better-sqlite3 && \
     npm cache clean --force
 
@@ -46,7 +48,8 @@ WORKDIR /app/client
 # Configure npm for Alpine Linux and build client
 RUN npm config set registry https://registry.npmjs.org/ && \
     npm config set strict-ssl false && \
-    npm ci --only=production && \
+    npm config set legacy-peer-deps true && \
+    npm ci --legacy-peer-deps && \
     npm run build
 
 WORKDIR /app

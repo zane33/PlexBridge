@@ -78,6 +78,7 @@ import {
 } from '@dnd-kit/modifiers';
 import { useSnackbar } from 'notistack';
 import api from '../../services/api';
+import ConfirmationDialog from '../shared/ConfirmationDialog';
 
 // Clean and Professional Sortable Channel Row Component
 function SortableChannelRow({ channel, index, ...props }) {
@@ -157,6 +158,10 @@ function ChannelManager() {
   const [editingChannel, setEditingChannel] = useState(null);
   const [saving, setSaving] = useState(false);
   const [deleting, setDeleting] = useState(null);
+  const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
+  const [deletingChannel, setDeletingChannel] = useState(null);
+  const [deleteCheckData, setDeleteCheckData] = useState(null);
+  const [deleteOption, setDeleteOption] = useState('');
   const [selectedChannels, setSelectedChannels] = useState([]);
   const [bulkMenuAnchor, setBulkMenuAnchor] = useState(null);
   const [page, setPage] = useState(0);
@@ -630,24 +635,63 @@ function ChannelManager() {
   // but the functionality remains available in handleConflictResolution
 
   const handleDelete = async (channel) => {
-    if (window.confirm(`Are you sure you want to delete channel "${channel.name}"? This action cannot be undone.`)) {
-      setDeleting(channel.id);
-      try {
-        await api.delete(`/api/channels/${channel.id}`);
-        enqueueSnackbar('Channel deleted successfully 🗑️', { 
-          variant: 'success',
-          autoHideDuration: 3000,
-        });
-        fetchChannels();
-      } catch (error) {
-        enqueueSnackbar('Failed to delete channel', { 
-          variant: 'error',
-          autoHideDuration: 5000,
-        });
-      } finally {
-        setDeleting(null);
-      }
+    setDeletingChannel(channel);
+    setDeleteOption('');
+    
+    try {
+      // First API call: Check what will be deleted
+      const checkResponse = await api.delete(`/api/channels/${channel.id}?checkOnly=true`);
+      setDeleteCheckData(checkResponse.data);
+      setDeleteDialogOpen(true);
+    } catch (error) {
+      console.error('Delete check failed:', error);
+      enqueueSnackbar('Failed to check channel deletion requirements', { 
+        variant: 'error',
+        autoHideDuration: 5000,
+      });
     }
+  };
+
+  const handleDeleteConfirm = async () => {
+    if (!deletingChannel || !deleteOption) return;
+
+    setDeleting(deletingChannel.id);
+    try {
+      const deleteStreams = deleteOption === 'delete_both';
+      
+      // Second API call: Actually delete with selected option
+      await api.delete(`/api/channels/${deletingChannel.id}?deleteStreams=${deleteStreams}`);
+      
+      const message = deleteStreams 
+        ? `Channel "${deletingChannel.name}" and ${deleteCheckData?.associatedStreams?.length || 0} associated streams deleted successfully 🗑️`
+        : `Channel "${deletingChannel.name}" deleted successfully 🗑️`;
+      
+      enqueueSnackbar(message, { 
+        variant: 'success',
+        autoHideDuration: 4000,
+      });
+      
+      setDeleteDialogOpen(false);
+      setDeletingChannel(null);
+      setDeleteCheckData(null);
+      setDeleteOption('');
+      fetchChannels();
+    } catch (error) {
+      console.error('Delete failed:', error);
+      enqueueSnackbar(error.response?.data?.error || 'Failed to delete channel', { 
+        variant: 'error',
+        autoHideDuration: 5000,
+      });
+    } finally {
+      setDeleting(null);
+    }
+  };
+
+  const handleDeleteCancel = () => {
+    setDeleteDialogOpen(false);
+    setDeletingChannel(null);
+    setDeleteCheckData(null);
+    setDeleteOption('');
   };
 
   const handleSelectAll = (event) => {
@@ -1654,6 +1698,64 @@ function ChannelManager() {
           </Button>
         </DialogActions>
       </Dialog>
+
+      {/* Enhanced Delete Confirmation Dialog */}
+      <ConfirmationDialog
+        open={deleteDialogOpen}
+        onClose={handleDeleteCancel}
+        onConfirm={handleDeleteConfirm}
+        loading={deleting === deletingChannel?.id}
+        title="Delete Channel"
+        type="delete"
+        itemName={deletingChannel?.name}
+        itemType="channel"
+        relatedItems={
+          deleteCheckData?.associatedStreams?.map(stream => ({
+            type: 'stream',
+            name: stream.name || `Stream ${stream.id}`,
+            details: `URL: ${stream.url?.substring(0, 50)}${stream.url?.length > 50 ? '...' : ''}`
+          })) || []
+        }
+        relatedItemsLabel="Associated Streams"
+        options={
+          deleteCheckData?.associatedStreams?.length > 0 ? [
+            {
+              value: 'delete_channel_only',
+              label: 'Delete Channel Only',
+              description: `Keep ${deleteCheckData.associatedStreams.length} associated stream${deleteCheckData.associatedStreams.length === 1 ? '' : 's'}. They will become unlinked and can be managed separately.`
+            },
+            {
+              value: 'delete_both',
+              label: 'Delete Channel and Streams',
+              description: `Permanently delete this channel and all ${deleteCheckData.associatedStreams.length} associated stream${deleteCheckData.associatedStreams.length === 1 ? '' : 's'}. This action cannot be undone.`
+            }
+          ] : [
+            {
+              value: 'delete_channel_only',
+              label: 'Delete Channel',
+              description: 'This channel has no associated streams and can be safely deleted.'
+            }
+          ]
+        }
+        selectedOption={deleteOption}
+        onOptionChange={setDeleteOption}
+        confirmButtonText={deleteOption === 'delete_both' ? 'Delete Channel & Streams' : 'Delete Channel'}
+        cancelButtonText="Cancel"
+        showWarning={true}
+      >
+        {deleteCheckData?.associatedStreams?.length > 0 && (
+          <Box sx={{ mt: 2, p: 2, backgroundColor: 'warning.light', borderRadius: 2, border: '1px solid', borderColor: 'warning.main' }}>
+            <Typography variant="body2" sx={{ fontWeight: 500, color: 'warning.dark' }}>
+              <strong>Impact Analysis:</strong>
+            </Typography>
+            <Typography variant="body2" sx={{ color: 'warning.dark', mt: 1 }}>
+              • Channel "{deletingChannel?.name}" (#{deletingChannel?.number}) will be removed from Plex lineup<br/>
+              • {deleteCheckData.associatedStreams.length} stream{deleteCheckData.associatedStreams.length === 1 ? '' : 's'} currently linked to this channel<br/>
+              • Choose whether to keep streams as unlinked or delete everything
+            </Typography>
+          </Box>
+        )}
+      </ConfirmationDialog>
     </Box>
   );
 }

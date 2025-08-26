@@ -12,6 +12,39 @@ class SettingsService {
   }
 
   /**
+   * Get max concurrent streams with proper fallback handling
+   * This ensures consistent behavior across all endpoints
+   */
+  async getMaxConcurrentStreams() {
+    try {
+      const maxStreams = await this.getSetting('plexlive.streaming.maxConcurrentStreams');
+      if (maxStreams !== null && maxStreams !== undefined) {
+        const parsed = parseInt(maxStreams);
+        if (!isNaN(parsed) && parsed > 0) {
+          return parsed;
+        }
+      }
+      
+      // Fallback to config, then environment, then hardcoded default
+      const configValue = config?.plexlive?.streaming?.maxConcurrentStreams;
+      if (configValue && parseInt(configValue) > 0) {
+        return parseInt(configValue);
+      }
+      
+      const envValue = process.env.MAX_CONCURRENT_STREAMS;
+      if (envValue && parseInt(envValue) > 0) {
+        return parseInt(envValue);
+      }
+      
+      // Final fallback
+      return 10;
+    } catch (error) {
+      logger.warn('Failed to get max concurrent streams, using default:', error);
+      return 10;
+    }
+  }
+
+  /**
    * Get all settings, merging database values with config defaults
    */
   async getSettings() {

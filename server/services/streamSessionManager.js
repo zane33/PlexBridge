@@ -86,8 +86,9 @@ class StreamSessionManager {
         peakBitrate: 0,
         errorCount: 0,
         
-        // Status
-        status: 'active'
+        // Status - start with 'connecting' and update to 'streaming' once data flows
+        status: 'connecting',
+        streamingStatus: 'Starting stream...'
       };
 
       // Store in memory for real-time access
@@ -145,6 +146,15 @@ class StreamSessionManager {
     // Update peak bitrate
     if (currentBitrate > session.peakBitrate) {
       session.peakBitrate = currentBitrate;
+    }
+
+    // Update status to streaming once data starts flowing
+    if (currentBitrate > 0 && session.status === 'connecting') {
+      session.status = 'streaming';
+      session.streamingStatus = 'Streaming Now';
+    } else if (bytesTransferred > 0 && session.status === 'connecting') {
+      session.status = 'streaming';
+      session.streamingStatus = 'Streaming Now';
     }
 
     // Add bandwidth sample for average calculation
@@ -517,13 +527,16 @@ class StreamSessionManager {
             channelNumber: session.channelNumber,
             clientIP: session.clientIP,
             clientHostname: session.clientHostname,
+            hostname: session.clientHostname, // For Dashboard compatibility
             duration: session.duration,
             durationFormatted: session.durationFormatted,
             currentBitrate: session.currentBitrate,
             avgBitrate: session.avgBitrate,
             peakBitrate: session.peakBitrate,
             bytesTransferred: session.bytesTransferred,
-            errorCount: session.errorCount
+            errorCount: session.errorCount,
+            status: session.status,
+            streamingStatus: session.streamingStatus
           }))
         });
       }

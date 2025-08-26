@@ -61,6 +61,7 @@ import {
 } from '@mui/icons-material';
 import { useSnackbar } from 'notistack';
 import api, { m3uApi } from '../../services/api';
+import ConfirmationDialog from '../shared/ConfirmationDialog';
 import socketService from '../../services/socket';
 import EnhancedVideoPlayer from '../VideoPlayer/EnhancedVideoPlayer';
 import SimpleVideoPlayer from '../VideoPlayer/SimpleVideoPlayer';
@@ -86,6 +87,10 @@ function StreamManager() {
   const [editingStream, setEditingStream] = useState(null);
   const [saving, setSaving] = useState(false);
   const [deleting, setDeleting] = useState(null);
+  const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
+  const [deletingStream, setDeletingStream] = useState(null);
+  const [deleteCheckData, setDeleteCheckData] = useState(null);
+  const [deleteOption, setDeleteOption] = useState('');
   const [validating, setValidating] = useState(null);
   const [validationResult, setValidationResult] = useState(null);
   const [selectedStreams, setSelectedStreams] = useState([]);
@@ -485,18 +490,63 @@ function StreamManager() {
   };
 
   const handleDelete = async (stream) => {
-    if (window.confirm(`Are you sure you want to delete stream "${stream.name}"? This action cannot be undone.`)) {
-      setDeleting(stream.id);
-      try {
-        await api.delete(`/api/streams/${stream.id}`);
-        enqueueSnackbar('Stream deleted successfully 🗑️', { variant: 'success' });
-        fetchStreams();
-      } catch (error) {
-        enqueueSnackbar('Failed to delete stream', { variant: 'error' });
-      } finally {
-        setDeleting(null);
-      }
+    setDeletingStream(stream);
+    setDeleteOption('');
+    
+    try {
+      // First API call: Check what will be deleted
+      const checkResponse = await api.delete(`/api/streams/${stream.id}?checkOnly=true`);
+      setDeleteCheckData(checkResponse.data);
+      setDeleteDialogOpen(true);
+    } catch (error) {
+      console.error('Delete check failed:', error);
+      enqueueSnackbar('Failed to check stream deletion requirements', { 
+        variant: 'error',
+        autoHideDuration: 5000,
+      });
     }
+  };
+
+  const handleDeleteConfirm = async () => {
+    if (!deletingStream || !deleteOption) return;
+
+    setDeleting(deletingStream.id);
+    try {
+      const deleteChannel = deleteOption === 'delete_both';
+      
+      // Second API call: Actually delete with selected option
+      await api.delete(`/api/streams/${deletingStream.id}?deleteChannel=${deleteChannel}`);
+      
+      const message = deleteChannel && deleteCheckData?.associatedChannel
+        ? `Stream "${deletingStream.name}" and associated channel "${deleteCheckData.associatedChannel.name}" deleted successfully 🗑️`
+        : `Stream "${deletingStream.name}" deleted successfully 🗑️`;
+      
+      enqueueSnackbar(message, { 
+        variant: 'success',
+        autoHideDuration: 4000,
+      });
+      
+      setDeleteDialogOpen(false);
+      setDeletingStream(null);
+      setDeleteCheckData(null);
+      setDeleteOption('');
+      fetchStreams();
+    } catch (error) {
+      console.error('Delete failed:', error);
+      enqueueSnackbar(error.response?.data?.error || 'Failed to delete stream', { 
+        variant: 'error',
+        autoHideDuration: 5000,
+      });
+    } finally {
+      setDeleting(null);
+    }
+  };
+
+  const handleDeleteCancel = () => {
+    setDeleteDialogOpen(false);
+    setDeletingStream(null);
+    setDeleteCheckData(null);
+    setDeleteOption('');
   };
 
   const handleBulkDelete = async () => {
@@ -2110,6 +2160,66 @@ function StreamManager() {
           onError={handlePlayerError}
         />
       )}
+
+      {/* Enhanced Delete Confirmation Dialog */}
+      <ConfirmationDialog
+        open={deleteDialogOpen}
+        onClose={handleDeleteCancel}
+        onConfirm={handleDeleteConfirm}
+        loading={deleting === deletingStream?.id}
+        title="Delete Stream"
+        type="delete"
+        itemName={deletingStream?.name}
+        itemType="stream"
+        relatedItems={
+          deleteCheckData?.associatedChannel ? [
+            {
+              type: 'channel',
+              name: deleteCheckData.associatedChannel.name,
+              details: `Channel #${deleteCheckData.associatedChannel.number}`
+            }
+          ] : []
+        }
+        relatedItemsLabel="Associated Channel"
+        options={
+          deleteCheckData?.associatedChannel ? [
+            {
+              value: 'delete_stream_only',
+              label: 'Delete Stream Only',
+              description: `Keep the associated channel "${deleteCheckData.associatedChannel.name}" (#{deleteCheckData.associatedChannel.number}). It will remain in the lineup but won't have this stream.`
+            },
+            {
+              value: 'delete_both',
+              label: 'Delete Stream and Channel',
+              description: `Permanently delete this stream and the associated channel "${deleteCheckData.associatedChannel.name}" from the Plex lineup.`
+            }
+          ] : [
+            {
+              value: 'delete_stream_only',
+              label: 'Delete Stream',
+              description: 'This stream is not associated with any channel and can be safely deleted.'
+            }
+          ]
+        }
+        selectedOption={deleteOption}
+        onOptionChange={setDeleteOption}
+        confirmButtonText={deleteOption === 'delete_both' ? 'Delete Stream & Channel' : 'Delete Stream'}
+        cancelButtonText="Cancel"
+        showWarning={true}
+      >
+        {deleteCheckData?.associatedChannel && (
+          <Box sx={{ mt: 2, p: 2, backgroundColor: 'warning.light', borderRadius: 2, border: '1px solid', borderColor: 'warning.main' }}>
+            <Typography variant="body2" sx={{ fontWeight: 500, color: 'warning.dark' }}>
+              <strong>Impact Analysis:</strong>
+            </Typography>
+            <Typography variant="body2" sx={{ color: 'warning.dark', mt: 1 }}>
+              • Stream "{deletingStream?.name}" will be permanently removed<br/>
+              • Channel "{deleteCheckData.associatedChannel.name}" (#{deleteCheckData.associatedChannel.number}) is linked to this stream<br/>
+              • Choose whether to keep the channel in the lineup or remove it completely
+            </Typography>
+          </Box>
+        )}
+      </ConfirmationDialog>
     </Box>
   );
 }
