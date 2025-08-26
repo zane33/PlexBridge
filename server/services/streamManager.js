@@ -7,6 +7,7 @@ const config = require('../config');
 const cacheService = require('./cacheService');
 const settingsService = require('./settingsService');
 const streamSessionManager = require('./streamSessionManager');
+const dynamicStreamAnalyzer = require('./dynamicStreamAnalyzer');
 
 class StreamManager {
   constructor() {
@@ -18,7 +19,7 @@ class StreamManager {
     this.streamTimeouts = new Map(); // Track stream timeouts
   }
 
-  // Universal stream format detection
+  // Universal stream format detection and characterization
   async detectStreamFormat(url) {
     try {
       logger.stream('Detecting stream format for URL', { url });
@@ -126,6 +127,147 @@ class StreamManager {
     } catch (error) {
       logger.error('Stream format detection failed', { url, error: error.message });
       return { type: 'unknown', protocol: 'unknown' };
+    }
+  }
+
+  // Dynamic stream characteristics analyzer - analyzes any URI without domain-specific logic
+  async analyzeStreamCharacteristics(url) {
+    try {
+      logger.stream('Analyzing stream characteristics for dynamic handling', { url });
+      
+      const characteristics = {
+        hasRedirects: false,
+        hasTokenAuth: false,
+        hasComplexPlaylist: false,
+        isLiveStream: false,
+        isCDNBacked: false,
+        requiresSpecialHandling: false,
+        supportedMethods: [],
+        confidence: 'low'
+      };
+
+      // Analyze URL structure patterns
+      const urlObj = new URL(url);
+      const path = urlObj.pathname.toLowerCase();
+      const query = urlObj.searchParams;
+      
+      // Detect token-based authentication
+      if (query.has('token') || query.has('auth') || query.has('key') || 
+          query.has('signature') || query.has('expires') || query.has('sessionID')) {
+        characteristics.hasTokenAuth = true;
+        characteristics.requiresSpecialHandling = true;
+        logger.stream('Token-based authentication detected', { url });
+      }
+
+      // Analyze redirect patterns by testing HEAD request
+      try {
+        const headResponse = await axios.head(url, {
+          maxRedirects: 0,
+          validateStatus: (status) => status < 400 || status === 302 || status === 301,
+          timeout: 5000,
+          headers: {
+            'User-Agent': config.protocols.http.userAgent
+          }
+        });
+
+        if (headResponse.status === 302 || headResponse.status === 301) {
+          characteristics.hasRedirects = true;
+          characteristics.requiresSpecialHandling = true;
+          logger.stream('Redirect behavior detected', { url, redirectStatus: headResponse.status });
+        }
+      } catch (error) {
+        // Non-redirect or other error - continue analysis
+      }
+
+      // Analyze for CDN characteristics
+      const hostname = urlObj.hostname.toLowerCase();
+      if (hostname.includes('cdn') || hostname.includes('edge') || 
+          hostname.includes('cache') || hostname.includes('akamai') ||
+          hostname.includes('cloudfront') || hostname.includes('fastly') ||
+          path.includes('/hls/') || path.includes('/dash/') ||
+          path.includes('/playlist/') || path.includes('/manifest/')) {
+        characteristics.isCDNBacked = true;
+        logger.stream('CDN-backed stream detected', { url, hostname });
+      }
+
+      // Analyze playlist complexity by checking content
+      if (path.includes('.m3u8') || url.includes('m3u8')) {
+        try {
+          const playlistResponse = await axios.get(url, {
+            timeout: 8000,
+            maxRedirects: 5,
+            responseType: 'text',
+            headers: {
+              'User-Agent': config.protocols.http.userAgent
+            }
+          });
+
+          const playlistContent = playlistResponse.data;
+          
+          // Analyze playlist complexity
+          const hasMultipleVariants = (playlistContent.match(/#EXT-X-STREAM-INF/g) || []).length > 1;
+          const hasSegmentEncryption = playlistContent.includes('#EXT-X-KEY');
+          const hasDiscontinuities = playlistContent.includes('#EXT-X-DISCONTINUITY');
+          const isLive = playlistContent.includes('#EXT-X-TARGETDURATION') && !playlistContent.includes('#EXT-X-ENDLIST');
+          const hasBeaconSegments = playlistContent.includes('beacon') || playlistContent.includes('tracking');
+
+          if (hasMultipleVariants || hasSegmentEncryption || hasDiscontinuities || hasBeaconSegments) {
+            characteristics.hasComplexPlaylist = true;
+            characteristics.requiresSpecialHandling = true;
+          }
+
+          if (isLive) {
+            characteristics.isLiveStream = true;
+          }
+
+          characteristics.confidence = 'high';
+          logger.stream('Playlist analysis completed', {
+            url,
+            hasMultipleVariants,
+            hasSegmentEncryption,
+            hasDiscontinuities,
+            isLive,
+            hasBeaconSegments
+          });
+
+        } catch (error) {
+          logger.stream('Playlist analysis failed, using URL-based detection', {
+            url,
+            error: error.message
+          });
+          characteristics.confidence = 'medium';
+        }
+      }
+
+      // Determine optimal handling methods based on characteristics
+      if (characteristics.hasTokenAuth && characteristics.hasComplexPlaylist) {
+        characteristics.supportedMethods = ['master_playlist_direct', 'minimal_intervention'];
+      } else if (characteristics.hasRedirects && !characteristics.hasTokenAuth) {
+        characteristics.supportedMethods = ['resolve_redirects', 'direct_stream_url'];
+      } else if (characteristics.isCDNBacked && !characteristics.hasComplexPlaylist) {
+        characteristics.supportedMethods = ['segment_proxy', 'playlist_rewrite'];
+      } else {
+        characteristics.supportedMethods = ['standard_proxy', 'direct_passthrough'];
+      }
+
+      logger.stream('Stream characteristics analysis complete', {
+        url,
+        characteristics
+      });
+
+      return characteristics;
+    } catch (error) {
+      logger.error('Stream characteristics analysis failed', { url, error: error.message });
+      return {
+        hasRedirects: false,
+        hasTokenAuth: false,
+        hasComplexPlaylist: false,
+        isLiveStream: true, // Assume live for safety
+        isCDNBacked: false,
+        requiresSpecialHandling: true, // Err on side of caution
+        supportedMethods: ['minimal_intervention'],
+        confidence: 'low'
+      };
     }
   }
 
@@ -714,7 +856,11 @@ class StreamManager {
       // Pipe stream to response
       streamProcess.stdout.pipe(res);
 
-      // Handle stream events with detailed bandwidth tracking
+      // Enhanced bandwidth tracking with improved data transfer monitoring for complex streams
+      let totalBytesTransferred = 0;
+      let lastMetricsUpdate = Date.now();
+      let lastDashboardUpdate = Date.now();
+      
       streamProcess.stdout.on('data', (chunk) => {
         const stats = this.streamStats.get(sessionId);
         if (stats) {
@@ -722,23 +868,32 @@ class StreamManager {
           const deltaTime = now - stats.lastUpdateTime;
           const deltaBytes = chunk.length;
           
-          // Update basic metrics
+          // Update basic metrics with immediate tracking
           stats.bytesTransferred += deltaBytes;
+          totalBytesTransferred += deltaBytes;
           stats.lastUpdateTime = now;
           
-          // Calculate current bitrate (bits per second)
+          // Calculate current bitrate (bits per second) with better precision
           if (deltaTime > 0) {
             const currentBps = (deltaBytes * 8) / (deltaTime / 1000); // bits per second
             stats.currentBitrate = Math.round(currentBps);
             
-            // Keep bandwidth samples for average calculation (last 30 seconds)
-            stats.bandwidthSamples.push({ time: now, bitrate: currentBps });
-            stats.bandwidthSamples = stats.bandwidthSamples.filter(sample => now - sample.time < 30000);
+            // Enhanced bandwidth sampling with sliding window
+            if (!stats.bandwidthSamples) stats.bandwidthSamples = [];
+            stats.bandwidthSamples.push({ time: now, bitrate: currentBps, bytes: deltaBytes });
             
-            // Calculate average bitrate
+            // Keep samples for last 60 seconds for better accuracy
+            stats.bandwidthSamples = stats.bandwidthSamples.filter(sample => now - sample.time < 60000);
+            
+            // Calculate weighted average bitrate (more weight to recent samples)
             if (stats.bandwidthSamples.length > 0) {
-              const totalBps = stats.bandwidthSamples.reduce((sum, sample) => sum + sample.bitrate, 0);
-              stats.avgBitrate = Math.round(totalBps / stats.bandwidthSamples.length);
+              const totalWeight = stats.bandwidthSamples.length;
+              const weightedSum = stats.bandwidthSamples.reduce((sum, sample, index) => {
+                const weight = (index + 1) / totalWeight; // Linear weighting
+                return sum + (sample.bitrate * weight);
+              }, 0);
+              const weightSum = stats.bandwidthSamples.reduce((sum, _, index) => sum + ((index + 1) / totalWeight), 0);
+              stats.avgBitrate = Math.round(weightedSum / weightSum);
             }
             
             // Track peak bitrate
@@ -746,25 +901,88 @@ class StreamManager {
               stats.peakBitrate = Math.round(currentBps);
             }
 
-            // Update enhanced session tracking with comprehensive metrics
-            const updateResult = streamSessionManager.updateSessionMetrics(sessionId, {
-              bytesTransferred: stats.bytesTransferred,
-              currentBitrate: stats.currentBitrate
-            });
+            // Force more frequent session metrics updates for accurate dashboard tracking
+            if (now - lastMetricsUpdate >= 1000) { // Update every 1 second
+              const updateResult = streamSessionManager.updateSessionMetrics(sessionId, {
+                bytesTransferred: stats.bytesTransferred,
+                currentBitrate: stats.currentBitrate
+              });
+              lastMetricsUpdate = now;
+              
+              // Log detailed metrics for complex streams
+              if (stats.currentBitrate > 0 && (now - (stats.lastDetailLog || 0) > 15000)) {
+                stats.lastDetailLog = now;
+                logger.stream('Enhanced stream metrics (complex stream)', {
+                  sessionId,
+                  currentBitrate: stats.currentBitrate,
+                  avgBitrate: stats.avgBitrate,
+                  peakBitrate: stats.peakBitrate,
+                  bytesTransferred: stats.bytesTransferred,
+                  totalTransferred: totalBytesTransferred,
+                  sampleCount: stats.bandwidthSamples.length,
+                  updateSuccessful: updateResult
+                });
+              }
+            }
             
-            // Log bandwidth update for debugging
-            if (stats.currentBitrate > 0) {
-              logger.debug('Bandwidth update for session', {
+            // Real-time dashboard updates via WebSocket every 2 seconds
+            if (global.io && (now - lastDashboardUpdate >= 2000)) {
+              global.io.emit('stream:metrics', {
                 sessionId,
+                streamId: stream?.streamId,
+                bytesTransferred: stats.bytesTransferred,
                 currentBitrate: stats.currentBitrate,
                 avgBitrate: stats.avgBitrate,
                 peakBitrate: stats.peakBitrate,
-                bytesTransferred: stats.bytesTransferred,
-                updateSuccessful: updateResult
+                isActive: true
+              });
+              lastDashboardUpdate = now;
+            }
+          }
+        }
+      });
+
+      // Monitor for data transfer stalls in complex streams
+      const stallMonitor = setInterval(() => {
+        const stats = this.streamStats.get(sessionId);
+        if (stats) {
+          const now = Date.now();
+          const timeSinceLastData = now - stats.lastUpdateTime;
+          
+          // If no data for 20 seconds, force metrics update and log warning
+          if (timeSinceLastData > 20000) {
+            logger.warn('Stream data transfer stall detected', {
+              sessionId,
+              timeSinceLastData,
+              totalBytes: stats.bytesTransferred,
+              lastBitrate: stats.currentBitrate
+            });
+            
+            // Force metrics update with stalled indicator
+            streamSessionManager.updateSessionMetrics(sessionId, {
+              bytesTransferred: stats.bytesTransferred,
+              currentBitrate: 0 // Indicate stalled stream
+            });
+            
+            // Notify dashboard of stalled stream
+            if (global.io) {
+              global.io.emit('stream:stalled', {
+                sessionId,
+                streamId: stream?.streamId,
+                stallDuration: timeSinceLastData
               });
             }
           }
         }
+      }, 10000); // Check every 10 seconds
+
+      // Clean up stall monitor on stream end
+      streamProcess.on('exit', () => {
+        clearInterval(stallMonitor);
+      });
+
+      streamProcess.on('error', () => {
+        clearInterval(stallMonitor);
       });
 
       streamProcess.stderr.on('data', (data) => {
@@ -987,8 +1205,8 @@ class StreamManager {
     // Replace [URL] placeholder with actual stream URL
     ffmpegCommand = ffmpegCommand.replace('[URL]', finalUrl);
     
-    // Add HLS-specific arguments if needed (but skip for Amagi streams)
-    if (finalUrl.includes('.m3u8') && !finalUrl.includes('amagi.tv') && !finalUrl.includes('tsv2.amagi.tv')) {
+    // Add HLS-specific arguments based on stream characteristics
+    if (finalUrl.includes('.m3u8') && dynamicStreamAnalyzer.shouldAddHLSArgs(characteristics)) {
       let hlsArgs = settings?.plexlive?.transcoding?.mpegts?.hlsProtocolArgs || 
                    config.plexlive?.transcoding?.mpegts?.hlsProtocolArgs ||
                    '-allowed_extensions ALL -protocol_whitelist file,http,https,tcp,tls,pipe,crypto';
