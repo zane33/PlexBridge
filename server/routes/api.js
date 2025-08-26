@@ -24,7 +24,7 @@ const channelSchema = Joi.object({
 });
 
 const streamSchema = Joi.object({
-  channel_id: Joi.string().required(),
+  channel_id: Joi.string().allow(null, '').optional(),
   name: Joi.string().required().max(255),
   url: Joi.string().uri().required(),
   type: Joi.string().valid('hls', 'dash', 'rtsp', 'rtmp', 'udp', 'http', 'mms', 'srt').required(),
@@ -378,20 +378,107 @@ router.put('/channels/:id', validate(channelSchema), async (req, res) => {
 
 router.delete('/channels/:id', async (req, res) => {
   try {
-    const result = await database.run('DELETE FROM channels WHERE id = ?', [req.params.id]);
+    const { checkOnly, deleteStreams } = req.query;
+    const channelId = req.params.id;
     
-    if (result.changes === 0) {
+    // First, check if channel exists
+    const channel = await database.get('SELECT * FROM channels WHERE id = ?', [channelId]);
+    if (!channel) {
       return res.status(404).json({ error: 'Channel not found' });
     }
-
+    
+    // Find associated streams
+    const associatedStreams = await database.all(
+      'SELECT * FROM streams WHERE channel_id = ?', 
+      [channelId]
+    );
+    
+    // If checkOnly=true, return what would be affected without deleting
+    if (checkOnly === 'true') {
+      return res.json({
+        channel,
+        associatedStreams,
+        impact: {
+          channelWillBeDeleted: true,
+          streamsCount: associatedStreams.length,
+          streamsWillBeDeleted: false, // Default behavior unless deleteStreams=true
+          streamsWillBeDeallocated: associatedStreams.length > 0
+        },
+        options: {
+          deleteStreams: 'Delete channel and all associated streams',
+          deallocateStreams: 'Delete channel but keep streams (unassign from channel)'
+        }
+      });
+    }
+    
+    // Handle actual deletion using database service methods
+    let streamsDeleted = 0;
+    let streamsDeallocated = 0;
+    
+    if (deleteStreams === 'true') {
+      // Delete all associated streams first
+      if (associatedStreams.length > 0) {
+        const deleteResult = await database.run('DELETE FROM streams WHERE channel_id = ?', [channelId]);
+        streamsDeleted = deleteResult.changes;
+        
+        // Clear stream caches
+        associatedStreams.forEach(stream => {
+          cacheService.del(`stream:${stream.id}`).catch(() => {});
+        });
+      }
+    } else {
+      // Deallocate streams (set channel_id to NULL)
+      if (associatedStreams.length > 0) {
+        const deallocateResult = await database.run('UPDATE streams SET channel_id = NULL WHERE channel_id = ?', [channelId]);
+        streamsDeallocated = deallocateResult.changes;
+      }
+    }
+    
+    // Delete the channel
+    const channelResult = await database.run('DELETE FROM channels WHERE id = ?', [channelId]);
+    
+    if (channelResult.changes === 0) {
+      return res.status(404).json({ error: 'Channel not found or already deleted' });
+    }
+    
+    const result = { 
+      channelDeleted: true, 
+      streamsDeleted,
+      streamsDeallocated
+    };
+    
     // Clear channel lineup cache
     await cacheService.del('lineup:channels');
     
-    logger.info('Channel deleted', { id: req.params.id });
-    res.json({ message: 'Channel deleted successfully' });
+    logger.info('Channel deleted successfully', { 
+      channelId, 
+      deleteStreams: deleteStreams === 'true',
+      streamsAffected: associatedStreams.length,
+      ...result
+    });
+    
+    res.json({
+      message: 'Channel deleted successfully',
+      channelId,
+      channelName: channel.name,
+      ...result,
+      associatedStreams: associatedStreams.map(s => ({ id: s.id, name: s.name }))
+    });
+    
   } catch (error) {
-    logger.error('Channel delete error:', error);
-    res.status(500).json({ error: 'Failed to delete channel' });
+    logger.error('Enhanced channel delete error:', error);
+    if (error.message.includes('FOREIGN KEY constraint')) {
+      res.status(409).json({ 
+        error: 'Cannot delete channel',
+        details: 'Channel has associated streams. Use deleteStreams=true to delete them or deleteStreams=false to deallocate them.',
+        suggestion: 'Add ?deleteStreams=true or ?deleteStreams=false to your request'
+      });
+    } else {
+      res.status(500).json({ 
+        error: 'Failed to delete channel',
+        details: process.env.NODE_ENV === 'development' ? error.message : 'Internal server error'
+      });
+    }
   }
 });
 
@@ -809,20 +896,141 @@ router.put('/streams/:id', validate(streamSchema), async (req, res) => {
 
 router.delete('/streams/:id', async (req, res) => {
   try {
-    const result = await database.run('DELETE FROM streams WHERE id = ?', [req.params.id]);
+    const { checkOnly, deleteChannel } = req.query;
+    const streamId = req.params.id;
     
-    if (result.changes === 0) {
+    // First, get the stream with its associated channel
+    const stream = await database.get(`
+      SELECT s.*, c.name as channel_name, c.number as channel_number
+      FROM streams s
+      LEFT JOIN channels c ON s.channel_id = c.id
+      WHERE s.id = ?
+    `, [streamId]);
+    
+    if (!stream) {
       return res.status(404).json({ error: 'Stream not found' });
     }
-
-    // Clear stream cache
-    await cacheService.del(`stream:${req.params.id}`);
     
-    logger.info('Stream deleted', { id: req.params.id });
-    res.json({ message: 'Stream deleted successfully' });
+    // Get associated channel info and other streams using the same channel
+    let associatedChannel = null;
+    let otherStreamsOnChannel = [];
+    
+    if (stream.channel_id) {
+      associatedChannel = await database.get(
+        'SELECT * FROM channels WHERE id = ?', 
+        [stream.channel_id]
+      );
+      
+      otherStreamsOnChannel = await database.all(
+        'SELECT * FROM streams WHERE channel_id = ? AND id != ?', 
+        [stream.channel_id, streamId]
+      );
+    }
+    
+    // If checkOnly=true, return what would be affected without deleting
+    if (checkOnly === 'true') {
+      return res.json({
+        stream: {
+          id: stream.id,
+          name: stream.name,
+          url: stream.url,
+          channel_id: stream.channel_id,
+          channel_name: stream.channel_name,
+          channel_number: stream.channel_number
+        },
+        associatedChannel,
+        otherStreamsOnChannel,
+        impact: {
+          streamWillBeDeleted: true,
+          hasAssociatedChannel: !!associatedChannel,
+          otherStreamsOnChannelCount: otherStreamsOnChannel.length,
+          channelWillBeDeleted: false // Default behavior unless deleteChannel=true
+        },
+        options: associatedChannel ? {
+          keepChannel: `Delete stream but keep channel "${associatedChannel.name}" (${otherStreamsOnChannel.length} other streams)`,
+          deleteChannel: `Delete stream and channel "${associatedChannel.name}" (will also delete ${otherStreamsOnChannel.length} other streams)`
+        } : {
+          deleteStream: 'Delete stream (no channel association)'
+        }
+      });
+    }
+    
+    // Handle actual deletion using database service methods
+    let channelDeleted = false;
+    let otherStreamsDeleted = 0;
+    
+    if (deleteChannel === 'true' && associatedChannel) {
+      // Delete all other streams associated with the channel first
+      if (otherStreamsOnChannel.length > 0) {
+        const otherResult = await database.run('DELETE FROM streams WHERE channel_id = ? AND id != ?', 
+          [stream.channel_id, streamId]);
+        otherStreamsDeleted = otherResult.changes;
+        
+        // Clear other stream caches
+        otherStreamsOnChannel.forEach(s => {
+          cacheService.del(`stream:${s.id}`).catch(() => {});
+        });
+      }
+      
+      // Delete the main stream
+      const streamResult = await database.run('DELETE FROM streams WHERE id = ?', [streamId]);
+      if (streamResult.changes === 0) {
+        return res.status(404).json({ error: 'Stream not found' });
+      }
+      
+      // Delete the channel
+      const channelResult = await database.run('DELETE FROM channels WHERE id = ?', [stream.channel_id]);
+      channelDeleted = channelResult.changes > 0;
+      
+    } else {
+      // Just delete the stream
+      const result = await database.run('DELETE FROM streams WHERE id = ?', [streamId]);
+      
+      if (result.changes === 0) {
+        return res.status(404).json({ error: 'Stream not found' });
+      }
+    }
+    
+    const result = {
+      streamDeleted: true,
+      channelDeleted,
+      otherStreamsDeleted
+    };
+    
+    // Clear stream cache
+    await cacheService.del(`stream:${streamId}`);
+    
+    // Clear channel lineup cache if channel was affected
+    if (result.channelDeleted || associatedChannel) {
+      await cacheService.del('lineup:channels');
+    }
+    
+    logger.info('Stream deleted successfully', { 
+      streamId,
+      streamName: stream.name,
+      deleteChannel: deleteChannel === 'true',
+      ...result
+    });
+    
+    res.json({
+      message: 'Stream deleted successfully',
+      streamId,
+      streamName: stream.name,
+      ...result,
+      associatedChannel: associatedChannel ? {
+        id: associatedChannel.id,
+        name: associatedChannel.name,
+        number: associatedChannel.number
+      } : null,
+      otherStreamsAffected: otherStreamsOnChannel.map(s => ({ id: s.id, name: s.name }))
+    });
+    
   } catch (error) {
-    logger.error('Stream delete error:', error);
-    res.status(500).json({ error: 'Failed to delete stream' });
+    logger.error('Enhanced stream delete error:', error);
+    res.status(500).json({ 
+      error: 'Failed to delete stream',
+      details: process.env.NODE_ENV === 'development' ? error.message : 'Internal server error'
+    });
   }
 });
 

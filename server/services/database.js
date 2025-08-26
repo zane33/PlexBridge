@@ -32,6 +32,9 @@ class DatabaseService {
       // Initialize database
       this.db = new Database(this.dbPath);
       
+      // Enable foreign key constraints
+      this.db.pragma('foreign_keys = ON');
+      
       // Enable WAL mode for better concurrency
       this.db.pragma('journal_mode = WAL');
       this.db.pragma('synchronous = NORMAL');
@@ -202,7 +205,7 @@ class DatabaseService {
           enabled INTEGER DEFAULT 1,
           created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
           updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-          FOREIGN KEY (channel_id) REFERENCES channels (id)
+          FOREIGN KEY (channel_id) REFERENCES channels (id) ON DELETE SET NULL
         )
       `);
       createStreamsTable.run();
