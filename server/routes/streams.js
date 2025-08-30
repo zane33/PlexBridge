@@ -71,24 +71,43 @@ router.get('/stream/:channelId/:filename?', async (req, res) => {
       filename
     });
     
-    // Get channel info from database
-    const channel = await database.get('SELECT * FROM channels WHERE id = ?', [channelId]);
-    if (!channel) {
-      logger.warn('Channel not found for stream request', { channelId, filename, clientIP: req.ip });
-      return res.status(404).send('Channel not found');
-    }
+    // Get channel info from database - first try as channel ID
+    let channel = await database.get('SELECT * FROM channels WHERE id = ?', [channelId]);
+    let stream = null;
     
-    // Get stream info for channel
-    const stream = await database.get('SELECT * FROM streams WHERE channel_id = ?', [channelId]);
-    if (!stream) {
-      logger.warn('Stream not found for channel', { 
-        channelId, 
-        channelName: channel.name,
-        channelNumber: channel.number,
-        filename,
-        clientIP: req.ip 
+    if (channel) {
+      // Found channel, get associated stream
+      stream = await database.get('SELECT * FROM streams WHERE channel_id = ?', [channelId]);
+      if (!stream) {
+        logger.warn('Stream not found for channel', { 
+          channelId, 
+          channelName: channel.name,
+          channelNumber: channel.number,
+          filename,
+          clientIP: req.ip 
+        });
+        return res.status(404).send('Stream not found for channel');
+      }
+    } else {
+      // No channel found, try as stream ID directly
+      stream = await database.get('SELECT * FROM streams WHERE id = ?', [channelId]);
+      if (stream && stream.channel_id) {
+        // Found stream, get associated channel
+        channel = await database.get('SELECT * FROM channels WHERE id = ?', [stream.channel_id]);
+      }
+      
+      if (!stream) {
+        logger.warn('Neither channel nor stream found', { channelId, filename, clientIP: req.ip });
+        return res.status(404).send('Channel not found');
+      }
+      
+      // Log that we're using stream ID access
+      logger.info('Stream accessed directly by stream ID', { 
+        streamId: channelId, 
+        streamName: stream.name,
+        channelId: stream.channel_id,
+        channelName: channel ? channel.name : 'Unknown'
       });
-      return res.status(404).send('Stream not found for channel');
     }
     
     // Determine the target URL
