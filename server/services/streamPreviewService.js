@@ -158,11 +158,22 @@ class StreamPreviewService {
           streamId,
           reason: 'codec_compatibility',
           videoCodecs: codecInfo.video,
-          audioCodecs: codecInfo.audio
+          audioCodecs: codecInfo.audio,
+          encrypted: codecInfo.encrypted
         });
       } else {
         // Use existing logic for non-HLS streams
         needsTranscoding = this.shouldTranscode(streamFormat, false) || needsHLSConversion;
+      }
+      
+      // Special handling for encrypted HLS streams
+      if (codecInfo && codecInfo.encrypted && (streamFormat === 'hls' || stream.url.includes('.m3u8'))) {
+        logger.stream('Detected encrypted HLS stream, using specialized handler', {
+          streamId,
+          encryptionMethod: codecInfo.encryptionMethod?.method,
+          keyUri: codecInfo.encryptionMethod?.keyUri
+        });
+        return await this.handleEncryptedHLSStream(stream, req, res, quality, parseInt(timeout));
       }
       
       if (needsTranscoding) {
@@ -220,7 +231,11 @@ class StreamPreviewService {
           'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
           'Accept': 'application/vnd.apple.mpegurl, application/x-mpegURL, */*'
         },
-        timeout: 10000 // 10 second timeout
+        timeout: 10000, // 10 second timeout
+        maxRedirects: 5, // Follow redirects to get final manifest
+        validateStatus: function (status) {
+          return status >= 200 && status < 400; // Accept 2xx and 3xx responses
+        }
       });
       
       if (response.status !== 200) {
@@ -228,6 +243,11 @@ class StreamPreviewService {
       }
       
       const manifestText = response.data;
+      
+      // Check if HLS stream uses encryption
+      const isEncrypted = manifestText.includes('#EXT-X-KEY:METHOD=AES-128') ||
+                          manifestText.includes('#EXT-X-KEY:METHOD=SAMPLE-AES') ||
+                          manifestText.includes('EXT-X-KEY');
       
       // Parse codec information from HLS manifest
       const codecMatches = manifestText.match(/CODECS="([^"]+)"/g) || [];
@@ -238,7 +258,9 @@ class StreamPreviewService {
         video: [],
         audio: [],
         needsTranscoding: false,
-        browserCompatible: true
+        browserCompatible: true,
+        encrypted: isEncrypted,
+        encryptionMethod: isEncrypted ? this.detectEncryptionMethod(manifestText) : null
       };
       
       for (const codecString of codecs) {
@@ -305,10 +327,22 @@ class StreamPreviewService {
         }
       }
       
+      // Force transcoding for encrypted streams to handle decryption properly
+      if (isEncrypted) {
+        supportedCodecs.needsTranscoding = true;
+        logger.stream('Encrypted HLS stream detected, forcing transcoding for proper decryption', {
+          url: streamUrl,
+          encryptionMethod: supportedCodecs.encryptionMethod,
+          encrypted: true
+        });
+      }
+      
       logger.stream('HLS codec analysis completed', {
         url: streamUrl,
         codecs: supportedCodecs,
-        manifestCodecs: codecs
+        manifestCodecs: codecs,
+        encrypted: isEncrypted,
+        encryptionMethod: supportedCodecs.encryptionMethod
       });
       
       return supportedCodecs;
@@ -323,8 +357,91 @@ class StreamPreviewService {
         video: [{ codec: 'Unknown', browserSupported: false }],
         audio: [{ codec: 'Unknown', browserSupported: false }],
         needsTranscoding: true,
-        browserCompatible: false
+        browserCompatible: false,
+        encrypted: false, // Unknown encryption status
+        encryptionMethod: null
       };
+    }
+  }
+  
+  // Detect encryption method from HLS manifest
+  detectEncryptionMethod(manifestText) {
+    const keyMethodMatch = manifestText.match(/#EXT-X-KEY:METHOD=([^,\s]+)/);
+    if (keyMethodMatch) {
+      const method = keyMethodMatch[1];
+      const uriMatch = manifestText.match(/#EXT-X-KEY:.*?URI="([^"]+)"/);
+      const keyUri = uriMatch ? uriMatch[1] : null;
+      const ivMatch = manifestText.match(/#EXT-X-KEY:.*?IV=0x([A-Fa-f0-9]+)/);
+      const iv = ivMatch ? ivMatch[1] : null;
+      
+      return {
+        method: method,
+        keyUri: keyUri,
+        iv: iv,
+        requiresDecryption: true
+      };
+    }
+    return null;
+  }
+  
+  // Handle encrypted HLS streams with specialized logic
+  async handleEncryptedHLSStream(stream, req, res, quality, timeoutMs) {
+    const sessionId = `encrypted_${stream.id}_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+    
+    logger.stream('Handling encrypted HLS stream with specialized processing', {
+      streamId: stream.id,
+      sessionId,
+      url: stream.url
+    });
+    
+    try {
+      // Test key accessibility first
+      const codecInfo = await this.detectHLSCodecs(stream.url);
+      if (codecInfo.encryptionMethod && codecInfo.encryptionMethod.keyUri) {
+        const keyAccessible = await this.testEncryptionKeyAccess(codecInfo.encryptionMethod.keyUri);
+        if (!keyAccessible) {
+          logger.warn('Encryption key not accessible, attempting direct stream', {
+            sessionId,
+            keyUri: codecInfo.encryptionMethod.keyUri
+          });
+          return await this.handleDirectPreview(stream, req, res);
+        }
+      }
+      
+      // Proceed with enhanced transcoding for encrypted streams
+      return await this.handleTranscodedPreview(stream, req, res, quality, timeoutMs);
+      
+    } catch (error) {
+      logger.error('Encrypted HLS stream handling failed', {
+        sessionId,
+        streamId: stream.id,
+        error: error.message
+      });
+      
+      // Fallback to direct stream
+      logger.warn('Falling back to direct stream for encrypted HLS', { sessionId });
+      return await this.handleDirectPreview(stream, req, res);
+    }
+  }
+  
+  // Test if encryption key is accessible
+  async testEncryptionKeyAccess(keyUri) {
+    try {
+      const axios = require('axios');
+      const response = await axios.head(keyUri, {
+        timeout: 5000,
+        headers: {
+          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+        }
+      });
+      
+      return response.status === 200 && response.headers['content-length'] === '16';
+    } catch (error) {
+      logger.warn('Encryption key accessibility test failed', {
+        keyUri,
+        error: error.message
+      });
+      return false;
     }
   }
   
@@ -742,6 +859,8 @@ class StreamPreviewService {
   // Handle transcoded stream preview
   async handleTranscodedPreview(stream, req, res, quality, timeoutMs) {
     const sessionId = `transcode_${stream.id}_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+    let isEncryptedStream = false;
+    let encryptionInfo = null;
     
     try {
       // Check concurrency limits
@@ -757,14 +876,30 @@ class StreamPreviewService {
         });
       }
 
+      // Pre-analyze HLS streams for encryption
+      if (stream.type === 'hls' || stream.url.includes('.m3u8')) {
+        try {
+          const codecInfo = await this.detectHLSCodecs(stream.url);
+          isEncryptedStream = codecInfo.encrypted;
+          encryptionInfo = codecInfo.encryptionMethod;
+        } catch (error) {
+          logger.warn('Failed to pre-analyze stream encryption, proceeding with transcoding', {
+            streamId: stream.id,
+            error: error.message
+          });
+        }
+      }
+
       logger.stream('Starting transcoded preview', { 
         streamId: stream.id,
         sessionId,
         quality,
-        timeout: timeoutMs
+        timeout: timeoutMs,
+        encrypted: isEncryptedStream
       });
 
-      const ffmpegProcess = await this.createTranscodingProcess(stream, quality, sessionId);
+      const transcodingResult = await this.createTranscodingProcess(stream, quality, sessionId, isEncryptedStream, encryptionInfo);
+      const ffmpegProcess = transcodingResult?.process;
       
       if (!ffmpegProcess) {
         logger.warn('FFmpeg not available, falling back to direct stream', { 
@@ -772,6 +907,12 @@ class StreamPreviewService {
           fallbackUrl: stream.url 
         });
         return await this.handleDirectPreview(stream, req, res);
+      }
+      
+      // Update encryption info from transcoding result if available
+      if (transcodingResult?.isEncrypted !== undefined) {
+        isEncryptedStream = transcodingResult.isEncrypted;
+        encryptionInfo = transcodingResult.encryptionInfo;
       }
 
       // Track the transcoding session
@@ -821,46 +962,157 @@ class StreamPreviewService {
       // Pipe FFmpeg output to response
       ffmpegProcess.stdout.pipe(res);
 
-      // Handle FFmpeg stderr (errors and info)
+      // Handle FFmpeg stderr (errors and info) with enhanced error detection
       let stderrBuffer = '';
+      let encryptionErrors = 0;
+      let segmentErrors = 0;
       ffmpegProcess.stderr.on('data', (data) => {
-        stderrBuffer += data.toString();
-        // Log only error messages, not progress info
-        const errorLines = data.toString().split('\n')
+        const output = data.toString();
+        stderrBuffer += output;
+        
+        // Detect specific error types for better handling
+        const errorLines = output.split('\n')
           .filter(line => line.includes('error') || line.includes('Error') || line.includes('ERROR'))
           .filter(line => line.trim().length > 0);
         
+        // Count encryption and segment-specific errors
+        for (const line of errorLines) {
+          if (line.includes('Error when loading first segment') || 
+              line.includes('Error opening input file') ||
+              line.includes('Unable to open key') ||
+              line.includes('Invalid key') ||
+              line.includes('decryption')) {
+            encryptionErrors++;
+          }
+          if (line.includes('.ts') && (line.includes('404') || line.includes('403'))) {
+            segmentErrors++;
+          }
+        }
+        
         if (errorLines.length > 0) {
-          logger.error('FFmpeg errors', { sessionId, errors: errorLines });
+          logger.error('FFmpeg errors', { 
+            sessionId, 
+            errors: errorLines,
+            encryptionErrors,
+            segmentErrors,
+            streamEncrypted: isEncryptedStream
+          });
         }
       });
 
-      // Handle process completion
+      // Handle process completion with enhanced error analysis
       ffmpegProcess.on('close', (code) => {
         clearTimeout(timeoutId);
-        logger.stream('Transcoding process closed', { sessionId, exitCode: code });
+        logger.stream('Transcoding process closed', { 
+          sessionId, 
+          exitCode: code,
+          encryptionErrors,
+          segmentErrors,
+          streamEncrypted: isEncryptedStream
+        });
         
         if (code !== 0) {
+          const recentStderr = stderrBuffer.slice(-2000); // Last 2000 chars for better error context
+          const isEncryptionFailure = encryptionErrors > 0 || 
+                                    recentStderr.includes('Error when loading first segment') ||
+                                    recentStderr.includes('Error opening input file') ||
+                                    recentStderr.includes('Unable to open key');
+          
           logger.error('Transcoding failed', { 
             sessionId, 
             exitCode: code,
-            stderr: stderrBuffer.slice(-1000) // Last 1000 chars
+            stderr: recentStderr,
+            encryptionErrors,
+            segmentErrors,
+            isEncryptionFailure,
+            streamEncrypted: isEncryptedStream
           });
+          
+          // For encryption failures on encrypted streams, attempt direct stream fallback
+          if (isEncryptedStream && isEncryptionFailure && !res.headersSent) {
+            logger.warn('Encryption-related transcoding failure, attempting direct stream fallback', {
+              sessionId,
+              streamId: stream.id,
+              exitCode: code
+            });
+            
+            return this.handleDirectPreview(stream, req, res).catch(fallbackError => {
+              logger.error('Direct stream fallback failed after transcoding failure', {
+                sessionId,
+                transcodingExitCode: code,
+                fallbackError: fallbackError.message
+              });
+              if (!res.headersSent) {
+                res.status(500).json({ 
+                  error: 'Stream processing failed',
+                  message: 'Unable to process encrypted stream through transcoding or direct access',
+                  details: {
+                    transcodingExitCode: code,
+                    encryptionErrors,
+                    isEncryptionFailure,
+                    fallbackAttempted: true
+                  }
+                });
+              }
+            });
+          }
         }
         
         this.cleanupTranscodingSession(sessionId, 'completed');
       });
 
-      // Handle process errors
+      // Handle process errors with intelligent fallbacks
       ffmpegProcess.on('error', (error) => {
         clearTimeout(timeoutId);
-        logger.error('Transcoding process error', { sessionId, error: error.message });
+        logger.error('Transcoding process error', { 
+          sessionId, 
+          error: error.message,
+          encryptionErrors,
+          segmentErrors,
+          streamEncrypted: isEncryptedStream
+        });
         this.cleanupTranscodingSession(sessionId, 'error');
+        
+        // For encrypted streams with decryption errors, try direct streaming as fallback
+        if (isEncryptedStream && encryptionErrors > 0 && !res.headersSent) {
+          logger.warn('Transcoding failed for encrypted stream, attempting direct stream fallback', {
+            sessionId,
+            streamId: stream.id,
+            encryptionErrors
+          });
+          
+          // Attempt direct stream as fallback
+          return this.handleDirectPreview(stream, req, res).catch(fallbackError => {
+            logger.error('Direct stream fallback also failed', {
+              sessionId,
+              originalError: error.message,
+              fallbackError: fallbackError.message
+            });
+            if (!res.headersSent) {
+              res.status(500).json({ 
+                error: 'Stream unavailable',
+                message: 'Both transcoding and direct streaming failed for this encrypted stream',
+                details: {
+                  transcodingError: error.message,
+                  directStreamError: fallbackError.message,
+                  encrypted: true
+                }
+              });
+            }
+          });
+        }
         
         if (!res.headersSent) {
           res.status(500).json({ 
             error: 'Transcoding failed',
-            message: 'Video transcoding process encountered an error'
+            message: isEncryptedStream ? 
+              'Encrypted stream transcoding failed. The stream may use unsupported encryption or have connectivity issues.' :
+              'Video transcoding process encountered an error',
+            details: {
+              encrypted: isEncryptedStream,
+              encryptionErrors,
+              segmentErrors
+            }
           });
         }
       });
@@ -910,7 +1162,7 @@ class StreamPreviewService {
   }
 
   // Create FFmpeg transcoding process with enhanced configuration
-  async createTranscodingProcess(stream, quality = 'medium', sessionId) {
+  async createTranscodingProcess(stream, quality = 'medium', sessionId, preAnalyzedEncrypted = false, preAnalyzedEncryptionInfo = null) {
     try {
       const qualityProfile = config.plexlive?.transcoding?.qualityProfiles?.[quality] || {
         resolution: '1280x720',
@@ -928,16 +1180,47 @@ class StreamPreviewService {
       
       // CRITICAL FIX: Handle HLS redirects and master playlists properly
       let inputUrl = stream.url;
+      let isEncryptedStream = preAnalyzedEncrypted;
+      let encryptionInfo = preAnalyzedEncryptionInfo;
       
       // For HLS streams, resolve redirects and select a variant from master playlist
       if (stream.type === 'hls' || stream.url.includes('.m3u8')) {
         try {
-          inputUrl = await this.resolveHLSStreamUrl(stream.url, quality);
-          logger.stream('Resolved HLS stream URL for transcoding', {
+          // Use pre-analyzed encryption info or detect if not provided
+          let codecInfo;
+          if (!preAnalyzedEncrypted && !preAnalyzedEncryptionInfo) {
+            codecInfo = await this.detectHLSCodecs(stream.url);
+            isEncryptedStream = codecInfo.encrypted;
+            encryptionInfo = codecInfo.encryptionMethod;
+          } else {
+            // Use pre-analyzed info to avoid duplicate analysis
+            codecInfo = { encrypted: isEncryptedStream, encryptionMethod: encryptionInfo };
+          }
+          
+          logger.stream('HLS stream analysis for transcoding', {
             originalUrl: stream.url,
-            resolvedUrl: inputUrl,
-            quality: quality
+            encrypted: isEncryptedStream,
+            encryptionMethod: encryptionInfo?.method,
+            needsTranscoding: codecInfo.needsTranscoding
           });
+          
+          // For encrypted streams, use the original master playlist URL
+          // FFmpeg will handle the decryption and segment downloading
+          if (isEncryptedStream) {
+            inputUrl = stream.url; // Keep original URL for encrypted streams
+            logger.stream('Using original URL for encrypted HLS stream', {
+              originalUrl: stream.url,
+              reason: 'encrypted_stream_ffmpeg_handling'
+            });
+          } else {
+            // For non-encrypted streams, resolve to specific variant
+            inputUrl = await this.resolveHLSStreamUrl(stream.url, quality);
+            logger.stream('Resolved HLS stream URL for transcoding', {
+              originalUrl: stream.url,
+              resolvedUrl: inputUrl,
+              quality: quality
+            });
+          }
         } catch (error) {
           logger.error('Failed to resolve HLS stream URL, using original', {
             error: error.message,
@@ -950,11 +1233,12 @@ class StreamPreviewService {
       
       // Enhanced FFmpeg arguments for HLS streaming compatibility with H.264 High Profile support
       // CRITICAL FIX: Support H.264 High Profile (avc1.4D4028, avc1.4D401F) and AAC-LC (mp4a.40.2)
+      // ENCRYPTION FIX: Enhanced configuration for encrypted HLS streams
       const args = [
         '-fflags', '+genpts+discardcorrupt',  // Generate timestamps and handle corrupted packets
-        '-re',                                // Read input at native frame rate
         '-user_agent', 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36', // User agent for HLS servers
-        '-headers', 'Connection: keep-alive\r\nAccept: */*\r\n', // HTTP headers
+        '-headers', 'Connection: keep-alive\r\nAccept: */*\r\nAccept-Encoding: identity\r\n', // HTTP headers with identity encoding
+        ...(isEncryptedStream ? ['-timeout', '30000000'] : ['-re']), // For encrypted: timeout instead of real-time, for others: real-time
         '-i', inputUrl,
         
         // Input stream mapping with fallback options
@@ -1013,27 +1297,48 @@ class StreamPreviewService {
         // Insert HLS-specific input options after the input URL
         const inputIndex = args.findIndex(arg => arg === inputUrl);
         if (inputIndex !== -1) {
-          args.splice(inputIndex - 1, 0, 
-            '-protocol_whitelist', 'file,http,https,tcp,tls,crypto', // Allow all needed protocols
-            '-reconnect', '1',                // Auto-reconnect on connection loss
-            '-reconnect_streamed', '1',       // Reconnect for live streams
-            '-reconnect_delay_max', '5',      // Max 5 second reconnect delay
-            '-reconnect_at_eof', '1',         // Reconnect at end of file
-            '-multiple_requests', '1',        // Use multiple HTTP requests for segments
-            '-seekable', '0',                 // Treat as non-seekable live stream
-            '-analyzeduration', '5000000',    // 5 seconds to analyze stream
-            '-probesize', '10M'               // 10MB probe size for codec detection
-          );
+          // Enhanced protocol support for encrypted streams
+          const protocolList = isEncryptedStream ? 
+            'file,http,https,tcp,tls,crypto,data' : 
+            'file,http,https,tcp,tls,crypto';
+          
+          const hlsInputOptions = [
+            '-protocol_whitelist', protocolList, // Extended protocol support for encryption
+            '-allowed_extensions', 'ALL',        // Allow all file extensions
+            '-reconnect', '1',                   // Auto-reconnect on connection loss
+            '-reconnect_streamed', '1',          // Reconnect for live streams
+            '-reconnect_delay_max', isEncryptedStream ? '10' : '5', // Longer delay for encrypted streams
+            '-reconnect_at_eof', '1',            // Reconnect at end of file
+            '-multiple_requests', '1',           // Use multiple HTTP requests for segments
+            '-seekable', '0',                    // Treat as non-seekable live stream
+            '-analyzeduration', isEncryptedStream ? '10000000' : '5000000', // Longer analysis for encrypted
+            '-probesize', isEncryptedStream ? '50M' : '10M', // Larger probe for encrypted streams
+          ];
+          
+          // Add encryption-specific options
+          if (isEncryptedStream) {
+            hlsInputOptions.push(
+              '-max_reload', '8192',             // Increase reload attempts for key fetching
+              '-hls_flags', 'delete_segments+round_durations', // Handle segment cleanup
+              '-http_persistent', '1',           // Keep HTTP connections alive
+              '-rw_timeout', '30000000'          // 30 second read/write timeout
+            );
+          }
+          
+          args.splice(inputIndex - 1, 0, ...hlsInputOptions);
         }
         
-        logger.stream('Configured FFmpeg for HLS stream with H.264 High Profile support', { 
+        logger.stream('Configured FFmpeg for HLS stream with enhanced encryption support', { 
           streamId: stream.id,
           videoCodec: 'H.264 High Profile (avc1.4D4028, avc1.4D401F)',
           audioCodec: 'AAC-LC (mp4a.40.2)',
           sampleRate: '48000Hz',
           channels: 'stereo',
           profile: 'high',
-          level: '4.0'
+          level: '4.0',
+          encrypted: isEncryptedStream,
+          encryptionMethod: encryptionInfo?.method || 'none',
+          protocolWhitelist: isEncryptedStream ? 'extended' : 'standard'
         });
       } else {
         // For other streams, try to copy audio if present, skip if not
@@ -1094,7 +1399,11 @@ class StreamPreviewService {
         pid: ffmpegProcess.pid
       });
 
-      return ffmpegProcess;
+      return {
+        process: ffmpegProcess,
+        isEncrypted: isEncryptedStream,
+        encryptionInfo: encryptionInfo
+      };
 
     } catch (error) {
       logger.error('Failed to create transcoding process', { 

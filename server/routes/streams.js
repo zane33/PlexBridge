@@ -19,6 +19,8 @@ router.get('/stream/:channelId/:filename?', async (req, res) => {
                          userAgent.toLowerCase().includes('pms') ||
                          userAgent.toLowerCase().includes('lavf') ||      // FFmpeg/libav from Plex
                          userAgent.toLowerCase().includes('ffmpeg') ||    // Direct FFmpeg
+                         userAgent.toLowerCase().includes('vlc') ||       // VLC Media Player
+                         userAgent.toLowerCase().includes('libvlc') ||    // VLC Library
                          req.query.format === 'mpegts' ||
                          req.query.raw === 'true';
     
@@ -98,21 +100,36 @@ router.get('/stream/:channelId/:filename?', async (req, res) => {
         targetUrl = `https://mediapackage-hgtv-source.fullscreen.nz/${filename}`;
         logger.info('Using hardcoded HGTV target URL', { targetUrl, filename });
       } else {
-        // For other streams, try to resolve redirect
+        // For other streams, try to resolve redirect using curl-like approach
         try {
           const axios = require('axios');
-          const response = await axios.get(stream.url, {
-            maxRedirects: 5,
+          
+          // First, do a HEAD request to get the redirect location
+          const headResponse = await axios.request({
+            method: 'HEAD',
+            url: stream.url,
+            maxRedirects: 0,  // Don't follow redirects automatically
             timeout: 10000,
-            responseType: 'text',
             headers: {
-              'User-Agent': 'PlexBridge/1.0',
-              'Range': 'bytes=0-512'  // Get just a small part to find the final URL
+              'User-Agent': 'PlexBridge/1.0'
+            },
+            validateStatus: function (status) {
+              return status >= 200 && status < 400; // Accept 2xx and 3xx responses
             }
           });
           
-          // Get the final URL from the response
-          const finalUrl = response.request.responseURL || response.config.url || stream.url;
+          let finalUrl = stream.url;
+          
+          // If we get a redirect, extract the location header
+          if (headResponse.status >= 300 && headResponse.status < 400 && headResponse.headers.location) {
+            finalUrl = headResponse.headers.location;
+            logger.info('Found redirect location', {
+              originalUrl: stream.url,
+              redirectLocation: finalUrl,
+              status: headResponse.status
+            });
+          }
+          
           const baseUrl = finalUrl.replace(/\/[^\/]*$/, '/');
           targetUrl = baseUrl + filename;
           
