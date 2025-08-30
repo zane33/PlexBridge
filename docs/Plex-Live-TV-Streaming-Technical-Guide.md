@@ -450,7 +450,7 @@ Error opening output file pipe:1.
 **Correct FFmpeg Command Structure:**
 ```bash
 # CORRECT ORDER:
-ffmpeg -allowed_extensions ALL -protocol_whitelist file,http,https,tcp,tls,pipe -i [URL] [other-args] pipe:1
+ffmpeg -hide_banner -loglevel error -reconnect 1 -reconnect_at_eof 1 -reconnect_streamed 1 -reconnect_delay_max 2 -i [URL] -c:v copy -c:a copy -bsf:v dump_extra -f mpegts -mpegts_copyts 1 -avoid_negative_ts make_zero -fflags +genpts+igndts+discardcorrupt -copyts -muxdelay 0 -muxpreload 0 -flush_packets 1 -max_delay 0 -max_muxing_queue_size 9999 pipe:1
 
 # INCORRECT ORDER (causes failure):
 ffmpeg -i [URL] -allowed_extensions ALL -protocol_whitelist file,http,https,tcp,tls [other-args] pipe:1
