@@ -360,6 +360,116 @@ class StreamPreviewService {
     return { name: 'Unknown', level: 'Unknown', browserSupported: false };
   }
   
+  // Resolve HLS stream URL by following redirects and selecting a variant
+  async resolveHLSStreamUrl(streamUrl, quality = 'medium') {
+    const axios = require('axios');
+    
+    try {
+      // Step 1: Follow redirects to get the final master playlist URL
+      logger.stream('Resolving HLS stream redirects', { streamUrl });
+      
+      const response = await axios.get(streamUrl, {
+        maxRedirects: 5,
+        timeout: 10000,
+        headers: {
+          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+          'Accept': 'application/vnd.apple.mpegurl, */*'
+        }
+      });
+      
+      const finalUrl = response.request.res.responseUrl || response.config.url;
+      const masterPlaylist = response.data;
+      
+      logger.stream('Retrieved master playlist', {
+        originalUrl: streamUrl,
+        finalUrl: finalUrl,
+        contentLength: masterPlaylist.length
+      });
+      
+      // Step 2: Parse the master playlist to find variant streams
+      const lines = masterPlaylist.split('\n').filter(line => line.trim());
+      const variants = [];
+      
+      for (let i = 0; i < lines.length; i++) {
+        const line = lines[i];
+        if (line.startsWith('#EXT-X-STREAM-INF:')) {
+          // Parse stream info
+          const bandwidthMatch = line.match(/BANDWIDTH=(\d+)/);
+          const resolutionMatch = line.match(/RESOLUTION=(\d+x\d+)/);
+          const codecsMatch = line.match(/CODECS="([^"]+)"/);
+          
+          if (i + 1 < lines.length && !lines[i + 1].startsWith('#')) {
+            const variantUrl = lines[i + 1].trim();
+            
+            // Convert relative URL to absolute
+            let absoluteUrl = variantUrl;
+            if (!variantUrl.startsWith('http')) {
+              const baseUrl = finalUrl.substring(0, finalUrl.lastIndexOf('/') + 1);
+              absoluteUrl = baseUrl + variantUrl;
+            }
+            
+            variants.push({
+              url: absoluteUrl,
+              bandwidth: bandwidthMatch ? parseInt(bandwidthMatch[1]) : 0,
+              resolution: resolutionMatch ? resolutionMatch[1] : 'unknown',
+              codecs: codecsMatch ? codecsMatch[1] : 'unknown'
+            });
+          }
+        }
+      }
+      
+      if (variants.length === 0) {
+        // Not a master playlist, might be a direct media playlist
+        logger.stream('No variants found, using direct URL', { finalUrl });
+        return finalUrl;
+      }
+      
+      // Step 3: Select appropriate variant based on quality
+      let selectedVariant;
+      
+      // Sort variants by bandwidth
+      variants.sort((a, b) => a.bandwidth - b.bandwidth);
+      
+      // Select based on quality preference
+      if (quality === 'low') {
+        selectedVariant = variants[0]; // Lowest bandwidth
+      } else if (quality === 'high') {
+        selectedVariant = variants[variants.length - 1]; // Highest bandwidth
+      } else {
+        // Medium quality - select middle variant or 720p if available
+        const target720p = variants.find(v => v.resolution === '1280x720');
+        if (target720p) {
+          selectedVariant = target720p;
+        } else {
+          // Select middle variant
+          const middleIndex = Math.floor(variants.length / 2);
+          selectedVariant = variants[middleIndex];
+        }
+      }
+      
+      logger.stream('Selected HLS variant for transcoding', {
+        quality: quality,
+        selectedUrl: selectedVariant.url,
+        bandwidth: selectedVariant.bandwidth,
+        resolution: selectedVariant.resolution,
+        codecs: selectedVariant.codecs,
+        totalVariants: variants.length
+      });
+      
+      return selectedVariant.url;
+      
+    } catch (error) {
+      logger.error('Failed to resolve HLS stream URL', {
+        streamUrl: streamUrl,
+        error: error.message,
+        stack: error.stack
+      });
+      
+      // Return original URL as fallback
+      throw error;
+    }
+  }
+  
   // Check if stream needs HLS/MP4 conversion for web browser compatibility
   needsHLSConversion(streamUrl, streamFormat) {
     // Check for .ts file extension or MPEG-TS format
@@ -816,6 +926,28 @@ class StreamPreviewService {
         return null; // Signal that transcoding is not available
       }
       
+      // CRITICAL FIX: Handle HLS redirects and master playlists properly
+      let inputUrl = stream.url;
+      
+      // For HLS streams, resolve redirects and select a variant from master playlist
+      if (stream.type === 'hls' || stream.url.includes('.m3u8')) {
+        try {
+          inputUrl = await this.resolveHLSStreamUrl(stream.url, quality);
+          logger.stream('Resolved HLS stream URL for transcoding', {
+            originalUrl: stream.url,
+            resolvedUrl: inputUrl,
+            quality: quality
+          });
+        } catch (error) {
+          logger.error('Failed to resolve HLS stream URL, using original', {
+            error: error.message,
+            originalUrl: stream.url
+          });
+          // Fall back to original URL if resolution fails
+          inputUrl = stream.url;
+        }
+      }
+      
       // Enhanced FFmpeg arguments for HLS streaming compatibility with H.264 High Profile support
       // CRITICAL FIX: Support H.264 High Profile (avc1.4D4028, avc1.4D401F) and AAC-LC (mp4a.40.2)
       const args = [
@@ -823,7 +955,7 @@ class StreamPreviewService {
         '-re',                                // Read input at native frame rate
         '-user_agent', 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36', // User agent for HLS servers
         '-headers', 'Connection: keep-alive\r\nAccept: */*\r\n', // HTTP headers
-        '-i', stream.url,
+        '-i', inputUrl,
         
         // Input stream mapping with fallback options
         '-map', '0:v:0',                      // Map first video stream
@@ -879,7 +1011,7 @@ class StreamPreviewService {
       // Additional input options for HLS streams with codec compatibility
       if (stream.type === 'hls' || stream.url.includes('.m3u8')) {
         // Insert HLS-specific input options after the input URL
-        const inputIndex = args.findIndex(arg => arg === stream.url);
+        const inputIndex = args.findIndex(arg => arg === inputUrl);
         if (inputIndex !== -1) {
           args.splice(inputIndex - 1, 0, 
             '-protocol_whitelist', 'file,http,https,tcp,tls,crypto', // Allow all needed protocols
