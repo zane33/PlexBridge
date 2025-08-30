@@ -558,20 +558,47 @@ router.put('/streams/:id', validate(streamSchema), async (req, res) => {
 
 router.delete('/streams/:id', async (req, res) => {
   try {
-    const result = await database.run('DELETE FROM streams WHERE id = ?', [req.params.id]);
+    const streamId = req.params.id;
     
-    if (result.changes === 0) {
+    // First, check if the stream exists
+    const existingStream = await database.get('SELECT id, name FROM streams WHERE id = ?', [streamId]);
+    if (!existingStream) {
+      return res.status(404).json({ error: 'Stream not found' });
+    }
+
+    // Clean up related stream sessions first (foreign key constraint)
+    const sessionDeleteResult = await database.run('DELETE FROM stream_sessions WHERE stream_id = ?', [streamId]);
+    if (sessionDeleteResult.changes > 0) {
+      logger.info('Deleted stream sessions for stream', { 
+        streamId, 
+        streamName: existingStream.name,
+        sessionsDeleted: sessionDeleteResult.changes 
+      });
+    }
+
+    // Now delete the stream
+    const streamDeleteResult = await database.run('DELETE FROM streams WHERE id = ?', [streamId]);
+    
+    if (streamDeleteResult.changes === 0) {
       return res.status(404).json({ error: 'Stream not found' });
     }
 
     // Clear stream cache
-    await cacheService.del(`stream:${req.params.id}`);
+    await cacheService.del(`stream:${streamId}`);
     
-    logger.info('Stream deleted', { id: req.params.id });
-    res.json({ message: 'Stream deleted successfully' });
+    logger.info('Stream deleted successfully', { 
+      id: streamId, 
+      name: existingStream.name,
+      sessionsDeleted: sessionDeleteResult.changes 
+    });
+    res.json({ 
+      message: 'Stream deleted successfully', 
+      streamName: existingStream.name,
+      sessionsDeleted: sessionDeleteResult.changes
+    });
   } catch (error) {
     logger.error('Stream delete error:', error);
-    res.status(500).json({ error: 'Failed to delete stream' });
+    res.status(500).json({ error: 'Failed to delete stream', details: error.message });
   }
 });
 
@@ -1992,6 +2019,51 @@ router.delete('/logs/cleanup', async (req, res) => {
   } catch (error) {
     logger.error('Log cleanup error:', error);
     res.status(500).json({ error: 'Failed to cleanup logs' });
+  }
+});
+
+// Cleanup orphaned stream sessions (maintenance endpoint)
+router.delete('/streams/sessions/cleanup', async (req, res) => {
+  try {
+    // Find orphaned sessions (sessions without corresponding streams)
+    const orphanedSessions = await database.all(`
+      SELECT ss.id, ss.stream_id, ss.status 
+      FROM stream_sessions ss 
+      LEFT JOIN streams s ON ss.stream_id = s.id 
+      WHERE s.id IS NULL
+    `);
+    
+    let deletedCount = 0;
+    if (orphanedSessions.length > 0) {
+      const result = await database.run(`DELETE FROM stream_sessions WHERE stream_id NOT IN (SELECT id FROM streams)`);
+      deletedCount = result.changes;
+    }
+    
+    // Also cleanup old ended sessions (older than 7 days)
+    const oldSessionsResult = await database.run(`
+      DELETE FROM stream_sessions 
+      WHERE status = 'ended' 
+      AND datetime(ended_at) < datetime('now', '-7 days')
+    `);
+    
+    const oldSessionsDeleted = oldSessionsResult.changes;
+    const totalDeleted = deletedCount + oldSessionsDeleted;
+    
+    logger.info('Stream sessions cleanup completed', { 
+      orphanedDeleted: deletedCount,
+      oldSessionsDeleted,
+      totalDeleted
+    });
+    
+    res.json({ 
+      message: 'Stream sessions cleanup completed',
+      orphanedSessionsDeleted: deletedCount,
+      oldSessionsDeleted,
+      totalDeleted
+    });
+  } catch (error) {
+    logger.error('Stream sessions cleanup error:', error);
+    res.status(500).json({ error: 'Failed to cleanup stream sessions', details: error.message });
   }
 });
 

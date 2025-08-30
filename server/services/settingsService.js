@@ -172,8 +172,24 @@ class SettingsService {
       const flatSettings = this.flattenSettings(settings.plexlive || settings, 'plexlive');
 
       database.transaction(() => {
+        // First, clean up conflicting settings to prevent duplicates
+        // For each new setting, delete both prefixed and non-prefixed versions
+        const deleteStmt = database.db.prepare(`DELETE FROM settings WHERE key = ?`);
+        
+        for (const key of Object.keys(flatSettings)) {
+          // Delete the new key (plexlive.* prefixed)
+          deleteStmt.run(key);
+          
+          // Also delete the non-prefixed version to prevent conflicts
+          if (key.startsWith('plexlive.')) {
+            const nonPrefixedKey = key.replace('plexlive.', '');
+            deleteStmt.run(nonPrefixedKey);
+          }
+        }
+        
+        // Now insert the new settings
         const insertStmt = database.db.prepare(`
-          INSERT OR REPLACE INTO settings (key, value, type, created_at, updated_at)
+          INSERT INTO settings (key, value, type, created_at, updated_at)
           VALUES (?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
         `);
         
@@ -199,10 +215,14 @@ class SettingsService {
       // Clear cache to force reload
       this.clearCache();
 
-      // Log the update
-      logger.info('Settings updated successfully', { 
+      // Log the update with cleanup details
+      logger.info('Settings updated successfully with conflict cleanup', { 
         keys: Object.keys(flatSettings),
-        maxConcurrentStreams: settings.plexlive?.streaming?.maxConcurrentStreams
+        maxConcurrentStreams: settings.plexlive?.streaming?.maxConcurrentStreams,
+        cleanupPerformed: Object.keys(flatSettings).map(key => ({
+          inserted: key,
+          cleaned: key.startsWith('plexlive.') ? key.replace('plexlive.', '') : 'none'
+        }))
       });
 
       // Reload settings to return updated values
