@@ -1405,7 +1405,7 @@ class StreamManager {
   }
 
   // Proxy stream specifically for Plex HDHomeRun compatibility (MPEG-TS output)
-  async proxyPlexCompatibleStream(streamUrl, channel, stream, req, res) {
+  async proxyPlexCompatibleStream(streamUrl, channel, req, res) {
     try {
       // Debug logging to track where failures occur
       console.log('DEBUG: proxyPlexCompatibleStream called', { 
@@ -1505,43 +1505,10 @@ class StreamManager {
       const settingsService = require('./settingsService');
       const settings = await settingsService.getSettings();
       
-      // Check if stream requires transcoding (forceTranscode setting)
-      let forceTranscode = false;
-      if (stream && stream.protocol_options) {
-        try {
-          const protocolOptions = typeof stream.protocol_options === 'string' 
-            ? JSON.parse(stream.protocol_options) 
-            : stream.protocol_options;
-          forceTranscode = protocolOptions.forceTranscode === true;
-        } catch (error) {
-          logger.warn('Failed to parse protocol_options for forceTranscode check', { 
-            streamId: stream?.id,
-            error: error.message 
-          });
-        }
-      }
-
-      logger.info('Plex stream transcoding decision', {
-        channelId: channel.id,
-        streamId: stream?.id,
-        streamName: stream?.name,
-        forceTranscode,
-        transcodeMode: forceTranscode ? 'H.264/AAC' : 'codec_copy'
-      });
-
-      // Get configurable FFmpeg command line - use transcoding if forceTranscode is enabled
-      let ffmpegCommand;
-      if (forceTranscode) {
-        // Use transcoding for streams that require it
-        ffmpegCommand = settings?.plexlive?.transcoding?.mpegts?.transcodingArgs || 
-                       config.plexlive?.transcoding?.mpegts?.transcodingArgs ||
-                       '-hide_banner -loglevel error -reconnect 1 -reconnect_at_eof 1 -reconnect_streamed 1 -reconnect_delay_max 5 -i [URL] -c:v libx264 -preset fast -profile:v high -level 4.0 -pix_fmt yuv420p -b:v 2500k -maxrate 2500k -bufsize 5000k -g 50 -keyint_min 25 -sc_threshold 0 -c:a aac -b:a 128k -ar 48000 -ac 2 -f mpegts -mpegts_copyts 1 -avoid_negative_ts make_zero -fflags +genpts+igndts+discardcorrupt -max_muxing_queue_size 9999 -muxdelay 0 -muxpreload 0 -flush_packets 1 pipe:1';
-      } else {
-        // Use codec copy for streams that don't need transcoding
-        ffmpegCommand = settings?.plexlive?.transcoding?.mpegts?.ffmpegArgs || 
-                       config.plexlive?.transcoding?.mpegts?.ffmpegArgs ||
-                       '-hide_banner -loglevel error -reconnect 1 -reconnect_at_eof 1 -reconnect_streamed 1 -reconnect_delay_max 2 -i [URL] -c:v copy -c:a copy -bsf:v dump_extra -f mpegts -mpegts_copyts 1 -avoid_negative_ts make_zero -fflags +genpts+igndts+discardcorrupt -copyts -muxdelay 0 -muxpreload 0 -flush_packets 1 -max_delay 0 -max_muxing_queue_size 9999 pipe:1';
-      }
+      // Get configurable FFmpeg command line - use your tested working configuration
+      let ffmpegCommand = settings?.plexlive?.transcoding?.mpegts?.ffmpegArgs || 
+                         config.plexlive?.transcoding?.mpegts?.ffmpegArgs ||
+                         '-hide_banner -loglevel error -reconnect 1 -reconnect_at_eof 1 -reconnect_streamed 1 -reconnect_delay_max 2 -i [URL] -c:v copy -c:a copy -bsf:v dump_extra -f mpegts -mpegts_copyts 1 -avoid_negative_ts make_zero -fflags +genpts+igndts+discardcorrupt -copyts -muxdelay 0 -muxpreload 0 -flush_packets 1 -max_delay 0 -max_muxing_queue_size 9999 pipe:1';
       
       // Replace [URL] placeholder with actual stream URL
       ffmpegCommand = ffmpegCommand.replace('[URL]', finalStreamUrl);
@@ -1637,12 +1604,11 @@ class StreamManager {
         userAgent: req.get('User-Agent'),
         clientIdentifier,
         url: finalStreamUrl,
-        type: forceTranscode ? 'plex-mpegts-transcode' : 'plex-mpegts',
+        type: 'plex-mpegts',
         channelName: channel.name,
         channelNumber: channel.number,
         isUnique: true,
         isPlexStream: true,
-        transcoded: forceTranscode
       };
       
       // Store in active streams for dashboard tracking
@@ -1686,7 +1652,7 @@ class StreamManager {
           channelName: channel.name,
           channelNumber: channel.number,
           streamUrl: finalStreamUrl,
-          streamType: forceTranscode ? 'plex-mpegts-transcode' : 'plex-mpegts'
+          streamType: 'plex-mpegts'
         });
       } catch (sessionError) {
         logger.warn('Failed to start enhanced session tracking for Plex stream', {

@@ -224,7 +224,7 @@ router.get('/stream/:channelId/:filename?', async (req, res) => {
         });
         
         // Let streamManager handle session creation and MPEG-TS transcoding for Plex compatibility
-        await streamManager.proxyPlexCompatibleStream(targetUrl, channel, stream, req, res);
+        await streamManager.proxyPlexCompatibleStream(targetUrl, channel, req, res);
       } else {
         // For regular requests, let streamManager handle session creation and URL rewriting
         await streamManager.proxyStreamWithChannel(targetUrl, channel, stream, req, res);
