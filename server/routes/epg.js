@@ -561,4 +561,43 @@ function generateSampleEPGData(channels) {
   return samplePrograms;
 }
 
+// Debug endpoint to check EPG cron job status
+router.get('/debug/jobs', async (req, res) => {
+  try {
+    const jobStatus = epgService.getActiveJobs();
+    const currentTime = new Date();
+    
+    // Get EPG sources to compare with jobs
+    const sources = await database.all('SELECT id, name, refresh_interval, last_refresh, last_success, enabled FROM epg_sources');
+    
+    res.json({
+      timestamp: currentTime.toISOString(),
+      timezone: 'UTC',
+      epgService: {
+        initialized: epgService.isInitialized,
+        ...jobStatus
+      },
+      sources: sources.map(source => ({
+        id: source.id,
+        name: source.name,
+        enabled: source.enabled,
+        refresh_interval: source.refresh_interval,
+        last_refresh: source.last_refresh,
+        last_success: source.last_success,
+        hasJob: jobStatus.jobs.some(job => job.sourceId === source.id),
+        jobRunning: jobStatus.jobs.find(job => job.sourceId === source.id)?.isRunning || false
+      })),
+      summary: {
+        totalSources: sources.length,
+        enabledSources: sources.filter(s => s.enabled).length,
+        totalJobs: jobStatus.totalJobs,
+        runningJobs: jobStatus.jobs.filter(j => j.isRunning).length
+      }
+    });
+  } catch (error) {
+    logger.error('EPG debug endpoint error:', error);
+    res.status(500).json({ error: 'Failed to get EPG debug info', details: error.message });
+  }
+});
+
 module.exports = router;

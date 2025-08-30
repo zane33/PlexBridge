@@ -93,16 +93,31 @@ class EPGService {
     try {
       // Parse refresh interval
       const interval = this.parseInterval(source.refresh_interval);
-      const cronExpression = this.intervalToCron(interval);
+      const cronExpression = this.intervalToCron(interval, source.id);
 
       // Cancel existing job if any
       if (this.refreshJobs.has(source.id)) {
         this.refreshJobs.get(source.id).destroy();
       }
 
-      // Schedule new job
+      // Schedule new job with enhanced logging
       const job = cron.schedule(cronExpression, async () => {
-        await this.refreshSource(source.id);
+        logger.info('EPG cron job triggered', { 
+          sourceId: source.id, 
+          sourceName: source.name,
+          cronExpression,
+          timestamp: new Date().toISOString()
+        });
+        try {
+          await this.refreshSource(source.id);
+        } catch (error) {
+          logger.error('EPG cron job failed', { 
+            sourceId: source.id, 
+            sourceName: source.name,
+            error: error.message,
+            stack: error.stack
+          });
+        }
       }, {
         scheduled: true,
         timezone: 'UTC'
@@ -110,10 +125,11 @@ class EPGService {
 
       this.refreshJobs.set(source.id, job);
       
-      logger.epg('EPG refresh scheduled', { 
+      logger.info('EPG refresh scheduled', { 
         sourceId: source.id, 
         interval: source.refresh_interval,
-        cronExpression 
+        cronExpression,
+        category: 'epg'
       });
 
       // Perform initial refresh if never refreshed
@@ -143,18 +159,30 @@ class EPGService {
     }
   }
 
-  intervalToCron(interval) {
+  intervalToCron(interval, sourceId = null) {
     const { value, unit } = interval;
+
+    // Generate a consistent minute offset for each source to prevent all sources
+    // from refreshing at the same time (staggering)
+    let minute = 0;
+    if (sourceId) {
+      // Use sourceId to generate a consistent but distributed minute offset
+      const hash = sourceId.split('').reduce((a, b) => {
+        a = ((a << 5) - a) + b.charCodeAt(0);
+        return a & a;
+      }, 0);
+      minute = Math.abs(hash) % 60; // 0-59 minutes
+    }
 
     switch (unit) {
       case 'minutes':
         return `*/${value} * * * *`;
       case 'hours':
-        return `0 */${value} * * *`;
+        return `${minute} */${value} * * *`;
       case 'days':
-        return `0 0 */${value} * *`;
+        return `${minute} 0 */${value} * *`;
       default:
-        return '0 */4 * * *'; // Default: every 4 hours
+        return `${minute} */4 * * *`; // Default: every 4 hours with staggered minutes
     }
   }
 
@@ -1109,12 +1137,36 @@ class EPGService {
     }
   }
 
+  getActiveJobs() {
+    const jobs = [];
+    for (const [sourceId, job] of this.refreshJobs) {
+      jobs.push({
+        sourceId,
+        isRunning: job.getStatus() === 'scheduled',
+        jobExists: !!job
+      });
+    }
+    return {
+      totalJobs: this.refreshJobs.size,
+      jobs,
+      serviceInitialized: this.isInitialized
+    };
+  }
+
   async shutdown() {
-    logger.epg('Shutting down EPG service');
+    logger.info('Shutting down EPG service', { 
+      activeJobs: this.refreshJobs.size,
+      category: 'epg' 
+    });
     
     // Cancel all scheduled jobs
     for (const [sourceId, job] of this.refreshJobs) {
-      job.destroy();
+      try {
+        job.destroy();
+        logger.info('EPG job destroyed', { sourceId, category: 'epg' });
+      } catch (error) {
+        logger.error('Error destroying EPG job', { sourceId, error: error.message });
+      }
     }
     
     this.refreshJobs.clear();
