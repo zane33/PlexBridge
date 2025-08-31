@@ -39,14 +39,11 @@ services:
       #- "3000:3000"
       # - "1900:1900/udp"
     volumes:
-      # Use named volume for data persistence with fallback to bind mount
+      # Use named volume for data persistence (Portainer compatible)
       - plextv_data:/data
-      # Config as read-only bind mount for easy editing
-      - ./config:/app/config:ro
-      # Additional bind mount for easy access to data (optional)
-      - ./data:/host-data
-      # Server code bind mount for development (commented out for production)
-      # - ./server:/app/server
+      # Config as named volume for Portainer deployment
+      - plextv_config:/app/config:ro
+      # No bind mounts for Portainer - all data stays in Docker volumes
     environment:
       # Application environment
       - NODE_ENV=production
@@ -101,11 +98,11 @@ services:
       retries: 3
       start_period: 40s
 
-# Named volumes for persistent data storage
+# Named volumes for persistent data storage (Portainer compatible)
 volumes:
   plextv_data:
     driver: local
-    driver_opts:
-      type: none
-      o: bind
-      device: ./data
+    # No driver_opts - let Docker manage the volume location
+  plextv_config:
+    driver: local
+    # Configuration volume for Portainer deployments
