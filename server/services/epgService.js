@@ -10,6 +10,7 @@ const logger = require('../utils/logger');
 const config = require('../config');
 const database = require('./database');
 const cacheService = require('./cacheService');
+const { ensureAndroidTVCompatibility, generateFallbackProgram } = require('../utils/androidTvCompat');
 
 const gzipAsync = promisify(gzip);
 const gunzipAsync = promisify(gunzip);
@@ -850,8 +851,12 @@ class EPGService {
         return cached;
       }
 
+      // Get channel info for fallback generation
+      const channel = await database.get('SELECT * FROM channels WHERE id = ? OR epg_id = ?', 
+        [channelId, channelId]);
+
       // Query database
-      const programs = await database.all(`
+      let programs = await database.all(`
         SELECT p.*, ec.source_id 
         FROM epg_programs p
         LEFT JOIN epg_channels ec ON ec.epg_id = p.channel_id
@@ -860,6 +865,25 @@ class EPGService {
         AND p.end_time >= ?
         ORDER BY start_time
       `, [channelId, endTime, startTime]);
+
+      // If no programs found, generate fallback data for Android TV compatibility
+      if (!programs || programs.length === 0) {
+        logger.debug('No EPG data found, generating fallback for Android TV', { channelId });
+        const start = new Date(startTime);
+        const end = new Date(endTime);
+        const duration = (end - start) / (1000 * 60 * 60); // hours
+        
+        programs = [];
+        let currentTime = start;
+        while (currentTime < end) {
+          const program = generateFallbackProgram(channel || { id: channelId, name: 'Channel' }, currentTime, 1);
+          programs.push(ensureAndroidTVCompatibility(program, channel));
+          currentTime = new Date(currentTime.getTime() + (60 * 60 * 1000)); // Add 1 hour
+        }
+      } else {
+        // Ensure all programs have Android TV compatible metadata
+        programs = programs.map(p => ensureAndroidTVCompatibility(p, channel));
+      }
 
       // Cache for 1 hour
       await cacheService.set(cacheKey, programs, 3600);
@@ -881,7 +905,7 @@ class EPGService {
         return cached;
       }
 
-      const programs = await database.all(`
+      let programs = await database.all(`
         SELECT p.*, c.name as channel_name, c.number as channel_number, ec.source_id
         FROM epg_programs p
         JOIN channels c ON c.epg_id = p.channel_id
@@ -890,6 +914,41 @@ class EPGService {
         AND p.end_time >= ?
         ORDER BY c.number, p.start_time
       `, [endTime, startTime]);
+
+      // If no programs found, generate fallback data for all channels
+      if (!programs || programs.length === 0) {
+        logger.info('No EPG data found, generating fallback for all channels for Android TV');
+        const channels = await database.all('SELECT * FROM channels WHERE enabled = 1');
+        programs = [];
+        
+        for (const channel of channels) {
+          const start = new Date(startTime);
+          const end = new Date(endTime);
+          let currentTime = start;
+          
+          while (currentTime < end) {
+            const program = generateFallbackProgram(channel, currentTime, 1);
+            const enhanced = ensureAndroidTVCompatibility(program, channel);
+            enhanced.channel_name = channel.name;
+            enhanced.channel_number = channel.number;
+            programs.push(enhanced);
+            currentTime = new Date(currentTime.getTime() + (60 * 60 * 1000));
+          }
+        }
+      } else {
+        // Ensure all programs have Android TV compatible metadata
+        const channelMap = new Map();
+        const channels = await database.all('SELECT * FROM channels');
+        channels.forEach(ch => {
+          channelMap.set(ch.epg_id, ch);
+          channelMap.set(ch.id, ch);
+        });
+        
+        programs = programs.map(p => {
+          const channel = channelMap.get(p.channel_id);
+          return ensureAndroidTVCompatibility(p, channel);
+        });
+      }
 
       // Cache for 30 minutes
       await cacheService.set(cacheKey, programs, 1800);

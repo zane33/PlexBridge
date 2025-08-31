@@ -114,6 +114,9 @@ router.get('/lineup_status.json', async (req, res) => {
     // Ensure we have http:// prefix
     const baseURL = baseHost.startsWith('http') ? baseHost : `http://${baseHost}`;
     
+    // Check if EPG data actually exists
+    const epgCount = await database.get('SELECT COUNT(*) as count FROM epg_programs');
+    const hasEPGData = epgCount && epgCount.count > 0;
 
     const status = {
       ScanInProgress: 0,
@@ -121,7 +124,7 @@ router.get('/lineup_status.json', async (req, res) => {
       Source: 'Cable',
       SourceList: ['Cable'],
       
-      // EPG Status Information for Plex
+      // Enhanced EPG Status Information for Android TV
       EPGAvailable: true,
       EPGSource: `${baseURL}/epg/xmltv.xml`,
       EPGURL: `${baseURL}/epg/xmltv.xml`,
@@ -130,7 +133,14 @@ router.get('/lineup_status.json', async (req, res) => {
       EPGDataURL: `${baseURL}/epg/xmltv.xml`,
       EPGDays: 7,
       EPGLastUpdate: new Date().toISOString(),
-      SupportsEPG: true
+      SupportsEPG: true,
+      
+      // Android TV metadata hints
+      HasProgramData: hasEPGData,
+      ProgramCount: epgCount?.count || 0,
+      DeviceModel: 'PlexBridge HDHomeRun',
+      FirmwareVersion: '1.0.0',
+      DeviceAuth: 'plexbridge'
     };
 
     res.json(status);
@@ -143,7 +153,7 @@ router.get('/lineup_status.json', async (req, res) => {
 // Channel lineup endpoint
 router.get('/lineup.json', async (req, res) => {
   try {
-    // Get all enabled channels from database
+    // Get all enabled channels from database with EPG information
     const channels = await database.all(`
       SELECT c.*, s.url, s.type 
       FROM channels c 
@@ -179,25 +189,57 @@ router.get('/lineup.json', async (req, res) => {
     // Ensure we have http:// prefix
     const baseURL = baseHost.startsWith('http') ? baseHost : `http://${baseHost}`;
     
-    const lineup = channels.map(channel => ({
-      GuideNumber: channel.number.toString(),
-      GuideName: channel.name,
-      URL: `${baseURL}/stream/${channel.id}`,
-      HD: 1, // Assume HD for all channels
-      DRM: 0, // No DRM
-      Favorite: 0,
+    // Get current programs for Android TV metadata enhancement
+    const now = new Date().toISOString();
+    const currentPrograms = await database.all(`
+      SELECT p.channel_id, p.title, p.description
+      FROM epg_programs p
+      WHERE p.start_time <= ? AND p.end_time > ?
+    `, [now, now]);
+    
+    // Create a map of current programs by channel EPG ID
+    const programMap = new Map();
+    currentPrograms.forEach(prog => {
+      programMap.set(prog.channel_id, prog);
+    });
+    
+    const lineup = channels.map(channel => {
+      // Get current program for this channel if available
+      const currentProgram = programMap.get(channel.epg_id || channel.id);
       
-      // EPG Information for this channel
-      EPGAvailable: true,
-      EPGSource: `${baseURL}/epg/xmltv.xml`,
-      EPGURL: `${baseURL}/epg/xmltv.xml`,
-      GuideURL: `${baseURL}/epg/xmltv/${channel.id}`,
-      EPGChannelID: channel.epg_id || channel.id
-    }));
+      // Ensure we always have a title for Android TV
+      const channelTitle = currentProgram?.title || `${channel.name} Programming`;
+      const channelDesc = currentProgram?.description || `Live stream on ${channel.name}`;
+      
+      return {
+        GuideNumber: channel.number.toString(),
+        GuideName: channel.name,
+        URL: `${baseURL}/stream/${channel.id}`,
+        HD: 1, // Assume HD for all channels
+        DRM: 0, // No DRM
+        Favorite: 0,
+        
+        // Enhanced EPG Information for Android TV compatibility
+        EPGAvailable: true,
+        EPGSource: `${baseURL}/epg/xmltv.xml`,
+        EPGURL: `${baseURL}/epg/xmltv.xml`,
+        GuideURL: `${baseURL}/epg/xmltv/${channel.id}`,
+        EPGChannelID: channel.epg_id || channel.id,
+        
+        // Android TV metadata hints
+        CurrentProgramTitle: channelTitle,
+        CurrentProgramDescription: channelDesc,
+        HasEPGData: true,
+        MediaType: 'Live',
+        AudioCodec: 'aac',
+        VideoCodec: 'h264'
+      };
+    });
 
     logger.debug('Channel lineup request', { 
       channelCount: lineup.length,
-      userAgent: req.get('User-Agent')
+      userAgent: req.get('User-Agent'),
+      hasAndroidTV: req.get('User-Agent')?.includes('android') || false
     });
 
     res.json(lineup);

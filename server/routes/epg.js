@@ -61,8 +61,21 @@ async function handleXMLTVRequest(req, res) {
 
     // If no programs exist, generate sample EPG data for Plex compatibility
     if (!programs || programs.length === 0) {
-      logger.info('No EPG programs found, generating sample data for Plex compatibility');
+      logger.info('No EPG programs found, generating sample data for Plex Android TV compatibility');
       programs = generateSampleEPGData(channels);
+    } else {
+      // Ensure all programs have required fields for Android TV
+      programs = programs.map(program => {
+        // Ensure title is always present (Android TV requirement)
+        if (!program.title || program.title.trim() === '') {
+          program.title = 'Programming';
+        }
+        // Ensure description is present
+        if (!program.description) {
+          program.description = `${program.title} on this channel`;
+        }
+        return program;
+      });
     }
 
     // Generate XMLTV format with categories and secondary genres
@@ -519,42 +532,53 @@ function generateSampleEPGData(channels) {
   const now = new Date();
   
   channels.forEach(channel => {
-    // Generate 24 hours of sample programming for each channel
-    for (let hour = 0; hour < 24; hour++) {
-      const startTime = new Date(now.getTime() + (hour * 60 * 60 * 1000));
-      const endTime = new Date(startTime.getTime() + (60 * 60 * 1000)); // 1 hour programs
-      
-      const programTypes = [
-        { title: 'News Update', description: 'Latest news and updates' },
-        { title: 'Movie Time', description: 'Featured movie presentation' },
-        { title: 'Sports Center', description: 'Sports highlights and analysis' },
-        { title: 'Documentary', description: 'Educational documentary programming' },
-        { title: 'Talk Show', description: 'Celebrity interviews and discussion' },
-        { title: 'Comedy Hour', description: 'Comedy and entertainment' },
-        { title: 'Drama Series', description: 'Dramatic television series' },
-        { title: 'Reality TV', description: 'Reality television programming' }
-      ];
-      
-      const randomProgram = programTypes[Math.floor(Math.random() * programTypes.length)];
-      
-      samplePrograms.push({
-        channel_id: channel.id, // This will be mapped correctly in generateXMLTV
-        title: `${randomProgram.title}`,
-        sub_title: `Episode ${hour + 1}`,
-        description: `${randomProgram.description} on ${channel.name}`,
-        start_time: startTime.toISOString(),
-        end_time: endTime.toISOString(),
-        category: 'Entertainment',
-        keywords: ['Entertainment', channel.name],
-        episode_number: (hour % 24) + 1,
-        season_number: 1,
-        part_number: 1,
-        total_parts: 1,
-        date: new Date().getFullYear().toString(),
-        aspect_ratio: '16:9',
-        audio_type: 'stereo',
-        rating: 'TV-G'
-      });
+    // Generate 7 days of sample programming for each channel (Android TV needs more data)
+    for (let day = 0; day < 7; day++) {
+      for (let hour = 0; hour < 24; hour++) {
+        const dayOffset = day * 24 * 60 * 60 * 1000;
+        const hourOffset = hour * 60 * 60 * 1000;
+        const startTime = new Date(now.getTime() + dayOffset + hourOffset);
+        const endTime = new Date(startTime.getTime() + (60 * 60 * 1000)); // 1 hour programs
+        
+        const programTypes = [
+          { title: 'News Update', description: 'Latest news and updates', category: 'News' },
+          { title: 'Movie Time', description: 'Featured movie presentation', category: 'Movie' },
+          { title: 'Sports Center', description: 'Sports highlights and analysis', category: 'Sports' },
+          { title: 'Documentary', description: 'Educational documentary programming', category: 'Documentary' },
+          { title: 'Talk Show', description: 'Celebrity interviews and discussion', category: 'Talk' },
+          { title: 'Comedy Hour', description: 'Comedy and entertainment', category: 'Comedy' },
+          { title: 'Drama Series', description: 'Dramatic television series', category: 'Drama' },
+          { title: 'Reality TV', description: 'Reality television programming', category: 'Reality' }
+        ];
+        
+        const randomProgram = programTypes[Math.floor(Math.random() * programTypes.length)];
+        
+        // Use the channel's epg_id if available, otherwise use the channel.id
+        // This ensures proper channel mapping for Android TV
+        const channelId = channel.epg_id || channel.id;
+        
+        samplePrograms.push({
+          channel_id: channelId, // Use proper channel ID for mapping
+          title: `${randomProgram.title} - ${channel.name}`, // Include channel name for clarity
+          sub_title: `Episode ${(day * 24 + hour + 1)}`,
+          description: `${randomProgram.description} on ${channel.name}. Day ${day + 1}, Hour ${hour + 1}`,
+          start_time: startTime.toISOString(),
+          end_time: endTime.toISOString(),
+          category: randomProgram.category,
+          keywords: [randomProgram.category, channel.name, 'PlexBridge'],
+          episode_number: ((day * 24 + hour) % 100) + 1, // Episode within reasonable range
+          season_number: Math.floor((day * 24 + hour) / 100) + 1,
+          part_number: 1,
+          total_parts: 1,
+          date: startTime.getFullYear().toString(),
+          original_air_date: startTime.toISOString().split('T')[0],
+          aspect_ratio: '16:9',
+          resolution: 'HD',
+          audio_type: 'stereo',
+          rating: 'TV-PG',
+          star_rating: (Math.floor(Math.random() * 5) + 5).toString() // 5-9 rating
+        });
+      }
     }
   });
   
