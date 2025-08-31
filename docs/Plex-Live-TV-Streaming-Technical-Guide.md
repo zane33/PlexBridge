@@ -193,6 +193,31 @@ Error opening output file pipe:1: Invalid argument
 
 ## Network Configuration
 
+### HTTP Headers for HDHomeRun Emulation (Critical - August 2025)
+
+PlexBridge must send specific HTTP headers to emulate real HDHomeRun devices correctly:
+
+```javascript
+// Correct headers for Plex streaming (matches real HDHomeRun behavior)
+res.set({
+  'Content-Type': 'video/mp2t',         // MPEG-TS MIME type
+  'Access-Control-Allow-Origin': '*',   // Allow cross-origin requests
+  'Cache-Control': 'no-cache, no-store, must-revalidate',
+  'Accept-Ranges': 'none',              // Live streams don't support range requests
+  'Connection': 'keep-alive'            // REQUIRED for continuous streaming
+  // NO Transfer-Encoding header - causes Plex rebuffering issues
+  // NO Content-Length header - live streams have unknown length
+});
+```
+
+**Critical Header Requirements:**
+- ✅ **Connection: keep-alive** - MUST be used for continuous streaming
+- ❌ **Transfer-Encoding: chunked** - Do NOT use (causes Plex buffering/rebuffering)
+- ❌ **Content-Length** - Do NOT set (live streams have indeterminate length)
+- ❌ **Connection: close** - Do NOT use (terminates stream prematurely)
+
+This configuration matches real HDHomeRun devices which stream continuously without chunked encoding or predetermined content length.
+
 ### IP Address Advertisement
 
 Critical for Plex discovery - PlexBridge must advertise the correct IP address:

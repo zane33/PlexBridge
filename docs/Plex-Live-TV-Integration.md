@@ -442,6 +442,7 @@ systemctl restart plexbridge
 **Symptoms**:
 - Channels appear in Plex but fail to stream
 - "Tuner not available" errors
+- Streams start but immediately stop
 
 **Solutions**:
 ```bash
@@ -453,7 +454,17 @@ curl -I https://iptv-source.com/stream.m3u8
 
 # Verify format conversion
 ffprobe http://localhost:8080/stream/1
+
+# Check HTTP headers (critical for Plex compatibility)
+curl -I http://localhost:8080/stream/1 | grep -E "Connection|Transfer-Encoding|Content-Length"
 ```
+
+**Important HTTP Header Fix (August 2025):**
+If streams are failing, verify the HTTP headers match HDHomeRun behavior:
+- ✅ `Connection: keep-alive` (required for continuous streaming)
+- ❌ NO `Transfer-Encoding: chunked` (causes Plex rebuffering)
+- ❌ NO `Content-Length` header (live streams have unknown length)
+- ❌ NO `Connection: close` (terminates stream prematurely)
 
 #### 3. EPG Data Not Loading
 

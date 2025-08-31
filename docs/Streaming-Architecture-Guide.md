@@ -130,18 +130,27 @@ async detectStreamFormat(streamUrl) {
 2. **MPEG-TS Output Format**
    - Plex expects raw MPEG-TS stream, not HLS playlists
    - Must use `video/mp2t` content type
-   - Cannot use chunked transfer encoding
+   - Cannot use chunked transfer encoding (causes Plex buffering issues)
+   - Streams continuously without Content-Length header (like real HDHomeRun)
 
-3. **Response Headers for Plex**
+3. **Response Headers for Plex (Critical - August 2025 Update)**
    ```javascript
    res.set({
      'Content-Type': 'video/mp2t',
      'Access-Control-Allow-Origin': '*',
      'Cache-Control': 'no-cache, no-store, must-revalidate',
-     'Accept-Ranges': 'none',  // Disable range requests for live
-     'Connection': 'close'      // Some Plex versions need this
+     'Accept-Ranges': 'none',      // Disable range requests for live
+     'Connection': 'keep-alive'     // MUST be keep-alive for continuous streaming
+     // NO Transfer-Encoding header - HDHomeRun doesn't use chunked encoding
+     // NO Content-Length header - unknown length for live streams
    });
    ```
+   
+   **Important Header Notes:**
+   - **Connection: keep-alive** is REQUIRED for continuous streaming
+   - **Transfer-Encoding: chunked** should NOT be used (causes Plex rebuffering)
+   - **Content-Length** should NOT be set (live streams have unknown length)
+   - This matches real HDHomeRun device behavior
 
 ### HDHomeRun Emulation Endpoints
 

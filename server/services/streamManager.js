@@ -1490,6 +1490,7 @@ class StreamManager {
       console.log('DEBUG: Redirect resolution complete', { finalStreamUrl });
       
       // Set appropriate headers for MPEG-TS stream with Plex optimizations
+      // Based on real HDHomeRun behavior: continuous stream without chunked encoding
       res.set({
         'Content-Type': 'video/mp2t',                 // MPEG-TS MIME type
         'Access-Control-Allow-Origin': '*',
@@ -1497,7 +1498,9 @@ class StreamManager {
         'Access-Control-Expose-Headers': 'Content-Range, Content-Length, Accept-Ranges',
         'Cache-Control': 'no-cache, no-store, must-revalidate',
         'Accept-Ranges': 'none',                      // Disable range requests for live streams
-        'Connection': 'close'                         // Plex requires Connection: close, no chunked encoding
+        'Connection': 'keep-alive'                    // Keep connection alive for continuous streaming
+        // NO Transfer-Encoding header - HDHomeRun doesn't use chunked encoding
+        // NO Content-Length header - unknown length for live streams
       });
 
       // Get FFmpeg arguments from settings
