@@ -1,12 +1,5 @@
-# PlexBridge Docker Compose Configuration - Portainer Optimized
+# PlexBridge Docker Compose Configuration
 # 
-# This configuration is optimized for deployment via Portainer
-# It uses bind mounts for better compatibility with Synology/Portainer
-#
-# IMPORTANT: Before deploying, create these directories in Portainer's file manager:
-# - data/
-# - config/
-#
 # Network Configuration Examples:
 # 
 # 1. Default configuration (bind to all interfaces on port 8080):
@@ -24,15 +17,16 @@
 # 4. External hostname/domain:
 #    - ADVERTISED_HOST=plextv.yourdomain.com
 #    - BASE_URL=http://plextv.yourdomain.com:8080
-
-version: '3.8'
+#
+# 5. Different streaming and HTTP ports:
+#    - HTTP_PORT=8080
+#    - STREAM_PORT=8081
 
 services:
   plextv:
-    # Or build from source with docker-compose.yml (requires Dockerfile in same directory):
     build:
-       context: .
-       dockerfile: dockerfile.portainer
+      context: .
+      dockerfile: Dockerfile
     container_name: plextv
     restart: unless-stopped
     logging:
@@ -40,27 +34,33 @@ services:
       options:
         max-size: "10m"
         max-file: "3"
-    ports:
-      - "8080:8080"
-      - "1900:1900/udp"
+    network_mode: "host"
+    #ports:
+      #- "3000:3000"
+      # - "1900:1900/udp"
     volumes:
-      # Use named volumes for production deployment (fully automated)
+      # Use named volume for data persistence with fallback to bind mount
       - plextv_data:/data
-      - plextv_config:/app/config
+      # Config as read-only bind mount for easy editing
+      - ./config:/app/config:ro
+      # Additional bind mount for easy access to data (optional)
+      - ./data:/host-data
+      # Server code bind mount for development (commented out for production)
+      # - ./server:/app/server
     environment:
       # Application environment
       - NODE_ENV=production
       
       # Network configuration - customize these for your deployment
-      - HOST_IP=0.0.0.0                    # Bind address (0.0.0.0 for all interfaces)
-      - HTTP_PORT=8080                     # Main HTTP server port
-      - STREAM_PORT=8080                   # Streaming port (usually same as HTTP_PORT)
+      - HOST_IP=192.168.3.148                # Bind address (0.0.0.0 for all interfaces)
+      - HTTP_PORT=3000                     # Main HTTP server port
+      - STREAM_PORT=3000                   # Streaming port (usually same as HTTP_PORT)
       - DISCOVERY_PORT=1900                # SSDP discovery port
-      # Set ADVERTISED_HOST to your Docker host IP or domain
-      - ADVERTISED_HOST=${DOCKER_HOST_IP:-localhost}
-      - BASE_URL=http://${DOCKER_HOST_IP:-localhost}:8080
+      - ADVERTISED_HOST=192.168.3.148      # Hostname/IP that clients should connect to
+      - BASE_URL=http://192.168.3.148:3000 # Complete base URL for the service
+      # - IPV6_ENABLED=false               # Enable/disable IPv6 support
       
-      # Storage paths (inside container)
+      # Storage paths
       - DB_PATH=/data/database/plextv.db
       - LOG_PATH=/data/logs
       - CACHE_PATH=/data/cache
@@ -86,24 +86,26 @@ services:
       - HEALTH_CHECK_INTERVAL=60000       # Check health every minute
       - DB_HEALTH_CHECK_INTERVAL=60000    # Database health check interval
       
-      # Optional: Device identification
-      - DEVICE_NAME=PlexBridge
-      - DEVICE_ID=PLEXBRIDGE001
-      - TUNER_COUNT=4
+      # Device identification
+      - DEVICE_UUID=plextv-local-stable-uuid-001
+      - DEVICE_NAME=PlexBridge Local
+      - DEVICE_ID=PLEXTV001
+      - TUNER_COUNT=5
       
       # Optional: Legacy PORT support (HTTP_PORT takes precedence)
-      - PORT=8080
+      - PORT=3000
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      test: ["CMD", "curl", "-f", "http://localhost:3000/health"]
       interval: 30s
       timeout: 10s
       retries: 3
       start_period: 40s
 
 # Named volumes for persistent data storage
-# These will be created automatically by Docker
 volumes:
   plextv_data:
     driver: local
-  plextv_config:
-    driver: local
+    driver_opts:
+      type: none
+      o: bind
+      device: ./data
