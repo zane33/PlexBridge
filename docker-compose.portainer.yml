@@ -1,4 +1,12 @@
-# PlexBridge Docker Compose Configuration
+# PlexBridge Docker Compose Configuration for Portainer
+# 
+# PORTAINER DEPLOYMENT OPTIONS:
+# 1. Pre-built Image: Uses plexbridge:latest (requires image to exist on host)
+# 2. Git Repository: Uncomment build section and deploy from git repository
+# 3. Upload Method: Upload docker-compose file + source code to Portainer
+#
+# IMPORTANT: This config uses Docker named volumes (no local bind mounts)
+# to ensure compatibility with Portainer's deployment environment.
 # 
 # Network Configuration Examples:
 # 
@@ -24,9 +32,12 @@
 
 services:
   plextv:
-    build:
-      context: .
-      dockerfile: Dockerfile
+    image: plexbridge:latest
+    # For Portainer: Use pre-built image or build from git repository
+    # If using git repository with Portainer, uncomment these lines:
+    # build:
+    #   context: .
+    #   dockerfile: Dockerfile
     container_name: plextv
     restart: unless-stopped
     logging:
