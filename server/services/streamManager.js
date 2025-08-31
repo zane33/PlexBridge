@@ -1497,8 +1497,7 @@ class StreamManager {
         'Access-Control-Expose-Headers': 'Content-Range, Content-Length, Accept-Ranges',
         'Cache-Control': 'no-cache, no-store, must-revalidate',
         'Accept-Ranges': 'none',                      // Disable range requests for live streams
-        'Connection': 'keep-alive',                   // Keep connection alive
-        'Transfer-Encoding': 'chunked'                // Use chunked encoding for streaming
+        'Connection': 'close'                         // Plex requires Connection: close, no chunked encoding
       });
 
       // Get FFmpeg arguments from settings
