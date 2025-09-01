@@ -1696,7 +1696,17 @@ class StreamManager {
           logger.info('Added IPTV User-Agent for premiumpowers stream', {
             channelId: channel.id,
             channelName: channel.name,
-            finalUrl: finalStreamUrl
+            finalUrl: finalStreamUrl,
+            inputIndex
+          });
+        } else {
+          // If we can't find the URL in args, add User-Agent at the beginning
+          args.unshift('-user_agent', 'IPTVSmarters/1.0');
+          logger.info('Added IPTV User-Agent at start of command (URL not found in args)', {
+            channelId: channel.id,
+            channelName: channel.name,
+            finalUrl: finalStreamUrl,
+            args: args.slice(0, 10) // First 10 args for debugging
           });
         }
       }
@@ -1711,10 +1721,22 @@ class StreamManager {
 
       console.log('DEBUG: Starting FFmpeg with args', { 
         ffmpegPath: config.streams.ffmpegPath, 
-        args: args.slice(0, 5) + '...' // Show first few args
+        args: args.slice(0, 5), // Show first few args
+        finalStreamUrl: finalStreamUrl
       });
 
+      logger.info('About to spawn FFmpeg process', {
+        channelId: channel.id,
+        ffmpegPath: config.streams.ffmpegPath,
+        argsCount: args.length
+      });
+      
       const ffmpegProcess = spawn(config.streams.ffmpegPath, args);
+      
+      logger.info('FFmpeg process spawned', {
+        channelId: channel.id,
+        pid: ffmpegProcess.pid
+      });
       
       if (!ffmpegProcess.pid) {
         console.log('DEBUG: FFmpeg failed to start');
