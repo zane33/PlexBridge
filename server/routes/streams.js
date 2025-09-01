@@ -6,7 +6,11 @@ const streamSessionManager = require('../services/streamSessionManager');
 const streamPreviewService = require('../services/streamPreviewService');
 const logger = require('../utils/logger');
 const { createStreamingSession } = require('../utils/streamingDecisionFix');
+const { getSessionManager, sessionKeepAlive, addStreamHeaders } = require('../utils/sessionPersistenceFix');
 const { v4: uuidv4 } = require('uuid');
+
+// Apply session keep-alive middleware to all stream endpoints
+router.use(sessionKeepAlive());
 
 // Stream proxy endpoint for Plex - handles both main playlist and sub-files
 router.get('/stream/:channelId/:filename?', async (req, res) => {
@@ -27,20 +31,41 @@ router.get('/stream/:channelId/:filename?', async (req, res) => {
     
     const isAndroidTV = userAgent.toLowerCase().includes('android');
     
-    // Create streaming session for decision tracking (critical for Android TV)
+    // Generate or extract session ID for persistent session management
+    let sessionId = req.headers['x-session-id'] || 
+                   req.query.sessionId || 
+                   `session_${channelId}_${Date.now()}`;
+    
+    // Create persistent streaming session for consumer tracking (fixes "Failed to find consumer")
     if (isPlexRequest && !isSubFile) {
+      const sessionManager = getSessionManager();
       const clientInfo = {
         userAgent,
         platform: isAndroidTV ? 'AndroidTV' : 'Other',
-        product: 'Plex'
+        product: 'Plex',
+        remoteAddress: req.ip || req.connection.remoteAddress
       };
+      
+      // Create or get existing persistent session
+      const persistentSession = sessionManager.createSession(channelId, sessionId, null, clientInfo);
+      
+      // Create streaming session for decision tracking (critical for Android TV)
       const streamingSession = createStreamingSession(channelId, clientInfo);
       
-      // Add session info to response headers for Plex decision making
+      // Add session info to response headers for Plex decision making and consumer tracking
+      addStreamHeaders(req, res, sessionId);
       res.set({
         'X-PlexBridge-Session': streamingSession.sessionId,
+        'X-Persistent-Session': persistentSession.sessionId,
         'X-Content-Type': 'live-tv',
         'X-Media-Type': '5'
+      });
+      
+      logger.info('Created persistent streaming session', {
+        sessionId,
+        channelId,
+        clientInfo: clientInfo.userAgent,
+        sessionStatus: persistentSession.status
       });
     }
     
@@ -235,15 +260,44 @@ router.get('/stream/:channelId/:filename?', async (req, res) => {
         res.status(500).send(`Failed to proxy sub-file: ${error.message}`);
       }
     } else {
-      // For main playlist requests, let the streamManager handle session creation to avoid duplicates
+      // For main playlist requests, handle with persistent session management
       if (isPlexRequest && !isSubFile) {
-        // Plex needs direct MPEG-TS stream, not HLS playlist
-        logger.info('Plex request detected - forwarding to streamManager', { 
+        // Plex needs direct MPEG-TS stream with persistent session management
+        logger.info('Plex request detected - using persistent session management', { 
           channelId, 
+          sessionId,
           userAgent: req.get('User-Agent')
         });
         
-        // Let streamManager handle session creation and MPEG-TS transcoding for Plex compatibility
+        // Get the persistent session manager
+        const sessionManager = getSessionManager();
+        const session = sessionManager.getSessionStatus(sessionId);
+        
+        if (session.exists && session.isRunning) {
+          // Session already running, just update activity
+          sessionManager.updateSessionActivity(sessionId);
+          logger.info('Using existing persistent session', { sessionId, channelId });
+        } else {
+          // Start new stream with persistent session management
+          const persistentSession = sessionManager.activeSessions.get(sessionId);
+          if (persistentSession) {
+            persistentSession.streamUrl = targetUrl;
+            await sessionManager.startStream(persistentSession, {
+              outputFormat: 'mpegts',
+              videoCodec: 'copy',
+              audioCodec: 'copy'
+            });
+            
+            logger.info('Started persistent streaming session', {
+              sessionId,
+              channelId,
+              pid: persistentSession.pid,
+              status: persistentSession.status
+            });
+          }
+        }
+        
+        // Let streamManager handle MPEG-TS transcoding with session awareness
         await streamManager.proxyPlexCompatibleStream(targetUrl, channel, stream, req, res);
       } else {
         // For regular requests, let streamManager handle session creation and URL rewriting
@@ -293,7 +347,7 @@ router.get('/streams/convert/hls/:streamId', async (req, res) => {
   }
 });
 
-// Active streams endpoint - Enhanced to return Promise-based data from session manager
+// Active streams endpoint - Enhanced with persistent session management
 router.get('/streams/active', async (req, res) => {
   try {
     // Get max concurrent streams from settings
@@ -306,18 +360,25 @@ router.get('/streams/active', async (req, res) => {
     const capacity = streamSessionManager.getCapacityMetrics(maxConcurrent);
     const bandwidth = streamSessionManager.getBandwidthStats();
     
+    // Get persistent sessions from session manager
+    const sessionManager = getSessionManager();
+    const persistentSessions = sessionManager.getActiveSessions();
+    
     // Also get legacy streams for compatibility
     const legacyStreams = await streamManager.getActiveStreams();
     
-    // Combine session data with legacy compatibility
+    // Combine all session data
     const streams = activeSessions.length > 0 ? activeSessions : legacyStreams;
     
     res.json({ 
       streams, 
+      persistentSessions,
       capacity,
       bandwidth,
       sessionCount: activeSessions.length,
-      legacyCount: legacyStreams.length
+      persistentCount: persistentSessions.length,
+      legacyCount: legacyStreams.length,
+      totalActiveSessions: activeSessions.length + persistentSessions.length
     });
   } catch (error) {
     logger.error('Error getting active streams:', error);

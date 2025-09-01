@@ -5,6 +5,7 @@
 
 const logger = require('../utils/logger');
 const { generateImmediateEPGResponse } = require('../utils/channelSwitchingFix');
+const { getSessionManager } = require('../utils/sessionPersistenceFix');
 
 /**
  * Error handler specifically for Android TV streaming issues
@@ -25,6 +26,55 @@ function androidTVErrorHandler() {
       method: req.method,
       userAgent: req.get('User-Agent')
     });
+    
+    // Check for session-related errors and attempt recovery
+    const sessionId = req.headers['x-session-id'] || req.query.sessionId;
+    if (sessionId && (err.message.includes('Failed to find consumer') || 
+                     err.message.includes('buildLiveM3U8: no instance available') ||
+                     err.message.includes('This live TV session has ended'))) {
+      try {
+        const sessionManager = getSessionManager();
+        const session = sessionManager.getSessionStatus(sessionId);
+        
+        if (!session.exists || !session.isRunning) {
+          logger.info('Attempting session recovery for Android TV', {
+            sessionId,
+            error: err.message
+          });
+          
+          // Extract channel ID from URL for recovery
+          const channelId = req.params.channelId || extractChannelIdFromUrl(req.url);
+          if (channelId) {
+            // Try to recreate the session
+            const clientInfo = {
+              userAgent: req.get('User-Agent'),
+              platform: 'AndroidTV',
+              product: 'Plex',
+              remoteAddress: req.ip
+            };
+            
+            const recoveredSession = sessionManager.createSession(channelId, sessionId, null, clientInfo);
+            
+            logger.info('Session recovery initiated for Android TV', {
+              sessionId,
+              channelId,
+              status: recoveredSession.status
+            });
+            
+            // Add recovery headers
+            res.set({
+              'X-Session-Recovery': 'true',
+              'X-Android-TV-Recovery': 'session-recreated'
+            });
+          }
+        }
+      } catch (recoveryError) {
+        logger.error('Session recovery failed for Android TV', {
+          sessionId,
+          error: recoveryError.message
+        });
+      }
+    }
     
     // Handle EPG/metadata related errors
     if (req.url.includes('/epg/now/') || req.url.includes('/lineup.json')) {

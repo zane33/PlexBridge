@@ -224,6 +224,18 @@ const gracefulShutdown = async (signal) => {
       logger.warn('SSDP service shutdown error:', ssdpShutdownError);
     }
 
+    // Shutdown Session Persistence Manager
+    try {
+      const { getSessionManager } = require('./utils/sessionPersistenceFix');
+      const sessionManager = getSessionManager();
+      if (sessionManager && sessionManager.shutdown) {
+        sessionManager.shutdown();
+        logger.info('Session Persistence Manager shutdown completed');
+      }
+    } catch (sessionShutdownError) {
+      logger.warn('Session Persistence Manager shutdown error:', sessionShutdownError);
+    }
+
     // Close database connections
     try {
       await database.close();
@@ -446,6 +458,18 @@ const initializeApp = async () => {
     } catch (epgError) {
       logger.warn('Failed to initialize EPG service, continuing without EPG:', epgError.message);
       logger.error('EPG service error details:', epgError);
+    }
+    
+    // Initialize Session Persistence Manager for Android TV compatibility
+    try {
+      logger.info('Initializing Session Persistence Manager...');
+      const { getSessionManager } = require('./utils/sessionPersistenceFix');
+      const sessionManager = getSessionManager();
+      logger.info('✅ Session Persistence Manager initialized successfully');
+      logger.info(`Session management ready for consumer tracking and recovery`);
+    } catch (sessionError) {
+      logger.warn('Failed to initialize Session Persistence Manager:', sessionError.message);
+      logger.error('Session management error details:', sessionError);
     }
 
     // Register API routes after database initialization
