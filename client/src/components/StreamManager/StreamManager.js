@@ -1556,6 +1556,12 @@ function StreamManager() {
                     </Grid>
                     
                     <Grid item xs={12}>
+                      <div style={{ backgroundColor: 'red', color: 'white', padding: '10px', margin: '10px' }}>
+                        🚨 DEBUG: If you can see this red box, the code is running in the right location!
+                      </div>
+                    </Grid>
+                    
+                    <Grid item xs={12}>
                       <Box sx={{ mt: 2, mb: 1 }}>
                         <FormControlLabel
                           control={
