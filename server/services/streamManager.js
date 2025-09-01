@@ -1444,7 +1444,7 @@ class StreamManager {
         
         // Special handling for premiumpowers.net streams (Fox Sports, etc)
         if (streamUrl.includes('premiumpowers.net') || streamUrl.includes('line.premiumpowers')) {
-          logger.info('Detected premiumpowers.net stream, using IPTV-specific headers', {
+          logger.info('Detected premiumpowers.net stream, using IPTV-specific headers and retry strategy', {
             channelId: channel.id,
             channelName: channel.name
           });
@@ -1712,14 +1712,20 @@ class StreamManager {
         });
       }
 
-      // Add User-Agent for premiumpowers.net streams or redirected URLs
+      // Special FFmpeg configuration for premiumpowers.net streams or redirected URLs
       if (streamUrl.includes('premiumpowers') || finalStreamUrl.includes('85.92.112') || finalStreamUrl.includes('premiumpowers')) {
         // Always add User-Agent before the -i flag
         const inputFlagIndex = args.findIndex(arg => arg === '-i');
         if (inputFlagIndex > 0) {
-          // Add User-Agent header before -i flag
-          args.splice(inputFlagIndex, 0, '-user_agent', 'IPTVSmarters/1.0');
-          logger.info('Added IPTV User-Agent before -i flag', {
+          // Add User-Agent and connection optimization for IPTV streams
+          args.splice(inputFlagIndex, 0, 
+            '-user_agent', 'IPTVSmarters/1.0',
+            '-reconnect', '1',           // Auto-reconnect on failure
+            '-reconnect_at_eof', '1',    // Reconnect at end of file
+            '-reconnect_streamed', '1',   // Reconnect for streamed content
+            '-reconnect_delay_max', '2'   // Max 2 seconds between reconnects
+          );
+          logger.info('Added IPTV optimizations for Fox Sports stream', {
             channelId: channel.id,
             channelName: channel.name,
             finalUrl: finalStreamUrl,
