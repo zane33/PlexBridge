@@ -4,9 +4,13 @@ const ssdpService = require('../services/ssdpService');
 const streamManager = require('../services/streamManager');
 const database = require('../services/database');
 const logger = require('../utils/logger');
+const { cacheMiddleware, responseTimeMonitor, generateLightweightEPG } = require('../utils/performanceOptimizer');
+const cacheService = require('../services/cacheService');
+const { enhanceChannelForStreaming, validateLineupForStreaming } = require('../utils/plexMetadataFix');
+const { enhanceLineupForStreamingDecisions, validateStreamingMetadata, generateDeviceXMLWithStreamingInfo } = require('../utils/streamingDecisionFix');
 
-// HDHomeRun discovery endpoint
-router.get('/discover.json', async (req, res) => {
+// HDHomeRun discovery endpoint with caching
+router.get('/discover.json', cacheMiddleware('discover'), responseTimeMonitor(100), async (req, res) => {
   try {
     // Set timeout to ensure response within reasonable time
     const timeoutId = setTimeout(() => {
@@ -39,11 +43,24 @@ router.get('/discover.json', async (req, res) => {
   }
 });
 
-// Device description XML
-router.get('/device.xml', async (req, res) => {
+// Device description XML with streaming capabilities
+router.get('/device.xml', responseTimeMonitor(50), async (req, res) => {
   try {
-    const deviceXml = await ssdpService.generateDeviceDescription();
-    res.set('Content-Type', 'application/xml');
+    // Get device info from SSDP service
+    const discovery = await ssdpService.generateDiscoveryResponse();
+    const deviceInfo = {
+      friendlyName: discovery.FriendlyName || 'PlexBridge',
+      uuid: discovery.DeviceID || 'plexbridge-001',
+      tunerCount: discovery.TunerCount || 4
+    };
+    
+    // Generate enhanced device XML with streaming decision info
+    const deviceXml = generateDeviceXMLWithStreamingInfo(deviceInfo);
+    
+    res.set({
+      'Content-Type': 'application/xml',
+      'Cache-Control': 'private, max-age=600' // 10 minute cache
+    });
     res.send(deviceXml);
   } catch (error) {
     logger.error('Device description error:', error);
@@ -51,8 +68,8 @@ router.get('/device.xml', async (req, res) => {
   }
 });
 
-// Lineup status endpoint
-router.get('/lineup_status.json', async (req, res) => {
+// Lineup status endpoint with caching
+router.get('/lineup_status.json', cacheMiddleware('lineup_status'), responseTimeMonitor(100), async (req, res) => {
   try {
     const activeStreams = await streamManager.getActiveStreams();
     const tunerStatus = ssdpService.generateTunerStatus();
@@ -114,8 +131,12 @@ router.get('/lineup_status.json', async (req, res) => {
     // Ensure we have http:// prefix
     const baseURL = baseHost.startsWith('http') ? baseHost : `http://${baseHost}`;
     
-    // Check if EPG data actually exists
-    const epgCount = await database.get('SELECT COUNT(*) as count FROM epg_programs');
+    // Use cached EPG count for performance
+    let epgCount = await cacheService.get('epg:count');
+    if (!epgCount) {
+      epgCount = await database.get('SELECT COUNT(*) as count FROM epg_programs');
+      await cacheService.set('epg:count', epgCount, 300); // Cache for 5 minutes
+    }
     const hasEPGData = epgCount && epgCount.count > 0;
 
     const status = {
@@ -150,8 +171,8 @@ router.get('/lineup_status.json', async (req, res) => {
   }
 });
 
-// Channel lineup endpoint
-router.get('/lineup.json', async (req, res) => {
+// Channel lineup endpoint with caching for performance
+router.get('/lineup.json', cacheMiddleware('lineup'), responseTimeMonitor(150), async (req, res) => {
   try {
     // Get all enabled channels from database with EPG information
     const channels = await database.all(`
@@ -189,57 +210,45 @@ router.get('/lineup.json', async (req, res) => {
     // Ensure we have http:// prefix
     const baseURL = baseHost.startsWith('http') ? baseHost : `http://${baseHost}`;
     
-    // Get current programs for Android TV metadata enhancement
+    // Try to get current programs from cache first for performance
     const now = new Date().toISOString();
-    const currentPrograms = await database.all(`
-      SELECT p.channel_id, p.title, p.description
-      FROM epg_programs p
-      WHERE p.start_time <= ? AND p.end_time > ?
-    `, [now, now]);
+    let currentPrograms = await cacheService.get('epg:current:simple');
+    
+    if (!currentPrograms) {
+      // Only fetch essential fields to reduce query time
+      currentPrograms = await database.all(`
+        SELECT p.channel_id, p.title, p.description
+        FROM epg_programs p
+        WHERE p.start_time <= ? AND p.end_time > ?
+        LIMIT 100
+      `, [now, now]);
+      
+      // Cache for 2 minutes
+      await cacheService.set('epg:current:simple', currentPrograms, 120);
+    }
     
     // Create a map of current programs by channel EPG ID
     const programMap = new Map();
-    currentPrograms.forEach(prog => {
-      programMap.set(prog.channel_id, prog);
-    });
+    if (currentPrograms && currentPrograms.length > 0) {
+      currentPrograms.forEach(prog => {
+        programMap.set(prog.channel_id, prog);
+      });
+    }
     
-    const lineup = channels.map(channel => {
-      // Get current program for this channel if available
-      const currentProgram = programMap.get(channel.epg_id || channel.id);
-      
-      // Ensure we always have a title for Android TV
-      const channelTitle = currentProgram?.title || `${channel.name} Programming`;
-      const channelDesc = currentProgram?.description || `Live stream on ${channel.name}`;
-      
-      return {
-        GuideNumber: channel.number.toString(),
-        GuideName: channel.name,
-        URL: `${baseURL}/stream/${channel.id}`,
-        HD: 1, // Assume HD for all channels
-        DRM: 0, // No DRM
-        Favorite: 0,
-        
-        // Enhanced EPG Information for Android TV compatibility
-        EPGAvailable: true,
-        EPGSource: `${baseURL}/epg/xmltv.xml`,
-        EPGURL: `${baseURL}/epg/xmltv.xml`,
-        GuideURL: `${baseURL}/epg/xmltv/${channel.id}`,
-        EPGChannelID: channel.epg_id || channel.id,
-        
-        // Android TV metadata hints
-        CurrentProgramTitle: channelTitle,
-        CurrentProgramDescription: channelDesc,
-        HasEPGData: true,
-        MediaType: 'Live',
-        AudioCodec: 'aac',
-        VideoCodec: 'h264'
-      };
-    });
+    // Create enhanced lineup with streaming decision metadata (fixes 'No part decision' error)
+    let lineup = enhanceLineupForStreamingDecisions(channels, baseURL, programMap);
+    
+    // Validate streaming metadata to prevent decision errors
+    lineup = validateStreamingMetadata(lineup);
+    
+    // Final validation for Android TV compatibility
+    lineup = validateLineupForStreaming(lineup);
 
     logger.debug('Channel lineup request', { 
       channelCount: lineup.length,
       userAgent: req.get('User-Agent'),
-      hasAndroidTV: req.get('User-Agent')?.includes('android') || false
+      hasAndroidTV: req.get('User-Agent')?.includes('android') || false,
+      enhancedForStreaming: true
     });
 
     res.json(lineup);

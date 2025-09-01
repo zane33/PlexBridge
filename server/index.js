@@ -345,6 +345,15 @@ const initializeApp = async () => {
         await database.initialize();
         logger.info('Database initialized successfully');
         
+        // Initialize performance optimizations immediately after database
+        try {
+          const { initializePerformanceOptimizations } = require('./utils/startupOptimizer');
+          await initializePerformanceOptimizations(database);
+          logger.info('✅ Performance optimizations initialized');
+        } catch (perfError) {
+          logger.warn('Failed to initialize performance optimizations:', perfError.message);
+        }
+        
         // Initialize database logger
         try {
           logger.initDatabaseLogger(database);
@@ -500,6 +509,16 @@ const initializeApp = async () => {
     logger.info(`📱 Web interface: http://localhost:${PORT}`);
     logger.info(`🔍 Health check: http://localhost:${PORT}/health`);
     logger.info(`📺 Plex discovery: http://localhost:${PORT}/discover.json`);
+    
+    // Start performance monitoring after server is running
+    try {
+      const { startPerformanceMonitoring } = require('./utils/startupOptimizer');
+      startPerformanceMonitoring(database);
+      logger.info('📊 Performance monitoring started');
+    } catch (monitorError) {
+      logger.warn('Failed to start performance monitoring:', monitorError.message);
+    }
+    
     logger.info('🚀 Application initialization completed successfully');
     
     // Set up periodic metrics updates to connected clients

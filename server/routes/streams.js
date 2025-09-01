@@ -5,6 +5,7 @@ const streamManager = require('../services/streamManager');
 const streamSessionManager = require('../services/streamSessionManager');
 const streamPreviewService = require('../services/streamPreviewService');
 const logger = require('../utils/logger');
+const { createStreamingSession } = require('../utils/streamingDecisionFix');
 const { v4: uuidv4 } = require('uuid');
 
 // Stream proxy endpoint for Plex - handles both main playlist and sub-files
@@ -23,6 +24,25 @@ router.get('/stream/:channelId/:filename?', async (req, res) => {
                          userAgent.toLowerCase().includes('libvlc') ||    // VLC Library
                          req.query.format === 'mpegts' ||
                          req.query.raw === 'true';
+    
+    const isAndroidTV = userAgent.toLowerCase().includes('android');
+    
+    // Create streaming session for decision tracking (critical for Android TV)
+    if (isPlexRequest && !isSubFile) {
+      const clientInfo = {
+        userAgent,
+        platform: isAndroidTV ? 'AndroidTV' : 'Other',
+        product: 'Plex'
+      };
+      const streamingSession = createStreamingSession(channelId, clientInfo);
+      
+      // Add session info to response headers for Plex decision making
+      res.set({
+        'X-PlexBridge-Session': streamingSession.sessionId,
+        'X-Content-Type': 'live-tv',
+        'X-Media-Type': '5'
+      });
+    }
     
     // Simple debug logging
     logger.info('Stream request received', { 

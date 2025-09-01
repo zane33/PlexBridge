@@ -4,6 +4,8 @@ const epgService = require('../services/epgService');
 const database = require('../services/database');
 const logger = require('../utils/logger');
 const { generateXMLTVCategories } = require('../utils/plexCategories');
+const { cacheMiddleware, responseTimeMonitor, optimizeEPGData } = require('../utils/performanceOptimizer');
+const { fixProgramMetadata, generateXMLTVProgramme } = require('../utils/plexMetadataFix');
 
 // XMLTV format EPG endpoint - both with and without .xml extension for Plex compatibility
 // IMPORTANT: The .xml route MUST come before the parameterized route to avoid conflicts
@@ -17,14 +19,19 @@ router.get('/xmltv/:channelId?', async (req, res) => {
   return handleXMLTVRequest(req, res);
 });
 
-// Shared XMLTV request handler
+// Shared XMLTV request handler with performance optimization
 async function handleXMLTVRequest(req, res) {
+  const processingStart = Date.now();
+  
   try {
     const channelId = req.params.channelId;
     const { days = 3 } = req.query;
     
+    // Limit days for Android TV to reduce data size and processing time
+    const maxDays = req.get('User-Agent')?.toLowerCase().includes('android') ? 2 : parseInt(days);
+    
     const startTime = new Date().toISOString();
-    const endTime = new Date(Date.now() + parseInt(days) * 24 * 60 * 60 * 1000).toISOString();
+    const endTime = new Date(Date.now() + maxDays * 24 * 60 * 60 * 1000).toISOString();
 
     let programs;
     let channels;
@@ -50,13 +57,19 @@ async function handleXMLTVRequest(req, res) {
     });
 
     if (channelId) {
-      // Single channel
+      // Single channel - faster query
       programs = await epgService.getEPGData(channelId, startTime, endTime);
-      channels = await database.all('SELECT * FROM channels WHERE id = ?', [channelId]);
+      channels = await database.all('SELECT * FROM channels WHERE id = ? LIMIT 1', [channelId]);
     } else {
-      // All channels
+      // All channels - use optimized query with limits
       programs = await epgService.getAllEPGData(startTime, endTime);
-      channels = await database.all('SELECT * FROM channels WHERE enabled = 1 ORDER BY number');
+      channels = await database.all('SELECT * FROM channels WHERE enabled = 1 ORDER BY number LIMIT 100');
+      
+      // Optimize program data for performance
+      const isAndroidTV = req.get('User-Agent')?.toLowerCase().includes('android');
+      programs = optimizeEPGData(programs, { 
+        maxPrograms: isAndroidTV ? 500 : 2000
+      });
     }
 
     // If no programs exist, generate sample EPG data for Plex compatibility
@@ -81,7 +94,23 @@ async function handleXMLTVRequest(req, res) {
     // Generate XMLTV format with categories and secondary genres
     const xmltv = generateXMLTV(channels, programs, epgSourceCategories, epgSourceSecondaryGenres);
     
-    res.set('Content-Type', 'application/xml');
+    const processingTime = Date.now() - processingStart;
+    
+    res.set({
+      'Content-Type': 'application/xml',
+      'X-Processing-Time': `${processingTime}ms`,
+      'Cache-Control': 'private, max-age=300' // 5 minute cache
+    });
+    
+    if (processingTime > 200) {
+      logger.warn('Slow XMLTV generation', {
+        channelId: channelId || 'all',
+        processingTime: `${processingTime}ms`,
+        programCount: programs.length,
+        userAgent: req.get('User-Agent')
+      });
+    }
+    
     res.send(xmltv);
 
   } catch (error) {
@@ -121,8 +150,8 @@ router.get('/json/:channelId?', async (req, res) => {
   }
 });
 
-// Current program for channel
-router.get('/now/:channelId', async (req, res) => {
+// Current program for channel with caching
+router.get('/now/:channelId', cacheMiddleware('current_program'), responseTimeMonitor(50), async (req, res) => {
   try {
     const channelId = req.params.channelId;
     const now = new Date().toISOString();
@@ -134,13 +163,15 @@ router.get('/now/:channelId', async (req, res) => {
       epgChannelId = channel.epg_id;
     }
 
-    const program = await database.get(`
-      SELECT p.*, c.name as channel_name, c.number as channel_number
+    let program = await database.get(`
+      SELECT p.title, p.description, p.start_time, p.end_time, p.category,
+             c.name as channel_name, c.number as channel_number
       FROM epg_programs p
       JOIN channels c ON c.epg_id = p.channel_id
       WHERE p.channel_id = ? 
       AND p.start_time <= ? 
       AND p.end_time > ?
+      ORDER BY p.start_time DESC
       LIMIT 1
     `, [epgChannelId, now, now]);
 
@@ -557,27 +588,32 @@ function generateSampleEPGData(channels) {
         // This ensures proper channel mapping for Android TV
         const channelId = channel.epg_id || channel.id;
         
-        samplePrograms.push({
+        // Create program with proper metadata structure
+        const program = {
           channel_id: channelId, // Use proper channel ID for mapping
-          title: `${randomProgram.title} - ${channel.name}`, // Include channel name for clarity
+          title: `${randomProgram.title}`, // Clean title without channel name
           sub_title: `Episode ${(day * 24 + hour + 1)}`,
-          description: `${randomProgram.description} on ${channel.name}. Day ${day + 1}, Hour ${hour + 1}`,
+          description: `${randomProgram.description} on ${channel.name}`,
           start_time: startTime.toISOString(),
           end_time: endTime.toISOString(),
           category: randomProgram.category,
           keywords: [randomProgram.category, channel.name, 'PlexBridge'],
-          episode_number: ((day * 24 + hour) % 100) + 1, // Episode within reasonable range
+          episode_number: ((day * 24 + hour) % 100) + 1,
           season_number: Math.floor((day * 24 + hour) / 100) + 1,
           part_number: 1,
           total_parts: 1,
           date: startTime.getFullYear().toString(),
           original_air_date: startTime.toISOString().split('T')[0],
           aspect_ratio: '16:9',
-          resolution: 'HD',
+          resolution: 'HDTV',
           audio_type: 'stereo',
           rating: 'TV-PG',
-          star_rating: (Math.floor(Math.random() * 5) + 5).toString() // 5-9 rating
-        });
+          star_rating: (Math.floor(Math.random() * 5) + 5).toString()
+        };
+        
+        // Apply Plex metadata fixes
+        const fixedProgram = fixProgramMetadata(program, channel);
+        samplePrograms.push(fixedProgram);
       }
     }
   });
