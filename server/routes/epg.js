@@ -201,13 +201,51 @@ router.get('/now/:channelId', channelSwitchingMiddleware(), responseTimeMonitor(
     `, [epgChannelId, now, now]);
 
     if (!program) {
-      // Generate fallback program for Android TV channel switching
-      if (isAndroidTV) {
-        program = generateImmediateEPGResponse(channelId, true);
-        logger.debug('Generated fallback EPG for Android TV', { channelId });
-      } else {
-        return res.status(404).json({ error: 'No current program found' });
+      // Generate fallback program with proper metadata types
+      const channelInfo = await database.get('SELECT name, number FROM channels WHERE id = ? OR epg_id = ?', [channelId, channelId]);
+      program = {
+        title: channelInfo ? `${channelInfo.name} Live` : 'Live Programming',
+        description: channelInfo ? `Live programming on ${channelInfo.name}` : 'Live television programming',
+        start_time: new Date().toISOString(),
+        end_time: new Date(Date.now() + 3600000).toISOString(),
+        category: 'Live TV',
+        channel_name: channelInfo?.name || 'Unknown Channel',
+        channel_number: channelInfo?.number || '0',
+        is_fallback: true
+      };
+      logger.debug('Generated fallback EPG program', { channelId, title: program.title });
+    }
+    
+    // CRITICAL: Apply Android TV metadata enhancements to ALL programs (fixes "Unable to find title" and "Unknown metadata type")
+    if (isAndroidTV) {
+      const { ensureAndroidTVCompatibility } = require('../utils/androidTvCompat');
+      const channelInfo = { 
+        id: channelId, 
+        name: program.channel_name, 
+        number: program.channel_number 
+      };
+      
+      // Ensure we have the channel info for proper metadata enhancement
+      if (!program.channel_name || !program.channel_number) {
+        const fullChannelInfo = await database.get('SELECT name, number FROM channels WHERE id = ? OR epg_id = ?', [channelId, channelId]);
+        if (fullChannelInfo) {
+          program.channel_name = fullChannelInfo.name;
+          program.channel_number = fullChannelInfo.number;
+          channelInfo.name = fullChannelInfo.name;
+          channelInfo.number = fullChannelInfo.number;
+        }
       }
+      
+      program = ensureAndroidTVCompatibility(program, channelInfo);
+      
+      logger.info('Applied Android TV metadata compatibility', { 
+        channelId, 
+        title: program.title,
+        type: program.type, 
+        metadata_type: program.metadata_type,
+        hasTitle: !!program.title,
+        hasType: !!program.type
+      });
     }
 
     // Add optimization headers for Android TV
@@ -218,10 +256,52 @@ router.get('/now/:channelId', channelSwitchingMiddleware(), responseTimeMonitor(
       });
     }
     
+    // Ensure proper JSON content-type to prevent "expected MediaContainer element, found html" errors
+    res.set({
+      'Content-Type': 'application/json; charset=utf-8',
+      'Cache-Control': 'no-cache, must-revalidate'
+    });
+    
+    // Always return valid JSON with complete metadata
     res.json(program);
 
   } catch (error) {
     logger.error('Current program error:', error);
+    
+    // For Android TV, provide emergency fallback with proper metadata instead of error
+    const userAgent = req.get('User-Agent') || '';
+    const isAndroidTV = userAgent.toLowerCase().includes('android');
+    
+    if (isAndroidTV) {
+      const { ensureAndroidTVCompatibility } = require('../utils/androidTvCompat');
+      const emergencyProgram = {
+        title: 'Live Programming',
+        description: 'Live television programming',
+        start_time: new Date().toISOString(),
+        end_time: new Date(Date.now() + 3600000).toISOString(),
+        category: 'Live TV',
+        channel_name: 'Live TV',
+        channel_number: '0',
+        is_emergency_fallback: true
+      };
+      
+      const channelInfo = { id: req.params.channelId, name: 'Live TV', number: '0' };
+      const enhancedProgram = ensureAndroidTVCompatibility(emergencyProgram, channelInfo);
+      
+      res.set({
+        'Content-Type': 'application/json; charset=utf-8',
+        'X-Emergency-Fallback': 'true'
+      });
+      
+      logger.warn('Provided emergency Android TV fallback metadata', { 
+        channelId: req.params.channelId,
+        title: enhancedProgram.title,
+        type: enhancedProgram.type 
+      });
+      
+      return res.json(enhancedProgram);
+    }
+    
     res.status(500).json({ error: 'Failed to get current program' });
   }
 });

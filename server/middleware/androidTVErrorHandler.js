@@ -76,21 +76,30 @@ function androidTVErrorHandler() {
       }
     }
     
-    // Handle EPG/metadata related errors
+    // Handle EPG/metadata related errors (fixes "Unable to find title" and "Unknown metadata type")
     if (req.url.includes('/epg/now/') || req.url.includes('/lineup.json')) {
       const channelId = req.params.channelId || extractChannelIdFromUrl(req.url);
       
       if (channelId) {
-        const fallbackResponse = generateImmediateEPGResponse(channelId, true);
+        const { ensureAndroidTVCompatibility } = require('../utils/androidTvCompat');
+        let fallbackResponse = generateImmediateEPGResponse(channelId, true);
+        
+        // Ensure fallback has complete Android TV metadata
+        const channelInfo = { id: channelId, name: 'Live TV', number: '0' };
+        fallbackResponse = ensureAndroidTVCompatibility(fallbackResponse, channelInfo);
         
         res.set({
+          'Content-Type': 'application/json; charset=utf-8',
           'X-Android-TV-Fallback': 'true',
-          'X-Error-Recovery': 'metadata-fallback'
+          'X-Error-Recovery': 'metadata-fallback',
+          'X-Metadata-Type': fallbackResponse.type || 'episode'
         });
         
-        logger.info('Provided Android TV fallback response', { 
+        logger.info('Provided Android TV fallback response with enhanced metadata', { 
           channelId, 
-          fallbackTitle: fallbackResponse.title 
+          fallbackTitle: fallbackResponse.title,
+          type: fallbackResponse.type,
+          metadata_type: fallbackResponse.metadata_type
         });
         
         return res.json(fallbackResponse);
@@ -140,6 +149,32 @@ function generateFallbackLineup() {
       CurrentDescription: "Live television programming",
       ContentType: "5",
       MediaType: "LiveTV",
+      
+      // Proper metadata types for Android TV (fixes "Unknown metadata type" errors)
+      type: 'episode',
+      metadata_type: 'episode',
+      content_type: 5,
+      mediaType: 'episode',
+      contentType: 5,
+      
+      // Episode metadata structure
+      grandparentTitle: 'Live TV',
+      parentTitle: 'Live Programming',
+      title: 'Live Programming',
+      originalTitle: 'Live Programming',
+      summary: 'Live television programming',
+      
+      // Episode numbering
+      index: 1,
+      parentIndex: 1,
+      year: new Date().getFullYear(),
+      
+      // Live TV identifiers
+      guid: `plexbridge://fallback/emergency/${Date.now()}`,
+      key: '/library/metadata/fallback_emergency',
+      live: 1,
+      duration: 3600000,
+      
       AndroidTVFallback: true
     }
   ];

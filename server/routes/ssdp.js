@@ -260,9 +260,56 @@ router.get('/lineup.json', channelSwitchingMiddleware(), cacheMiddleware('lineup
       enhancedForStreaming: true
     });
 
+    // Ensure proper JSON content-type to prevent "expected MediaContainer element, found html" errors
+    res.set({
+      'Content-Type': 'application/json; charset=utf-8',
+      'Cache-Control': 'max-age=300', // Cache for 5 minutes
+      'Access-Control-Allow-Origin': '*'
+    });
+
     res.json(lineup);
   } catch (error) {
     logger.error('Channel lineup error:', error);
+    
+    // For Android TV, provide emergency fallback lineup instead of error
+    const userAgent = req.get('User-Agent') || '';
+    const isAndroidTV = userAgent.toLowerCase().includes('android');
+    
+    if (isAndroidTV) {
+      const fallbackLineup = [
+        {
+          GuideNumber: "1",
+          GuideName: "Live TV",
+          URL: "/stream/fallback",
+          HD: 1,
+          DRM: 0,
+          Favorite: 0,
+          EPGAvailable: false,
+          EPGChannelID: "fallback",
+          CurrentTitle: "Live Programming",
+          CurrentDescription: "Live television programming",
+          ContentType: "5",
+          MediaType: "LiveTV",
+          
+          // Proper metadata types for Android TV
+          type: 'episode',
+          metadata_type: 'episode',
+          content_type: 5,
+          mediaType: 'episode',
+          
+          AndroidTVFallback: true
+        }
+      ];
+      
+      res.set({
+        'Content-Type': 'application/json; charset=utf-8',
+        'X-Emergency-Fallback': 'true'
+      });
+      
+      logger.warn('Provided emergency Android TV lineup fallback');
+      return res.json(fallbackLineup);
+    }
+    
     res.status(500).json({ error: 'Channel lineup failed' });
   }
 });
