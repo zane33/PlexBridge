@@ -474,7 +474,11 @@ const initializeApp = async () => {
       app.use('/', ssdpRoutes);
       app.use('/', streamRoutes);
       
-      logger.info('✅ API routes registered successfully');
+      // Add Android TV error handler after all routes
+      const { androidTVErrorHandler } = require('./middleware/androidTVErrorHandler');
+      app.use(androidTVErrorHandler());
+      
+      logger.info('✅ API routes registered successfully with Android TV optimization');
     } catch (routeError) {
       logger.error('❌ Failed to register API routes:', routeError.message);
       throw routeError;

@@ -8,6 +8,7 @@ const { cacheMiddleware, responseTimeMonitor, generateLightweightEPG } = require
 const cacheService = require('../services/cacheService');
 const { enhanceChannelForStreaming, validateLineupForStreaming } = require('../utils/plexMetadataFix');
 const { enhanceLineupForStreamingDecisions, validateStreamingMetadata, generateDeviceXMLWithStreamingInfo } = require('../utils/streamingDecisionFix');
+const { channelSwitchingMiddleware, optimizeLineupForChannelSwitching } = require('../utils/channelSwitchingFix');
 
 // HDHomeRun discovery endpoint with caching
 router.get('/discover.json', cacheMiddleware('discover'), responseTimeMonitor(100), async (req, res) => {
@@ -171,8 +172,8 @@ router.get('/lineup_status.json', cacheMiddleware('lineup_status'), responseTime
   }
 });
 
-// Channel lineup endpoint with caching for performance
-router.get('/lineup.json', cacheMiddleware('lineup'), responseTimeMonitor(150), async (req, res) => {
+// Channel lineup endpoint optimized for Android TV channel switching
+router.get('/lineup.json', channelSwitchingMiddleware(), cacheMiddleware('lineup'), responseTimeMonitor(100), async (req, res) => {
   try {
     // Get all enabled channels from database with EPG information
     const channels = await database.all(`
@@ -235,8 +236,16 @@ router.get('/lineup.json', cacheMiddleware('lineup'), responseTimeMonitor(150), 
       });
     }
     
+    // Detect Android TV for optimization
+    const isAndroidTV = req.get('User-Agent')?.toLowerCase().includes('android') || false;
+    
     // Create enhanced lineup with streaming decision metadata (fixes 'No part decision' error)
     let lineup = enhanceLineupForStreamingDecisions(channels, baseURL, programMap);
+    
+    // Optimize for Android TV channel switching
+    if (isAndroidTV) {
+      lineup = optimizeLineupForChannelSwitching(lineup, true);
+    }
     
     // Validate streaming metadata to prevent decision errors
     lineup = validateStreamingMetadata(lineup);

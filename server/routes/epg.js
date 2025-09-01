@@ -6,6 +6,7 @@ const logger = require('../utils/logger');
 const { generateXMLTVCategories } = require('../utils/plexCategories');
 const { cacheMiddleware, responseTimeMonitor, optimizeEPGData } = require('../utils/performanceOptimizer');
 const { fixProgramMetadata, generateXMLTVProgramme } = require('../utils/plexMetadataFix');
+const { channelSwitchingMiddleware, getCurrentProgramFast, generateImmediateEPGResponse } = require('../utils/channelSwitchingFix');
 
 // XMLTV format EPG endpoint - both with and without .xml extension for Plex compatibility
 // IMPORTANT: The .xml route MUST come before the parameterized route to avoid conflicts
@@ -150,13 +151,37 @@ router.get('/json/:channelId?', async (req, res) => {
   }
 });
 
-// Current program for channel with caching
-router.get('/now/:channelId', cacheMiddleware('current_program'), responseTimeMonitor(50), async (req, res) => {
+// Current program for channel with fast channel switching support
+router.get('/now/:channelId', channelSwitchingMiddleware(), responseTimeMonitor(25), async (req, res) => {
   try {
     const channelId = req.params.channelId;
+    const userAgent = req.get('User-Agent') || '';
+    const isAndroidTV = userAgent.toLowerCase().includes('android');
+    
+    // For Android TV, use fast lookup to prevent channel switching delays
+    if (isAndroidTV) {
+      const fastProgram = await getCurrentProgramFast(channelId, true);
+      
+      if (fastProgram) {
+        // Add channel info for fast response
+        const channel = await database.get('SELECT name, number FROM channels WHERE id = ? OR epg_id = ?', [channelId, channelId]);
+        if (channel) {
+          fastProgram.channel_name = channel.name;
+          fastProgram.channel_number = channel.number;
+        }
+        
+        logger.debug('Fast EPG response for Android TV channel switch', { 
+          channelId, 
+          title: fastProgram.title,
+          isFallback: fastProgram.is_fallback 
+        });
+        
+        return res.json(fastProgram);
+      }
+    }
+    
+    // Standard lookup for non-Android TV or when fast lookup fails
     const now = new Date().toISOString();
-
-    // First try to get the EPG ID if channelId is an internal ID
     let epgChannelId = channelId;
     const channel = await database.get('SELECT epg_id FROM channels WHERE id = ?', [channelId]);
     if (channel && channel.epg_id) {
@@ -176,9 +201,23 @@ router.get('/now/:channelId', cacheMiddleware('current_program'), responseTimeMo
     `, [epgChannelId, now, now]);
 
     if (!program) {
-      return res.status(404).json({ error: 'No current program found' });
+      // Generate fallback program for Android TV channel switching
+      if (isAndroidTV) {
+        program = generateImmediateEPGResponse(channelId, true);
+        logger.debug('Generated fallback EPG for Android TV', { channelId });
+      } else {
+        return res.status(404).json({ error: 'No current program found' });
+      }
     }
 
+    // Add optimization headers for Android TV
+    if (isAndroidTV) {
+      res.set({
+        'X-Channel-Switch-Ready': 'true',
+        'X-EPG-Source': program.cached_response ? 'cache' : 'database'
+      });
+    }
+    
     res.json(program);
 
   } catch (error) {

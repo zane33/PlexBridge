@@ -6,6 +6,7 @@
 const logger = require('./logger');
 const { optimizeDatabase } = require('./dbOptimization');
 const { preloadCache } = require('./performanceOptimizer');
+const { getChannelMetadataCache } = require('./channelSwitchingFix');
 
 /**
  * Runs all startup optimizations
@@ -37,9 +38,14 @@ async function initializePerformanceOptimizations(database) {
     logger.info('Preloading cache for fast responses...');
     try {
       await preloadCache(database);
+      
+      // Initialize channel metadata cache for fast switching
+      const channelCache = getChannelMetadataCache();
+      await channelCache.refreshAllChannelMetadata();
+      
       results.cache.success = true;
       results.timing.cache = Date.now() - cacheStart;
-      logger.info(`✅ Cache preloaded in ${results.timing.cache}ms`);
+      logger.info(`✅ Cache and channel metadata preloaded in ${results.timing.cache}ms`);
     } catch (error) {
       results.cache.error = error.message;
       results.timing.cache = Date.now() - cacheStart;
