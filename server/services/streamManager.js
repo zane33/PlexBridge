@@ -1421,6 +1421,8 @@ class StreamManager {
 
   // Proxy stream specifically for Plex HDHomeRun compatibility (MPEG-TS output)
   async proxyPlexCompatibleStream(streamUrl, channel, stream, req, res) {
+    const streamErrorHandler = require('../utils/streamErrorHandler');
+    
     try {
       // Debug logging to track where failures occur
       console.log('DEBUG: proxyPlexCompatibleStream called', { 
@@ -1442,8 +1444,38 @@ class StreamManager {
         const axios = require('axios');
         logger.info('Resolving stream redirects', { channelId: channel.id, streamUrl });
         
+        // Special handling for premiumpowers.net streams (Fox Sports, etc)
+        if (streamUrl.includes('premiumpowers.net') || streamUrl.includes('line.premiumpowers')) {
+          logger.info('Detected premiumpowers.net stream, using IPTV-specific headers', {
+            channelId: channel.id,
+            channelName: channel.name
+          });
+          
+          // These streams require specific User-Agent and follow redirects
+          const response = await axios.head(streamUrl, {
+            maxRedirects: 5, // Follow redirects
+            timeout: 10000,
+            validateStatus: function (status) {
+              return status >= 200 && status < 400; // Accept redirects as success
+            },
+            headers: {
+              'User-Agent': 'IPTVSmarters/1.0', // Required for premiumpowers streams
+              'Accept': '*/*',
+              'Connection': 'keep-alive'
+            }
+          });
+          
+          finalStreamUrl = response.request.responseURL || streamUrl;
+          
+          logger.info('Premiumpowers stream redirect resolved', {
+            channelId: channel.id,
+            originalUrl: streamUrl,
+            finalUrl: finalStreamUrl,
+            redirected: finalStreamUrl !== streamUrl
+          });
+        }
         // For TVNZ and mjh.nz streams, follow redirects properly
-        if (streamUrl.includes('mjh.nz') || streamUrl.includes('tvnz')) {
+        else if (streamUrl.includes('mjh.nz') || streamUrl.includes('tvnz')) {
           // Use a HEAD request without following redirects to get the Location header
           const response = await axios.head(streamUrl, {
             maxRedirects: 0, // Don't follow redirects automatically
@@ -1503,6 +1535,81 @@ class StreamManager {
       }
 
       console.log('DEBUG: Redirect resolution complete', { finalStreamUrl });
+      
+      // Pre-flight stream health check for problematic channels
+      const channelNameLower = (channel.name || '').toLowerCase();
+      const problematicChannels = ['fox', 'bein', 'sky sports', 'bt sport', 'dazn'];
+      const isProblematicChannel = problematicChannels.some(name => channelNameLower.includes(name));
+      
+      if (isProblematicChannel) {
+        logger.warn('Problematic channel detected, performing pre-flight check', {
+          channelId: channel.id,
+          channelName: channel.name,
+          streamUrl: finalStreamUrl
+        });
+        
+        // Quick accessibility check with proper headers for IPTV streams
+        const headers = finalStreamUrl.includes('premiumpowers') ? 
+          { 'User-Agent': 'IPTVSmarters/1.0' } : 
+          { 'User-Agent': 'PlexBridge/1.0' };
+          
+        const accessCheck = await streamErrorHandler.checkUrlAccessibility(finalStreamUrl, headers);
+        
+        // Check for empty content (0 bytes) which indicates dead stream
+        if (accessCheck.accessible && accessCheck.headers?.contentLength === '0') {
+          logger.error('Stream returns empty content (0 bytes)', {
+            channelId: channel.id,
+            channelName: channel.name,
+            streamUrl: finalStreamUrl
+          });
+          
+          // Try with IPTV-specific headers if not already used
+          if (!headers['User-Agent'].includes('IPTV')) {
+            logger.info('Retrying with IPTV headers', { channelId: channel.id });
+            const iptvCheck = await streamErrorHandler.checkUrlAccessibility(
+              streamUrl, // Use original URL for retry
+              { 'User-Agent': 'IPTVSmarters/1.0' }
+            );
+            
+            if (iptvCheck.accessible && iptvCheck.headers?.contentLength !== '0') {
+              // Stream works with IPTV headers, update the URL
+              finalStreamUrl = iptvCheck.finalUrl || streamUrl;
+              logger.info('Stream accessible with IPTV headers', { 
+                channelId: channel.id,
+                finalUrl: finalStreamUrl 
+              });
+            } else {
+              // Stream is dead
+              return streamErrorHandler.formatErrorResponse(res, {
+                message: 'Stream is not active (returns no data)',
+                code: 'STREAM_DEAD'
+              });
+            }
+          } else {
+            // Already tried with IPTV headers, stream is dead
+            return streamErrorHandler.formatErrorResponse(res, {
+              message: 'Stream is not active (returns no data)',
+              code: 'STREAM_DEAD'
+            });
+          }
+        } else if (!accessCheck.accessible) {
+          logger.error('Pre-flight check failed - stream not accessible', {
+            channelId: channel.id,
+            channelName: channel.name,
+            statusCode: accessCheck.statusCode,
+            error: accessCheck.error
+          });
+          
+          // Perform full diagnosis
+          const diagnosis = await streamErrorHandler.diagnoseStreamHealth(finalStreamUrl, channel);
+          
+          // Send error response
+          return streamErrorHandler.formatErrorResponse(res, {
+            message: `Stream not accessible: ${accessCheck.error || accessCheck.statusText}`,
+            code: 'STREAM_INACCESSIBLE'
+          }, diagnosis);
+        }
+      }
       
       // Set appropriate headers for MPEG-TS stream with Plex optimizations
       // Based on real HDHomeRun behavior: continuous stream without chunked encoding
@@ -1610,6 +1717,19 @@ class StreamManager {
       
       // Parse command line into arguments array
       const args = ffmpegCommand.split(' ').filter(arg => arg.trim() !== '');
+
+      // Add User-Agent for premiumpowers.net streams
+      if (finalStreamUrl.includes('premiumpowers') || finalStreamUrl.includes('85.92.112')) {
+        const inputIndex = args.indexOf(finalStreamUrl);
+        if (inputIndex > 0) {
+          // Add User-Agent header before input URL
+          args.splice(inputIndex, 0, '-user_agent', 'IPTVSmarters/1.0');
+          logger.info('Added IPTV User-Agent for premiumpowers stream', {
+            channelId: channel.id,
+            channelName: channel.name
+          });
+        }
+      }
 
       // Log the exact command being executed
       logger.info('Executing FFmpeg command', {
@@ -1785,7 +1905,7 @@ class StreamManager {
         this.cleanupStream(sessionId, 'process_closed');
       });
 
-      ffmpegProcess.stderr.on('data', (data) => {
+      ffmpegProcess.stderr.on('data', async (data) => {
         const errorOutput = data.toString();
         const stats = this.streamStats.get(sessionId);
         if (stats) {
@@ -1797,12 +1917,53 @@ class StreamManager {
           });
         }
         
-        // Log all stderr output for debugging
-        logger.info('FFmpeg MPEG-TS stderr', { 
-          channelId: channel.id,
-          sessionId,
-          output: errorOutput.trim() 
-        });
+        // Enhanced error detection and diagnosis
+        const criticalErrors = [
+          'Invalid data found when processing input',
+          'Server returned 403',
+          'Server returned 404', 
+          'Connection refused',
+          'Connection timed out',
+          'Unable to open',
+          'moov atom not found',
+          'Could not find codec parameters'
+        ];
+        
+        const hasCriticalError = criticalErrors.some(err => errorOutput.includes(err));
+        
+        if (hasCriticalError) {
+          logger.error('FFmpeg critical error detected', {
+            channelId: channel.id,
+            channelName: channel.name,
+            sessionId,
+            streamUrl: finalStreamUrl,
+            error: errorOutput.trim()
+          });
+          
+          // Perform stream diagnosis
+          const diagnosis = await streamErrorHandler.diagnoseStreamHealth(finalStreamUrl, channel);
+          logger.error('Stream health diagnosis for failed stream', diagnosis);
+          
+          // Kill the FFmpeg process if critical error
+          if (ffmpegProcess && !ffmpegProcess.killed) {
+            ffmpegProcess.kill('SIGTERM');
+          }
+          
+          // Send proper error response to Plex
+          if (!res.headersSent) {
+            streamErrorHandler.formatErrorResponse(res, { 
+              message: 'Stream unavailable', 
+              code: 'STREAM_ERROR' 
+            }, diagnosis);
+          }
+        } else {
+          // Log non-critical stderr output for debugging  
+          logger.info('FFmpeg MPEG-TS stderr', { 
+            channelId: channel.id,
+            sessionId,
+            output: errorOutput.trim() 
+          });
+        }
       });
 
       // Clean up on client disconnect with session cleanup
