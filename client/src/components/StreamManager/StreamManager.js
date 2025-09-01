@@ -1372,7 +1372,7 @@ function StreamManager() {
       >
         <DialogTitle>
           <Typography variant="h5" component="div">
-            🚨 DEBUG VERSION - {editingStream ? '✏️ Edit Stream' : '➕ Add Stream'}
+            {editingStream ? '✏️ Edit Stream' : '➕ Add Stream'}
           </Typography>
         </DialogTitle>
         
@@ -1556,33 +1556,21 @@ function StreamManager() {
                     </Grid>
                     
                     <Grid item xs={12}>
-                      <div style={{ backgroundColor: 'red', color: 'white', padding: '10px', margin: '10px' }}>
-                        🚨 DEBUG: If you can see this red box, the code is running in the right location!
-                      </div>
-                    </Grid>
-                    
-                    <Grid item xs={12}>
                       <Box sx={{ mt: 2, mb: 1 }}>
                         <FormControlLabel
                           control={
                             <Switch
                               checked={(() => {
                                 try {
-                                  console.log('ForceTranscode toggle rendering, formData.protocol_options:', formData.protocol_options);
                                   const options = typeof formData.protocol_options === 'string' 
                                     ? JSON.parse(formData.protocol_options || '{}')
                                     : formData.protocol_options || {};
-                                  console.log('Parsed options:', options);
-                                  const isChecked = options.forceTranscode === true;
-                                  console.log('ForceTranscode toggle checked state:', isChecked);
-                                  return isChecked;
-                                } catch (e) {
-                                  console.error('Error in forceTranscode toggle:', e);
+                                  return options.forceTranscode === true;
+                                } catch {
                                   return false;
                                 }
                               })()}
                               onChange={(e) => {
-                                console.log('ForceTranscode toggle changed to:', e.target.checked);
                                 try {
                                   const currentOptions = typeof formData.protocol_options === 'string' 
                                     ? JSON.parse(formData.protocol_options || '{}')
@@ -1598,7 +1586,6 @@ function StreamManager() {
                                     delete newOptions.forceTranscode;
                                   }
                                   
-                                  console.log('Updating protocol_options to:', newOptions);
                                   handleInputChange('protocol_options', newOptions);
                                 } catch (error) {
                                   console.error('Error updating forceTranscode:', error);
