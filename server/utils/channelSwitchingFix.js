@@ -168,7 +168,7 @@ function generateImmediateEPGResponse(channelId, forAndroidTV = false) {
   const metadata = cache.getChannelMetadata(channelId);
   
   if (forAndroidTV) {
-    // Optimized response for Android TV channel switching
+    // Optimized response for Android TV channel switching with proper metadata types
     return {
       channel_id: metadata.epg_id,
       title: metadata.current_program.title,
@@ -179,12 +179,34 @@ function generateImmediateEPGResponse(channelId, forAndroidTV = false) {
       channel_name: metadata.name,
       channel_number: metadata.number,
       
-      // Critical metadata for Android TV
-      content_type: metadata.content_type,
-      metadata_type: metadata.metadata_type,
+      // Critical metadata for Android TV (fixes "Unknown metadata type" errors)
+      type: 'episode', // Plex Android TV expects episode type for live TV
+      metadata_type: 'episode', // Backup metadata type identifier  
+      content_type: 5, // Live TV content type
+      mediaType: 'episode', // Media type for Plex decision making
+      contentType: 5, // Alternative content type field
+      
+      // Episode metadata structure for Android TV compatibility
+      grandparentTitle: metadata.name, // Channel name as show title
+      parentTitle: metadata.current_program.title, // Program as episode title
+      originalTitle: metadata.current_program.title,
+      summary: metadata.current_program.description,
+      
+      // Episode numbering for proper metadata structure  
+      index: 1, // Episode number
+      parentIndex: 1, // Season number
+      year: new Date().getFullYear(),
+      
+      // Live TV identifiers
+      guid: `plexbridge://live/${channelId}/${Date.now()}`,
+      key: `/library/metadata/live_${channelId}`,
+      live: 1, // Live content flag
+      
+      // Stream characteristics
       has_video: true,
       has_audio: true,
       is_live: true,
+      duration: 3600000, // 1 hour in milliseconds
       
       // Immediate response indicator
       cached_response: true,
@@ -239,14 +261,38 @@ async function getCurrentProgramFast(channelId, isAndroidTV = false) {
   } catch (error) {
     logger.error('Fast current program lookup failed:', error);
     
-    // Return immediate fallback for Android TV
+    // Return immediate fallback for Android TV with proper metadata types
     return {
       title: 'Live Programming',
       description: 'Live television programming',
       start_time: new Date().toISOString(),
       end_time: new Date(Date.now() + 3600000).toISOString(),
       category: 'Live TV',
-      is_fallback: true
+      is_fallback: true,
+      
+      // Proper metadata types for Android TV (fixes "Unknown metadata type" errors)
+      type: 'episode', // Plex Android TV expects episode type for live TV
+      metadata_type: 'episode', // Backup metadata type identifier  
+      content_type: 5, // Live TV content type
+      mediaType: 'episode', // Media type for Plex decision making
+      contentType: 5, // Alternative content type field
+      
+      // Episode metadata structure for Android TV compatibility
+      grandparentTitle: 'Live TV', // Show title
+      parentTitle: 'Live Programming', // Episode title
+      originalTitle: 'Live Programming',
+      summary: 'Live television programming',
+      
+      // Episode numbering for proper metadata structure  
+      index: 1, // Episode number
+      parentIndex: 1, // Season number
+      year: new Date().getFullYear(),
+      
+      // Live TV identifiers
+      guid: `plexbridge://fallback/${channelId}/${Date.now()}`,
+      key: `/library/metadata/fallback_${channelId}`,
+      live: 1, // Live content flag
+      duration: 3600000 // 1 hour in milliseconds
     };
   }
 }

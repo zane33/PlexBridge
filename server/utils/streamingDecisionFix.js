@@ -107,9 +107,32 @@ function enhanceLineupForStreamingDecisions(channels, baseURL, currentPrograms =
       GuideURL: `${baseURL}/epg/xmltv/${channel.id}`,
       EPGChannelID: channel.epg_id || channel.id,
       
-      // Current program metadata
+      // Current program metadata with explicit types for Android TV
       CurrentTitle: currentProgram?.title || `${channel.name} Live`,
       CurrentDescription: currentProgram?.description || `Live programming on ${channel.name}`,
+      
+      // Explicit metadata type for Android TV (fixes "Unknown metadata type" errors)
+      type: 'episode', // Plex Android TV expects episode type for live TV
+      metadata_type: 'episode', // Backup metadata type identifier
+      contentType: 5, // Live TV content type
+      mediaType: 'episode', // Media type for Plex decision making
+      
+      // Episode metadata structure for Android TV compatibility
+      grandparentTitle: channel.name, // Show title (channel name)
+      parentTitle: currentProgram?.title || `${channel.name} Live`, // Episode title
+      title: currentProgram?.title || `${channel.name} Live`, // Display title
+      originalTitle: currentProgram?.title || `${channel.name} Live`,
+      summary: currentProgram?.description || `Live programming on ${channel.name}`,
+      
+      // Episode numbering for proper metadata structure  
+      index: 1, // Episode number
+      parentIndex: 1, // Season number
+      year: new Date().getFullYear(),
+      
+      // Live TV identifiers
+      guid: `plexbridge://live/${channel.id}/${Date.now()}`,
+      key: `/library/metadata/live_${channel.id}`,
+      live: 1, // Live content flag
       
       // Android TV compatibility flags
       AndroidTVCompatible: true,

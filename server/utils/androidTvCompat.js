@@ -43,9 +43,32 @@ function ensureAndroidTVCompatibility(program, channel) {
     program.end_time = endTime.toISOString();
   }
 
-  // Add metadata type for Android TV
-  program.metadata_type = 'live_tv';
+  // Add proper metadata type for Android TV (must be exactly what Plex expects)
+  program.type = 'episode'; // Plex Android TV expects 'episode' for live TV programs
+  program.metadata_type = 'episode';
   program.content_type = 5; // Type 5 is Live TV in Plex
+  
+  // Add required episode metadata for Android TV
+  program.grandparentTitle = channel?.name || 'Live TV';
+  program.parentTitle = program.title;
+  program.title = program.title || 'Live Programming';
+  program.index = 1; // Episode number
+  program.parentIndex = 1; // Season number
+  
+  // Add media type identifiers
+  program.guid = `plexbridge://live/${channel?.id || 'unknown'}/${Date.now()}`;
+  program.key = `/library/metadata/${program.id || Math.floor(Math.random() * 100000)}`;
+  
+  // Ensure all required Android TV fields are present
+  program.originalTitle = program.originalTitle || program.title;
+  program.summary = program.description;
+  program.year = program.year || new Date().getFullYear();
+  program.duration = program.duration || 3600000; // 1 hour in milliseconds
+  
+  // Add live TV specific fields
+  program.live = 1;
+  program.channelIdentifier = channel?.number || '0';
+  program.channelTitle = channel?.name || 'Unknown Channel';
 
   return program;
 }
