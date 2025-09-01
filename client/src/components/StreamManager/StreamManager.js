@@ -1158,12 +1158,38 @@ function StreamManager() {
                           </Typography>
                         </TableCell>
                         <TableCell>
-                          <Chip
-                            label={stream.type?.toUpperCase()}
-                            size="small"
-                            color="primary"
-                            variant="outlined"
-                          />
+                          <Box sx={{ display: 'flex', flexDirection: 'column', gap: 0.5, alignItems: 'flex-start' }}>
+                            <Chip
+                              label={stream.type?.toUpperCase()}
+                              size="small"
+                              color="primary"
+                              variant="outlined"
+                            />
+                            {(() => {
+                              try {
+                                const options = typeof stream.protocol_options === 'string' 
+                                  ? JSON.parse(stream.protocol_options || '{}')
+                                  : stream.protocol_options || {};
+                                return options.forceTranscode === true;
+                              } catch {
+                                return false;
+                              }
+                            })() && (
+                              <Chip
+                                label="🔄 Enhanced"
+                                size="small"
+                                color="success"
+                                variant="filled"
+                                sx={{ 
+                                  fontSize: '0.65rem',
+                                  height: '18px',
+                                  '& .MuiChip-label': {
+                                    px: 0.5
+                                  }
+                                }}
+                              />
+                            )}
+                          </Box>
                         </TableCell>
                         <TableCell sx={{ display: { xs: 'none', md: 'table-cell' } }}>
                           <Typography 
@@ -1527,6 +1553,64 @@ function StreamManager() {
                         disabled={saving}
                         helperText="Optional - For authenticated streams"
                       />
+                    </Grid>
+                    
+                    <Grid item xs={12}>
+                      <Box sx={{ mt: 2, mb: 1 }}>
+                        <FormControlLabel
+                          control={
+                            <Switch
+                              checked={(() => {
+                                try {
+                                  const options = typeof formData.protocol_options === 'string' 
+                                    ? JSON.parse(formData.protocol_options || '{}')
+                                    : formData.protocol_options || {};
+                                  return options.forceTranscode === true;
+                                } catch {
+                                  return false;
+                                }
+                              })()}
+                              onChange={(e) => {
+                                try {
+                                  const currentOptions = typeof formData.protocol_options === 'string' 
+                                    ? JSON.parse(formData.protocol_options || '{}')
+                                    : formData.protocol_options || {};
+                                  
+                                  const newOptions = {
+                                    ...currentOptions,
+                                    forceTranscode: e.target.checked
+                                  };
+                                  
+                                  // Remove the key if false to keep the JSON clean
+                                  if (!e.target.checked) {
+                                    delete newOptions.forceTranscode;
+                                  }
+                                  
+                                  handleInputChange('protocol_options', newOptions);
+                                } catch (error) {
+                                  console.error('Error updating forceTranscode:', error);
+                                  // Fallback: create new options object
+                                  handleInputChange('protocol_options', {
+                                    forceTranscode: e.target.checked
+                                  });
+                                }
+                              }}
+                              disabled={saving}
+                              color="primary"
+                            />
+                          }
+                          label={
+                            <Box>
+                              <Typography variant="body1" component="div">
+                                🔄 Force Enhanced Transcoding
+                              </Typography>
+                              <Typography variant="caption" color="text.secondary">
+                                Enables enhanced transcoding with optimized headers for IPTV providers (recommended for Fox Sports, Sky Sports, etc.)
+                              </Typography>
+                            </Box>
+                          }
+                        />
+                      </Box>
                     </Grid>
                   </Grid>
                 </AccordionDetails>
