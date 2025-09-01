@@ -485,11 +485,13 @@ const initializeApp = async () => {
       const plexSetupRoutes = require('./routes/plex-setup');
       const streamingRoutes = require('./routes/streaming');
       const diagnosticsRoutes = require('./routes/diagnostics');
+      const adminFixRoutes = require('./routes/admin-fix');
 
       // API Routes - MUST BE BEFORE STATIC FILES
       app.use('/', healthRoutes);  // Health check routes
       app.use('/', plexSetupRoutes);  // Plex setup guide
       app.use('/api/diagnostics', diagnosticsRoutes);  // Diagnostics and crash tracking
+      app.use('/api/admin', adminFixRoutes);  // Admin fix utilities
       app.use('/api/streams/parse/m3u', m3uRoutes);
       app.use('/api/streams/import/m3u', m3uImportRoutes);
       app.use('/api/streaming', streamingRoutes);  // Enhanced streaming monitoring

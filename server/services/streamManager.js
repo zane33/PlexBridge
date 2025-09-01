@@ -59,6 +59,12 @@ class StreamManager {
         return { type: 'srt', protocol: 'srt' };
       }
 
+      // Special handling for IPTV provider URLs
+      if (url.includes('premiumpowers') || url.includes('line.')) {
+        logger.stream('Detected IPTV provider URL, treating as HTTP stream', { url });
+        return { type: 'http', protocol: 'http', requiresAuth: true };
+      }
+      
       // Try HTTP head request for content detection with redirect following
       if (urlLower.startsWith('http://') || urlLower.startsWith('https://')) {
         try {
@@ -1714,26 +1720,54 @@ class StreamManager {
 
       // Special FFmpeg configuration for premiumpowers.net streams or redirected URLs
       if (streamUrl.includes('premiumpowers') || finalStreamUrl.includes('85.92.112') || finalStreamUrl.includes('premiumpowers')) {
-        // Always add User-Agent before the -i flag
+        // Find the -i flag position
         const inputFlagIndex = args.findIndex(arg => arg === '-i');
         if (inputFlagIndex > 0) {
-          // Add User-Agent and connection optimization for IPTV streams
-          args.splice(inputFlagIndex, 0, 
-            '-user_agent', 'IPTVSmarters/1.0',
-            '-reconnect', '1',           // Auto-reconnect on failure
-            '-reconnect_at_eof', '1',    // Reconnect at end of file
-            '-reconnect_streamed', '1',   // Reconnect for streamed content
-            '-reconnect_delay_max', '2'   // Max 2 seconds between reconnects
-          );
-          logger.info('Added IPTV optimizations for Fox Sports stream', {
-            channelId: channel.id,
-            channelName: channel.name,
-            finalUrl: finalStreamUrl,
-            inputFlagIndex
-          });
+          // Remove any existing reconnect parameters to avoid duplication
+          const reconnectParams = ['-reconnect', '-reconnect_at_eof', '-reconnect_streamed', '-reconnect_delay_max', '-user_agent'];
+          let i = 0;
+          while (i < args.length) {
+            if (reconnectParams.includes(args[i])) {
+              // Remove parameter and its value
+              if (i + 1 < args.length && !args[i + 1].startsWith('-')) {
+                args.splice(i, 2);
+              } else {
+                args.splice(i, 1);
+              }
+            } else {
+              i++;
+            }
+          }
+          
+          // Find the -i flag again after cleanup
+          const newInputFlagIndex = args.findIndex(arg => arg === '-i');
+          
+          // Add optimized IPTV parameters before -i flag
+          if (newInputFlagIndex > 0) {
+            args.splice(newInputFlagIndex, 0,
+              '-user_agent', 'VLC/3.0.20 LibVLC/3.0.20',  // Use VLC User-Agent since it works
+              '-headers', 'Accept: */*\r\nConnection: keep-alive\r\n',
+              '-reconnect', '1',
+              '-reconnect_at_eof', '1',
+              '-reconnect_streamed', '1',
+              '-reconnect_delay_max', '5',
+              '-timeout', '10000000',  // 10 seconds timeout
+              '-analyzeduration', '10000000',  // Analyze for 10 seconds
+              '-probesize', '10000000'  // Probe 10MB
+            );
+            logger.info('Added enhanced IPTV optimizations for premiumpowers stream', {
+              channelId: channel.id,
+              channelName: channel.name,
+              finalUrl: finalStreamUrl,
+              userAgent: 'VLC/3.0.20 LibVLC/3.0.20'
+            });
+          }
         } else {
           // Fallback: add at the beginning
-          args.unshift('-user_agent', 'IPTVSmarters/1.0');
+          args.unshift(
+            '-user_agent', 'VLC/3.0.20 LibVLC/3.0.20',
+            '-headers', 'Accept: */*\r\nConnection: keep-alive\r\n'
+          );
           logger.info('Added IPTV User-Agent at start of command', {
             channelId: channel.id,
             channelName: channel.name,
@@ -1742,6 +1776,67 @@ class StreamManager {
         }
       }
 
+      // Pre-validate stream for IPTV providers before starting FFmpeg
+      if (streamUrl.includes('premiumpowers') || streamUrl.includes('line.')) {
+        logger.info('Pre-validating IPTV provider stream', {
+          channelId: channel.id,
+          channelName: channel.name,
+          streamUrl: finalStreamUrl
+        });
+        
+        // Quick validation using FFprobe or curl
+        try {
+          const axios = require('axios');
+          const validateResponse = await axios.head(finalStreamUrl, {
+            timeout: 5000,
+            maxRedirects: 5,
+            headers: {
+              'User-Agent': 'VLC/3.0.20 LibVLC/3.0.20',
+              'Accept': '*/*'
+            },
+            validateStatus: (status) => status < 500 // Accept any non-5xx status
+          });
+          
+          logger.info('Stream pre-validation result', {
+            channelId: channel.id,
+            status: validateResponse.status,
+            contentType: validateResponse.headers['content-type'],
+            contentLength: validateResponse.headers['content-length']
+          });
+          
+          // Check if we got an error response
+          if (validateResponse.status >= 400) {
+            logger.error('Stream validation failed with HTTP error', {
+              channelId: channel.id,
+              channelName: channel.name,
+              status: validateResponse.status,
+              streamUrl: finalStreamUrl
+            });
+            
+            // Send empty MPEG-TS response to Plex
+            if (!res.headersSent) {
+              res.set({
+                'Content-Type': 'video/mp2t',
+                'Cache-Control': 'no-cache'
+              });
+              const emptyTsPacket = Buffer.from([
+                0x47, 0x40, 0x00, 0x10,
+                0x00, 0x00, 0x01, 0xE0,
+                ...Array(180).fill(0xFF)
+              ]);
+              res.write(emptyTsPacket);
+              return res.end();
+            }
+          }
+        } catch (validateError) {
+          logger.warn('Stream pre-validation error (continuing anyway)', {
+            channelId: channel.id,
+            error: validateError.message
+          });
+          // Continue anyway - FFmpeg might still be able to handle it
+        }
+      }
+      
       // Log the exact command being executed
       logger.info('Executing FFmpeg command', {
         channelId: channel.id,
@@ -1912,8 +2007,20 @@ class StreamManager {
         // Clean up session
         this.cleanupStream(sessionId, 'ffmpeg_error');
         
+        // Send proper MPEG-TS error response to Plex (never HTML)
         if (!res.headersSent) {
-          res.status(500).send('Transcoding failed');
+          res.set({
+            'Content-Type': 'video/mp2t',
+            'Cache-Control': 'no-cache'
+          });
+          // Send minimal valid MPEG-TS packet then end
+          const emptyTsPacket = Buffer.from([
+            0x47, 0x40, 0x00, 0x10,
+            0x00, 0x00, 0x01, 0xE0,
+            ...Array(180).fill(0xFF)
+          ]);
+          res.write(emptyTsPacket);
+          res.end();
         }
       });
 
@@ -1948,14 +2055,29 @@ class StreamManager {
           output: errorOutput.trim() 
         });
         
-        // Only kill on truly fatal errors
+        // Enhanced error detection for IPTV streams
         const fatalErrors = [
           'No such file or directory',
           'Protocol not found',
-          'Invalid argument'
+          'Invalid argument',
+          'Server returned 4', // HTTP 4xx errors
+          'Server returned 5', // HTTP 5xx errors
+          'Invalid data found',
+          'Connection refused',
+          'Connection reset',
+          'Operation not permitted',
+          'HTTP error 403', // Forbidden
+          'HTTP error 401', // Unauthorized
+          'moov atom not found', // Invalid stream format
+          'Invalid NAL unit size', // Corrupted stream
+          'Could not find codec parameters' // Cannot decode stream
         ];
         
         const hasFatalError = fatalErrors.some(err => errorOutput.includes(err));
+        
+        // Check for authentication errors specifically
+        const authErrors = ['401', '403', 'Unauthorized', 'Forbidden'];
+        const hasAuthError = authErrors.some(err => errorOutput.includes(err));
         
         if (hasFatalError) {
           logger.error('FFmpeg fatal error detected', {
@@ -1963,7 +2085,8 @@ class StreamManager {
             channelName: channel.name,
             sessionId,
             streamUrl: finalStreamUrl,
-            error: errorOutput.trim()
+            error: errorOutput.trim(),
+            isAuthError: hasAuthError
           });
           
           // Kill the FFmpeg process if fatal error
@@ -1971,9 +2094,22 @@ class StreamManager {
             ffmpegProcess.kill('SIGTERM');
           }
           
-          // Send proper error response to Plex
+          // Send proper MPEG-TS error response to Plex (never HTML)
           if (!res.headersSent) {
-            res.status(503).end();
+            // Send empty MPEG-TS stream instead of error status
+            // This prevents Plex from receiving HTML error pages
+            res.set({
+              'Content-Type': 'video/mp2t',
+              'Cache-Control': 'no-cache'
+            });
+            // Send minimal valid MPEG-TS packet then end
+            const emptyTsPacket = Buffer.from([
+              0x47, 0x40, 0x00, 0x10, // TS header with payload start
+              0x00, 0x00, 0x01, 0xE0, // PES header start
+              ...Array(180).fill(0xFF) // Padding
+            ]);
+            res.write(emptyTsPacket);
+            res.end();
           }
         }
       });
