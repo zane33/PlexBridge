@@ -1421,8 +1421,6 @@ class StreamManager {
 
   // Proxy stream specifically for Plex HDHomeRun compatibility (MPEG-TS output)
   async proxyPlexCompatibleStream(streamUrl, channel, stream, req, res) {
-    const streamErrorHandler = require('../utils/streamErrorHandler');
-    
     try {
       // Debug logging to track where failures occur
       console.log('DEBUG: proxyPlexCompatibleStream called', { 
@@ -1459,7 +1457,8 @@ class StreamManager {
               responseType: 'text',
               maxContentLength: 1000, // Very small to just get redirect
               validateStatus: function (status) {
-                return status >= 200 && status < 400; // Accept redirects as success
+                // Accept all status codes to handle redirects properly
+                return true;
               },
               headers: {
                 'User-Agent': 'IPTVSmarters/1.0', // Required for premiumpowers streams
@@ -1471,26 +1470,25 @@ class StreamManager {
             // If we got a 302, the Location header should have the real URL
             if (response.status === 302 && response.headers.location) {
               finalStreamUrl = response.headers.location;
-            } else {
-              // Response URL after redirects
-              finalStreamUrl = response.request.responseURL || streamUrl;
-            }
-            
-          } catch (redirectError) {
-            if (redirectError.response?.status === 302 && redirectError.response?.headers?.location) {
-              // Axios treats 302 as error sometimes, but we want the Location
-              finalStreamUrl = redirectError.response.headers.location;
-              logger.info('Got redirect from error response', {
+              logger.info('Got redirect from response', {
                 channelId: channel.id,
+                originalUrl: streamUrl,
                 redirectUrl: finalStreamUrl
               });
             } else {
-              logger.warn('Failed to resolve premiumpowers redirect', {
+              logger.warn('No redirect found in response', {
                 channelId: channel.id,
-                error: redirectError.message
+                status: response.status
               });
-              // Continue with original URL
+              // Use original URL
             }
+            
+          } catch (redirectError) {
+            logger.warn('Failed to resolve premiumpowers redirect', {
+              channelId: channel.id,
+              error: redirectError.message
+            });
+            // Continue with original URL - don't fail the stream
           }
           
           logger.info('Premiumpowers stream redirect resolved', {
@@ -2037,10 +2035,12 @@ class StreamManager {
       logger.error('Plex-compatible stream proxy error', { 
         channelId: channel.id,
         url: streamUrl, 
-        error: error.message 
+        error: error.message,
+        stack: error.stack 
       });
       if (!res.headersSent) {
-        res.status(500).json({ error: 'Plex stream proxy failed', details: error.message });
+        // Send 503 with no body for Plex compatibility
+        res.status(503).end();
       }
     }
   }
