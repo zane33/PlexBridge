@@ -1451,21 +1451,47 @@ class StreamManager {
             channelName: channel.name
           });
           
-          // These streams require specific User-Agent and follow redirects
-          const response = await axios.head(streamUrl, {
-            maxRedirects: 5, // Follow redirects
-            timeout: 10000,
-            validateStatus: function (status) {
-              return status >= 200 && status < 400; // Accept redirects as success
-            },
-            headers: {
-              'User-Agent': 'IPTVSmarters/1.0', // Required for premiumpowers streams
-              'Accept': '*/*',
-              'Connection': 'keep-alive'
+          // These streams require specific User-Agent and GET request to trigger redirect
+          try {
+            const response = await axios.get(streamUrl, {
+              maxRedirects: 0, // Don't follow automatically, get redirect URL
+              timeout: 10000,
+              responseType: 'text',
+              maxContentLength: 1000, // Very small to just get redirect
+              validateStatus: function (status) {
+                return status >= 200 && status < 400; // Accept redirects as success
+              },
+              headers: {
+                'User-Agent': 'IPTVSmarters/1.0', // Required for premiumpowers streams
+                'Accept': '*/*',
+                'Connection': 'keep-alive'
+              }
+            });
+            
+            // If we got a 302, the Location header should have the real URL
+            if (response.status === 302 && response.headers.location) {
+              finalStreamUrl = response.headers.location;
+            } else {
+              // Response URL after redirects
+              finalStreamUrl = response.request.responseURL || streamUrl;
             }
-          });
-          
-          finalStreamUrl = response.request.responseURL || streamUrl;
+            
+          } catch (redirectError) {
+            if (redirectError.response?.status === 302 && redirectError.response?.headers?.location) {
+              // Axios treats 302 as error sometimes, but we want the Location
+              finalStreamUrl = redirectError.response.headers.location;
+              logger.info('Got redirect from error response', {
+                channelId: channel.id,
+                redirectUrl: finalStreamUrl
+              });
+            } else {
+              logger.warn('Failed to resolve premiumpowers redirect', {
+                channelId: channel.id,
+                error: redirectError.message
+              });
+              // Continue with original URL
+            }
+          }
           
           logger.info('Premiumpowers stream redirect resolved', {
             channelId: channel.id,
@@ -1548,67 +1574,12 @@ class StreamManager {
           streamUrl: finalStreamUrl
         });
         
-        // Quick accessibility check with proper headers for IPTV streams
-        const headers = finalStreamUrl.includes('premiumpowers') ? 
-          { 'User-Agent': 'IPTVSmarters/1.0' } : 
-          { 'User-Agent': 'PlexBridge/1.0' };
-          
-        const accessCheck = await streamErrorHandler.checkUrlAccessibility(finalStreamUrl, headers);
-        
-        // Check for empty content (0 bytes) which indicates dead stream
-        if (accessCheck.accessible && accessCheck.headers?.contentLength === '0') {
-          logger.error('Stream returns empty content (0 bytes)', {
-            channelId: channel.id,
-            channelName: channel.name,
-            streamUrl: finalStreamUrl
-          });
-          
-          // Try with IPTV-specific headers if not already used
-          if (!headers['User-Agent'].includes('IPTV')) {
-            logger.info('Retrying with IPTV headers', { channelId: channel.id });
-            const iptvCheck = await streamErrorHandler.checkUrlAccessibility(
-              streamUrl, // Use original URL for retry
-              { 'User-Agent': 'IPTVSmarters/1.0' }
-            );
-            
-            if (iptvCheck.accessible && iptvCheck.headers?.contentLength !== '0') {
-              // Stream works with IPTV headers, update the URL
-              finalStreamUrl = iptvCheck.finalUrl || streamUrl;
-              logger.info('Stream accessible with IPTV headers', { 
-                channelId: channel.id,
-                finalUrl: finalStreamUrl 
-              });
-            } else {
-              // Stream is dead
-              return streamErrorHandler.formatErrorResponse(res, {
-                message: 'Stream is not active (returns no data)',
-                code: 'STREAM_DEAD'
-              });
-            }
-          } else {
-            // Already tried with IPTV headers, stream is dead
-            return streamErrorHandler.formatErrorResponse(res, {
-              message: 'Stream is not active (returns no data)',
-              code: 'STREAM_DEAD'
-            });
-          }
-        } else if (!accessCheck.accessible) {
-          logger.error('Pre-flight check failed - stream not accessible', {
-            channelId: channel.id,
-            channelName: channel.name,
-            statusCode: accessCheck.statusCode,
-            error: accessCheck.error
-          });
-          
-          // Perform full diagnosis
-          const diagnosis = await streamErrorHandler.diagnoseStreamHealth(finalStreamUrl, channel);
-          
-          // Send error response
-          return streamErrorHandler.formatErrorResponse(res, {
-            message: `Stream not accessible: ${accessCheck.error || accessCheck.statusText}`,
-            code: 'STREAM_INACCESSIBLE'
-          }, diagnosis);
-        }
+        // DISABLE pre-flight checks for now - they're being too aggressive
+        // Let FFmpeg handle the stream validation instead
+        logger.info('Skipping pre-flight checks - letting FFmpeg handle validation', {
+          channelId: channel.id,
+          channelName: channel.name
+        });
       }
       
       // Set appropriate headers for MPEG-TS stream with Plex optimizations
@@ -1718,15 +1689,16 @@ class StreamManager {
       // Parse command line into arguments array
       const args = ffmpegCommand.split(' ').filter(arg => arg.trim() !== '');
 
-      // Add User-Agent for premiumpowers.net streams
-      if (finalStreamUrl.includes('premiumpowers') || finalStreamUrl.includes('85.92.112')) {
-        const inputIndex = args.indexOf(finalStreamUrl);
+      // Add User-Agent for premiumpowers.net streams or redirected URLs
+      if (streamUrl.includes('premiumpowers') || finalStreamUrl.includes('85.92.112') || finalStreamUrl.includes('premiumpowers')) {
+        const inputIndex = args.findIndex(arg => arg === finalStreamUrl);
         if (inputIndex > 0) {
           // Add User-Agent header before input URL
           args.splice(inputIndex, 0, '-user_agent', 'IPTVSmarters/1.0');
           logger.info('Added IPTV User-Agent for premiumpowers stream', {
             channelId: channel.id,
-            channelName: channel.name
+            channelName: channel.name,
+            finalUrl: finalStreamUrl
           });
         }
       }
@@ -1917,22 +1889,25 @@ class StreamManager {
           });
         }
         
-        // Enhanced error detection and diagnosis
-        const criticalErrors = [
-          'Invalid data found when processing input',
-          'Server returned 403',
-          'Server returned 404', 
-          'Connection refused',
-          'Connection timed out',
-          'Unable to open',
-          'moov atom not found',
-          'Could not find codec parameters'
+        // Log all stderr output but don't kill processes aggressively
+        // Let FFmpeg try to recover from transient errors
+        logger.info('FFmpeg MPEG-TS stderr', { 
+          channelId: channel.id,
+          sessionId,
+          output: errorOutput.trim() 
+        });
+        
+        // Only kill on truly fatal errors
+        const fatalErrors = [
+          'No such file or directory',
+          'Protocol not found',
+          'Invalid argument'
         ];
         
-        const hasCriticalError = criticalErrors.some(err => errorOutput.includes(err));
+        const hasFatalError = fatalErrors.some(err => errorOutput.includes(err));
         
-        if (hasCriticalError) {
-          logger.error('FFmpeg critical error detected', {
+        if (hasFatalError) {
+          logger.error('FFmpeg fatal error detected', {
             channelId: channel.id,
             channelName: channel.name,
             sessionId,
@@ -1940,29 +1915,15 @@ class StreamManager {
             error: errorOutput.trim()
           });
           
-          // Perform stream diagnosis
-          const diagnosis = await streamErrorHandler.diagnoseStreamHealth(finalStreamUrl, channel);
-          logger.error('Stream health diagnosis for failed stream', diagnosis);
-          
-          // Kill the FFmpeg process if critical error
+          // Kill the FFmpeg process if fatal error
           if (ffmpegProcess && !ffmpegProcess.killed) {
             ffmpegProcess.kill('SIGTERM');
           }
           
           // Send proper error response to Plex
           if (!res.headersSent) {
-            streamErrorHandler.formatErrorResponse(res, { 
-              message: 'Stream unavailable', 
-              code: 'STREAM_ERROR' 
-            }, diagnosis);
+            res.status(503).end();
           }
-        } else {
-          // Log non-critical stderr output for debugging  
-          logger.info('FFmpeg MPEG-TS stderr', { 
-            channelId: channel.id,
-            sessionId,
-            output: errorOutput.trim() 
-          });
         }
       });
 
