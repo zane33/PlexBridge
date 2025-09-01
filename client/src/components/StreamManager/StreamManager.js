@@ -1372,7 +1372,7 @@ function StreamManager() {
       >
         <DialogTitle>
           <Typography variant="h5" component="div">
-            {editingStream ? '✏️ Edit Stream' : '➕ Add Stream'}
+            🚨 DEBUG VERSION - {editingStream ? '✏️ Edit Stream' : '➕ Add Stream'}
           </Typography>
         </DialogTitle>
         
