@@ -1484,11 +1484,24 @@ class StreamManager {
             }
             
           } catch (redirectError) {
-            logger.warn('Failed to resolve premiumpowers redirect', {
-              channelId: channel.id,
-              error: redirectError.message
-            });
-            // Continue with original URL - don't fail the stream
+            // Check if this is a redirect error with location header
+            if (redirectError.response && redirectError.response.status === 302 && redirectError.response.headers.location) {
+              finalStreamUrl = redirectError.response.headers.location;
+              logger.info('Got redirect from error response', {
+                channelId: channel.id,
+                originalUrl: streamUrl,
+                redirectUrl: finalStreamUrl,
+                status: redirectError.response.status
+              });
+            } else {
+              logger.warn('Failed to resolve premiumpowers redirect', {
+                channelId: channel.id,
+                error: redirectError.message,
+                status: redirectError.response?.status,
+                hasLocation: !!redirectError.response?.headers?.location
+              });
+              // Continue with original URL - don't fail the stream
+            }
           }
           
           logger.info('Premiumpowers stream redirect resolved', {
@@ -1684,29 +1697,41 @@ class StreamManager {
         ffmpegCommand = ffmpegCommand.replace('-i ' + finalStreamUrl, hlsArgs + ' -i ' + finalStreamUrl);
       }
       
-      // Parse command line into arguments array
+      // Parse command line into arguments array, but handle special characters in URLs
       const args = ffmpegCommand.split(' ').filter(arg => arg.trim() !== '');
+      
+      // Replace the URL in the args with the final URL (which may contain special characters)
+      const urlArgIndex = args.findIndex(arg => arg === streamUrl || arg === finalStreamUrl);
+      if (urlArgIndex !== -1) {
+        args[urlArgIndex] = finalStreamUrl;
+        logger.info('Replaced URL in FFmpeg args', {
+          channelId: channel.id,
+          originalUrl: streamUrl,
+          finalUrl: finalStreamUrl,
+          urlArgIndex
+        });
+      }
 
       // Add User-Agent for premiumpowers.net streams or redirected URLs
       if (streamUrl.includes('premiumpowers') || finalStreamUrl.includes('85.92.112') || finalStreamUrl.includes('premiumpowers')) {
-        const inputIndex = args.findIndex(arg => arg === finalStreamUrl);
-        if (inputIndex > 0) {
-          // Add User-Agent header before input URL
-          args.splice(inputIndex, 0, '-user_agent', 'IPTVSmarters/1.0');
-          logger.info('Added IPTV User-Agent for premiumpowers stream', {
+        // Always add User-Agent before the -i flag
+        const inputFlagIndex = args.findIndex(arg => arg === '-i');
+        if (inputFlagIndex > 0) {
+          // Add User-Agent header before -i flag
+          args.splice(inputFlagIndex, 0, '-user_agent', 'IPTVSmarters/1.0');
+          logger.info('Added IPTV User-Agent before -i flag', {
             channelId: channel.id,
             channelName: channel.name,
             finalUrl: finalStreamUrl,
-            inputIndex
+            inputFlagIndex
           });
         } else {
-          // If we can't find the URL in args, add User-Agent at the beginning
+          // Fallback: add at the beginning
           args.unshift('-user_agent', 'IPTVSmarters/1.0');
-          logger.info('Added IPTV User-Agent at start of command (URL not found in args)', {
+          logger.info('Added IPTV User-Agent at start of command', {
             channelId: channel.id,
             channelName: channel.name,
-            finalUrl: finalStreamUrl,
-            args: args.slice(0, 10) // First 10 args for debugging
+            finalUrl: finalStreamUrl
           });
         }
       }
