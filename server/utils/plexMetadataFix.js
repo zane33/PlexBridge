@@ -33,7 +33,10 @@ function fixProgramMetadata(program, channel) {
     
     // Metadata type identification (critical for Android TV)
     content_type: 'live_tv',
-    metadata_type: 5, // Live TV type in Plex
+    metadata_type: 'episode', // Android TV expects 'episode' for live TV
+    type: 'episode', // Primary type field
+    mediaType: 'episode', // Alternative type field
+    grandparentTitle: channel?.name || 'Live TV', // Show name for Android TV
     is_live: true,
     has_video: true,
     has_audio: true,
@@ -67,9 +70,11 @@ function enhanceChannelForStreaming(channel, baseURL) {
     EPGChannelID: channel.epg_id || channel.id,
     
     // Streaming resource metadata (fixes "No part decision" error)
-    MediaType: 'LiveTV',
-    ContentType: 5, // Live TV content type
+    MediaType: 'episode', // Android TV expects episode type
+    ContentType: 'episode', // Match with MediaType
     StreamType: 'live',
+    Type: 'episode', // Primary type field
+    MetadataType: 'episode', // Ensure consistent type
     HasVideo: true,
     HasAudio: true,
     VideoCodec: 'h264',
@@ -140,8 +145,9 @@ function generateXMLTVProgramme(program, channelId) {
   
   // Live TV metadata (fixes Android TV recognition)
   xml += `    <live>1</live>\n`;
-  xml += `    <metadata-type>5</metadata-type>\n`;
-  xml += `    <content-type>live-tv</content-type>\n`;
+  xml += `    <episode-type>live</episode-type>\n`;
+  xml += `    <content-type>episode</content-type>\n`;
+  xml += `    <media-type>episode</media-type>\n`;
   
   xml += `  </programme>\n`;
   
@@ -174,7 +180,9 @@ function validateLineupForStreaming(lineup) {
       GuideNumber: channel.GuideNumber || '0',
       GuideName: channel.GuideName || 'Unknown Channel',
       EPGChannelID: channel.EPGChannelID || channel.id || 'unknown',
-      ContentType: 5, // Force Live TV type
+      ContentType: 'episode', // Android TV expects episode type
+      MediaType: 'episode',
+      Type: 'episode',
       StreamType: 'live'
     };
   });
