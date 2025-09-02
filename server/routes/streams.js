@@ -7,6 +7,7 @@ const streamPreviewService = require('../services/streamPreviewService');
 const logger = require('../utils/logger');
 const { createStreamingSession } = require('../utils/streamingDecisionFix');
 const { getSessionManager, sessionKeepAlive, addStreamHeaders } = require('../utils/sessionPersistenceFix');
+const { createUnifiedSessionMetadata, createUnifiedResponseHeaders } = require('../utils/plexMetadataUnificationFix');
 const { v4: uuidv4 } = require('uuid');
 
 // Apply session keep-alive middleware to all stream endpoints
@@ -36,36 +37,46 @@ router.get('/stream/:channelId/:filename?', async (req, res) => {
                    req.query.sessionId || 
                    `session_${channelId}_${Date.now()}`;
     
-    // Create persistent streaming session for consumer tracking (fixes "Failed to find consumer")
+    // CRITICAL FIX: Create unified persistent session for consumer tracking
+    // This fixes "Failed to find consumer" errors by using consistent metadata
     if (isPlexRequest && !isSubFile) {
       const sessionManager = getSessionManager();
       const clientInfo = {
         userAgent,
         platform: isAndroidTV ? 'AndroidTV' : 'Other',
-        product: 'Plex',
+        product: 'Plex Media Server',
+        version: '1.0',
         remoteAddress: req.ip || req.connection.remoteAddress
       };
       
-      // Create or get existing persistent session
-      const persistentSession = sessionManager.createSession(channelId, sessionId, null, clientInfo);
+      // Create unified session metadata with consistent type handling
+      const unifiedSession = createUnifiedSessionMetadata(channelId, sessionId, clientInfo);
       
-      // Create streaming session for decision tracking (critical for Android TV)
-      const streamingSession = createStreamingSession(channelId, clientInfo);
+      // Create or get existing persistent session with unified metadata
+      const persistentSession = sessionManager.createSession(
+        channelId, 
+        unifiedSession.sessionId, 
+        null, 
+        unifiedSession.clientInfo
+      );
       
-      // Add session info to response headers for Plex decision making and consumer tracking
-      addStreamHeaders(req, res, sessionId);
-      res.set({
-        'X-PlexBridge-Session': streamingSession.sessionId,
-        'X-Persistent-Session': persistentSession.sessionId,
-        'X-Content-Type': 'live-tv',
-        'X-Media-Type': '5'
-      });
+      // Store unified session metadata for consumer tracking
+      persistentSession.unifiedMetadata = unifiedSession;
+      persistentSession.consumerId = unifiedSession.consumerId;
+      persistentSession.consumerType = unifiedSession.consumerType;
+      persistentSession.consumerState = unifiedSession.consumerState;
       
-      logger.info('Created persistent streaming session', {
-        sessionId,
+      // Set unified response headers for consistent Plex communication
+      const unifiedHeaders = createUnifiedResponseHeaders(unifiedSession.sessionId, channelId);
+      res.set(unifiedHeaders);
+      
+      logger.info('Created unified streaming session with consumer tracking', {
+        sessionId: unifiedSession.sessionId,
+        consumerId: unifiedSession.consumerId,
         channelId,
         clientInfo: clientInfo.userAgent,
-        sessionStatus: persistentSession.status
+        sessionStatus: persistentSession.status,
+        metadata: unifiedSession.streamingDecision
       });
     }
     

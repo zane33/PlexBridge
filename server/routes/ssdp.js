@@ -8,6 +8,7 @@ const { cacheMiddleware, responseTimeMonitor, generateLightweightEPG } = require
 const cacheService = require('../services/cacheService');
 const { enhanceChannelForStreaming, validateLineupForStreaming } = require('../utils/plexMetadataFix');
 const { enhanceLineupForStreamingDecisions, validateStreamingMetadata, generateDeviceXMLWithStreamingInfo } = require('../utils/streamingDecisionFix');
+const { createUnifiedChannelMetadata, validateAndFixLineupMetadata, createUnifiedResponseHeaders } = require('../utils/plexMetadataUnificationFix');
 const { channelSwitchingMiddleware, optimizeLineupForChannelSwitching } = require('../utils/channelSwitchingFix');
 
 // HDHomeRun discovery endpoint with caching
@@ -239,19 +240,22 @@ router.get('/lineup.json', channelSwitchingMiddleware(), cacheMiddleware('lineup
     // Detect Android TV for optimization
     const isAndroidTV = req.get('User-Agent')?.toLowerCase().includes('android') || false;
     
-    // Create enhanced lineup with streaming decision metadata (fixes 'No part decision' error)
-    let lineup = enhanceLineupForStreamingDecisions(channels, baseURL, programMap);
+    // CRITICAL FIX: Create unified channel metadata to prevent Plex errors
+    // This addresses "Unable to find title for item of type 5" and "Unknown metadata type" errors
+    let lineup = channels.map(channel => {
+      const currentProgram = programMap.get(channel.epg_id || channel.id);
+      return createUnifiedChannelMetadata(channel, baseURL, currentProgram);
+    });
     
-    // Optimize for Android TV channel switching
+    // Apply additional fixes and validation
+    lineup = validateAndFixLineupMetadata(lineup);
+    
+    // Optimize for Android TV channel switching if needed
     if (isAndroidTV) {
       lineup = optimizeLineupForChannelSwitching(lineup, true);
+      // Reapply unified metadata after Android TV optimization
+      lineup = validateAndFixLineupMetadata(lineup);
     }
-    
-    // Validate streaming metadata to prevent decision errors
-    lineup = validateStreamingMetadata(lineup);
-    
-    // Final validation for Android TV compatibility
-    lineup = validateLineupForStreaming(lineup);
 
     logger.debug('Channel lineup request', { 
       channelCount: lineup.length,

@@ -159,7 +159,14 @@ setInterval(() => {
   logger.debug(`Active WebSocket connections: ${sockets.size}`);
 }, 60000); // Every minute
 
-// Error handling middleware
+// Plex-specific error handling middleware (must be loaded early)
+const { plexErrorHandler, preventHTMLForPlex } = require('./middleware/plexErrorHandler');
+
+// Prevent HTML responses to Plex clients (applied to all routes)
+app.use(preventHTMLForPlex);
+
+// Error handling middleware - Plex handler first, then general handler
+app.use(plexErrorHandler);
 app.use((err, req, res, next) => {
   logger.error('Unhandled error:', err);
   res.status(500).json({
