@@ -66,11 +66,15 @@ async function handleXMLTVRequest(req, res) {
       programs = await epgService.getAllEPGData(startTime, endTime);
       channels = await database.all('SELECT * FROM channels WHERE enabled = 1 ORDER BY number LIMIT 100');
       
-      // Optimize program data for performance
+      // For XMLTV export, don't limit programs to allow Plex to import all EPG data
+      // Only apply minimal optimization for Android TV which has stricter memory constraints
       const isAndroidTV = req.get('User-Agent')?.toLowerCase().includes('android');
-      programs = optimizeEPGData(programs, { 
-        maxPrograms: isAndroidTV ? 500 : 2000
-      });
+      if (isAndroidTV) {
+        programs = optimizeEPGData(programs, { 
+          maxPrograms: 1000  // Increased from 500 for Android TV
+        });
+      }
+      // No program limit for regular Plex clients - allow full EPG import
     }
 
     // If no programs exist, generate sample EPG data for Plex compatibility
