@@ -86,7 +86,7 @@ function enhanceLineupForStreamingDecisions(channels, baseURL, currentPrograms =
       // Live TV metadata
       Live: true,
       MediaType: 'LiveTV',
-      ContentType: '5', // Live TV content type
+      ContentType: '4', // Episode content type for Live TV
       StreamType: 'live',
       
       // Transcoding hints for Android TV
@@ -218,7 +218,7 @@ function validateStreamingMetadata(lineup) {
           case 'VideoCodec': channel[field] = 'h264'; break;
           case 'AudioCodec': channel[field] = 'aac'; break;
           case 'MediaType': channel[field] = 'LiveTV'; break;
-          case 'ContentType': channel[field] = '5'; break;
+          case 'ContentType': channel[field] = '4'; break;
           case 'GuideNumber': channel[field] = '0'; break;
           case 'GuideName': channel[field] = 'Unknown'; break;
           case 'URL': channel[field] = '#'; break;

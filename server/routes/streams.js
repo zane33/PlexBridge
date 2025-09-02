@@ -58,7 +58,7 @@ router.get('/stream/:channelId/:filename?', async (req, res) => {
         'X-PlexBridge-Session': streamingSession.sessionId,
         'X-Persistent-Session': persistentSession.sessionId,
         'X-Content-Type': 'live-tv',
-        'X-Media-Type': '5'
+        'X-Media-Type': '4'  // Episode type for Live TV, not 5 (trailer)
       });
       
       logger.info('Created persistent streaming session', {

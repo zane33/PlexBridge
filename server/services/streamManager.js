@@ -1708,31 +1708,34 @@ class StreamManager {
       
       // Enhanced encoding integration for unreliable streams
       try {
-        const { getStreamConfiguration } = require('../utils/enhancedEncoding');
-        const streamConfig = getStreamConfiguration(stream, channel);
-        
-        // Check if enhanced encoding is enabled for this stream
-        if (stream.enhanced_encoding || streamConfig.encoding_profile !== 'standard-reliability') {
-          logger.info('Applying enhanced encoding for unreliable stream', {
-            channelId: channel.id,
-            channelNumber: channel.number,
-            channelName: channel.name,
-            profile: streamConfig.encoding_profile,
-            description: streamConfig.profile_description,
-            antiLoop: streamConfig.encoding_profile === 'anti-loop'
-          });
+        // Only apply enhanced encoding if stream object exists and has properties
+        if (stream && (stream.enhanced_encoding || channel?.number === 505)) {
+          const { getStreamConfiguration } = require('../utils/enhancedEncoding');
+          const streamConfig = getStreamConfiguration(stream, channel);
           
-          // For anti-loop profile, completely replace args to prevent conflicts
-          if (streamConfig.encoding_profile === 'anti-loop') {
-            args = streamConfig.ffmpeg_options.concat(['-i', finalStreamUrl, 'pipe:1']);
-            logger.info('Applied anti-loop FFmpeg configuration', {
+          // Check if enhanced encoding should be applied
+          if (streamConfig.encoding_profile !== 'standard-reliability') {
+            logger.info('Applying enhanced encoding for unreliable stream', {
               channelId: channel.id,
               channelNumber: channel.number,
-              argCount: args.length
+              channelName: channel.name,
+              profile: streamConfig.encoding_profile,
+              description: streamConfig.profile_description,
+              antiLoop: streamConfig.encoding_profile === 'anti-loop'
             });
-          } else {
-            // For other profiles, replace standard args with enhanced encoding args
-            args = streamConfig.ffmpeg_options.concat(['-i', finalStreamUrl, 'pipe:1']);
+            
+            // For anti-loop profile, completely replace args to prevent conflicts
+            if (streamConfig.encoding_profile === 'anti-loop') {
+              args = streamConfig.ffmpeg_options.concat(['-i', finalStreamUrl, 'pipe:1']);
+              logger.info('Applied anti-loop FFmpeg configuration', {
+                channelId: channel.id,
+                channelNumber: channel.number,
+                argCount: args.length
+              });
+            } else {
+              // For other profiles, replace standard args with enhanced encoding args
+              args = streamConfig.ffmpeg_options.concat(['-i', finalStreamUrl, 'pipe:1']);
+            }
           }
         }
       } catch (enhancedEncodingError) {

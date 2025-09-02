@@ -362,11 +362,20 @@ async function addEnhancedEncodingSupport(database) {
  * Gets stream configuration with enhanced encoding options
  */
 function getStreamConfiguration(streamInfo, channelInfo = null) {
-  const profile = selectEncodingProfile(streamInfo, channelInfo?.number);
+  // Handle null stream object (when channel is accessed directly)
+  const safeStreamInfo = streamInfo || {
+    name: channelInfo?.name || 'Unknown Stream',
+    url: '',
+    enhanced_encoding: false,
+    reliability_score: 1.0,
+    failure_count: 0
+  };
+  
+  const profile = selectEncodingProfile(safeStreamInfo, channelInfo?.number);
   const encodingConfig = getEncodingOptions(profile);
   
   return {
-    ...streamInfo,
+    ...safeStreamInfo,
     encoding_profile: profile,
     ffmpeg_options: encodingConfig.ffmpeg_options,
     timeout_ms: encodingConfig.timeout_ms,
