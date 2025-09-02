@@ -7,8 +7,9 @@
 4. [Plex Integration Details](#plex-integration-details)
 5. [FFmpeg Configuration](#ffmpeg-configuration)
 6. [Critical Implementation Details](#critical-implementation-details)
-7. [Performance Optimizations](#performance-optimizations)
-8. [Troubleshooting Guide](#troubleshooting-guide)
+7. [Metadata Handling](#metadata-handling-critical-for-stability)
+8. [Performance Optimizations](#performance-optimizations)
+9. [Troubleshooting Guide](#troubleshooting-guide)
 
 ## Overview
 
@@ -293,6 +294,37 @@ const streamInfo = {
   isPlexStream: true
 };
 ```
+
+### 5. Metadata Handling (Critical for Stability)
+
+**See full documentation: [Plex-Metadata-System.md](./Plex-Metadata-System.md)**
+
+Plex requires comprehensive metadata for Live TV to function without crashes. Key endpoints:
+
+```javascript
+// Channel lineup - HDHomeRun format
+GET /lineup.json
+Response: [{ GuideNumber, GuideName, VideoCodec, AudioCodec, URL }]
+
+// Full metadata - Complete Video→Media→Part→Stream hierarchy  
+GET /library/metadata/:metadataId
+Response: { MediaContainer: { Video: [{ type: "episode", Media: [...] }] } }
+
+// Timeline - Playback tracking
+GET /timeline/:itemId
+Response: { MediaContainer: { Timeline: [{ duration: 86400000, state: "playing" }] } }
+
+// Consumer tracking - Session persistence
+GET /consumer/:sessionId/:action
+Response: { success: true, status: "active", consumer: { available: true } }
+```
+
+**Critical Metadata Rules:**
+1. **Always return JSON** - Never HTML error pages
+2. **Use type "episode"** - Not type 5 (trailer) for Live TV
+3. **Include duration** - 86400000ms (24 hours) for live content
+4. **Complete hierarchy** - Video→Media→Part→Stream structure
+5. **Never fail** - Always return valid fallback data
 
 ## Performance Optimizations
 

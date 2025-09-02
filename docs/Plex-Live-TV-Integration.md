@@ -9,6 +9,7 @@ PlexBridge acts as an **HDHomeRun network tuner emulator** that allows Plex Medi
 - [How HDHomeRun Emulation Works](#how-hdhomerun-emulation-works)
 - [Plex Discovery Process](#plex-discovery-process)
 - [API Endpoints](#api-endpoints)
+- [Metadata System](#metadata-system)
 - [Stream Format Requirements](#stream-format-requirements)
 - [Electronic Program Guide (EPG)](#electronic-program-guide-epg)
 - [Network Architecture](#network-architecture)
@@ -173,6 +174,42 @@ app.get('/lineup.json', async (req, res) => {
   }
 });
 ```
+
+## Metadata System
+
+**Full documentation: [Plex-Metadata-System.md](./Plex-Metadata-System.md)**
+
+PlexBridge implements a comprehensive metadata handling system that prevents streaming crashes by ensuring all Plex metadata requests receive valid responses.
+
+### Key Metadata Components
+
+1. **Channel Lineup** (`/lineup.json`)
+   - Simple HDHomeRun format
+   - Uses "episode" type for Live TV
+   - No complex metadata structures
+
+2. **Full Metadata** (`/library/metadata/:id`)
+   - Complete Video→Media→Part→Stream hierarchy
+   - Required for Plex playback decisions
+   - Includes codec and resolution information
+
+3. **Timeline Tracking** (`/timeline/:id`)
+   - Provides playback state information
+   - Includes duration to prevent "completion duration" errors
+   - Maintains session continuity
+
+4. **Consumer Management** (`/consumer/:sessionId`)
+   - Prevents "Failed to find consumer" errors
+   - Maintains session across multiple requests
+   - Always returns success status
+
+### Critical Metadata Rules
+
+- **Always JSON**: Never return HTML error pages
+- **Correct Types**: Use "episode" (type 4) not "trailer" (type 5)
+- **Complete Structure**: Include all required hierarchy levels
+- **Fallback Safety**: Return valid defaults when data unavailable
+- **Session Persistence**: Maintain consumer sessions across requests
 
 ## Stream Format Requirements
 

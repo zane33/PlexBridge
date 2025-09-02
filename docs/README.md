@@ -16,6 +16,11 @@ This directory contains comprehensive documentation for the PlexTV application -
   - FFmpeg configurations and optimizations
   - Critical implementation details and fixes
   - Performance tuning and troubleshooting
+- **[Plex-Metadata-System.md](Plex-Metadata-System.md)** - 🆕 **Metadata handling to prevent crashes**
+  - Complete metadata endpoint documentation
+  - Session and consumer management
+  - Error prevention strategies
+  - Troubleshooting metadata issues
 - **[Plex-Live-TV-Integration.md](Plex-Live-TV-Integration.md)** - Plex Live TV & DVR setup guide
 - **[Plex-Live-TV-Streaming-Technical-Guide.md](Plex-Live-TV-Streaming-Technical-Guide.md)** - Technical streaming details
 
