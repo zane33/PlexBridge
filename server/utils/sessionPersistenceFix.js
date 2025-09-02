@@ -8,28 +8,33 @@ const { spawn } = require('child_process');
 
 /**
  * Enhanced Session Manager with persistence and recovery
+ * Proper consumer session isolation for concurrent access
  */
 class PersistentSessionManager {
   constructor() {
-    this.activeSessions = new Map();
+    this.activeSessions = new Map(); // Individual sessions (one FFmpeg per session)
+    this.consumerMap = new Map();    // Maps Plex consumer IDs to internal session IDs
     this.sessionRecovery = new Map();
     this.healthCheckInterval = null;
     this.startHealthMonitoring();
   }
 
   /**
-   * Creates a persistent streaming session
+   * Creates an individual persistent streaming session (separate FFmpeg per session)
    */
   createSession(channelId, sessionId, streamUrl, clientInfo = {}) {
-    logger.info('Creating persistent streaming session', {
+    logger.info('Creating individual persistent streaming session', {
       channelId,
       sessionId,
-      clientInfo: clientInfo.userAgent || 'Unknown'
+      clientInfo: clientInfo.userAgent || 'Unknown',
+      consumerSessionId: clientInfo.consumerSessionId
     });
 
+    // Create individual session with its own FFmpeg process
     const session = {
       channelId,
       sessionId,
+      consumerSessionId: clientInfo.consumerSessionId || sessionId,
       streamUrl,
       clientInfo,
       startTime: Date.now(),
@@ -47,10 +52,32 @@ class PersistentSessionManager {
       // Streaming properties
       isLive: true,
       hasConsumer: true,
-      instanceAvailable: true
+      instanceAvailable: true,
+      
+      // Consumer properties for Plex tracking
+      isConsumerAlias: clientInfo.isConsumerAlias || false,
+      primarySessionId: clientInfo.primarySessionId
     };
 
+    // Store the session
     this.activeSessions.set(sessionId, session);
+    
+    // Map Plex consumer session ID to internal session ID for tracking
+    if (clientInfo.consumerSessionId && clientInfo.consumerSessionId !== sessionId) {
+      this.consumerMap.set(clientInfo.consumerSessionId, sessionId);
+      logger.info('Created consumer session mapping for Plex tracking', {
+        consumerSessionId: clientInfo.consumerSessionId,
+        internalSessionId: sessionId,
+        channelId
+      });
+    }
+    
+    logger.info('Individual streaming session created', {
+      channelId,
+      sessionId,
+      consumerSessionId: session.consumerSessionId
+    });
+
     return session;
   }
 
@@ -250,8 +277,15 @@ class PersistentSessionManager {
    * Gets session status
    */
   getSessionStatus(sessionId) {
-    const session = this.activeSessions.get(sessionId);
+    // Check if this is a Plex consumer session ID that needs mapping to internal session ID
+    const internalSessionId = this.consumerMap.get(sessionId) || sessionId;
+    const session = this.activeSessions.get(internalSessionId);
+    
     if (!session) {
+      logger.debug('Session not found', { 
+        requestedSessionId: sessionId, 
+        mappedSessionId: internalSessionId 
+      });
       return {
         exists: false,
         hasConsumer: false,
@@ -266,8 +300,68 @@ class PersistentSessionManager {
       status: session.status,
       isRunning: session.status === 'running',
       lastActivity: session.lastActivity,
-      uptime: Date.now() - session.startTime
+      uptime: Date.now() - session.startTime,
+      consumerSessionId: session.consumerSessionId,
+      isMapped: sessionId !== internalSessionId
     };
+  }
+
+  /**
+   * Removes an individual session and its FFmpeg process
+   */
+  removeSession(sessionId) {
+    const internalSessionId = this.consumerMap.get(sessionId) || sessionId;
+    const session = this.activeSessions.get(internalSessionId);
+    
+    if (!session) {
+      logger.debug('Session not found for removal', { sessionId });
+      return false;
+    }
+
+    logger.info('Removing individual session', {
+      sessionId: internalSessionId,
+      consumerSessionId: session.consumerSessionId,
+      channelId: session.channelId
+    });
+
+    // Kill FFmpeg process if running
+    if (session.process) {
+      logger.info('Terminating FFmpeg process for session', {
+        sessionId: internalSessionId,
+        pid: session.process.pid
+      });
+      session.process.kill('SIGTERM');
+    }
+
+    // Remove session
+    this.activeSessions.delete(internalSessionId);
+    
+    // Remove consumer mapping if exists
+    if (this.consumerMap.has(sessionId)) {
+      this.consumerMap.delete(sessionId);
+    }
+
+    return true;
+  }
+
+  /**
+   * Updates session activity for keep-alive
+   */
+  updateSessionActivity(sessionId) {
+    const internalSessionId = this.consumerMap.get(sessionId) || sessionId;
+    const session = this.activeSessions.get(internalSessionId);
+    
+    if (session) {
+      session.lastActivity = Date.now();
+      logger.debug('Updated session activity', { 
+        sessionId: internalSessionId,
+        consumerSessionId: session.consumerSessionId
+      });
+      return true;
+    }
+    
+    logger.debug('Session not found for activity update', { sessionId });
+    return false;
   }
 
   /**

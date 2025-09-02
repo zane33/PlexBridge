@@ -263,10 +263,16 @@ router.get('/consumer/:sessionId/:action?', async (req, res) => {
     const { sessionId, action } = req.params;
     const userAgent = req.get('User-Agent') || '';
     
-    logger.debug('Plex consumer request', { 
+    logger.info('Plex consumer request', { 
       sessionId, 
       action, 
-      userAgent 
+      userAgent,
+      headers: {
+        'x-plex-session-identifier': req.headers['x-plex-session-identifier'],
+        'x-session-id': req.headers['x-session-id']
+      },
+      query: req.query,
+      ip: req.ip || req.connection.remoteAddress
     });
 
     // Update session activity in the persistent session manager
@@ -297,15 +303,28 @@ router.get('/consumer/:sessionId/:action?', async (req, res) => {
       'Connection': 'keep-alive'
     });
     
+    // Get session status for better consumer response
+    const sessionStatus = sessionManager ? sessionManager.getSessionStatus(sessionId) : null;
+    
     res.json({
       success: true,
       sessionId: sessionId,
-      status: 'active',
+      status: sessionStatus?.exists ? 'active' : 'available',
       consumer: {
+        id: sessionId,
         available: true,
+        active: sessionStatus?.exists || false,
+        state: sessionStatus?.exists ? 'streaming' : 'ready',
         lastActivity: Date.now(),
-        status: 'connected'
+        status: 'connected',
+        instanceAvailable: sessionStatus?.instanceAvailable || true,
+        hasConsumer: sessionStatus?.hasConsumer || true
       },
+      session: sessionStatus ? {
+        exists: sessionStatus.exists,
+        isRunning: sessionStatus.isRunning,
+        isMapped: sessionStatus.isMapped
+      } : null,
       timestamp: new Date().toISOString()
     });
   } catch (error) {
