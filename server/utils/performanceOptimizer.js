@@ -242,11 +242,14 @@ async function preloadCache(database) {
     // Preload current EPG programs
     const now = new Date().toISOString();
     const currentPrograms = await database.all(`
-      SELECT p.*, c.name as channel_name, c.number as channel_number
+      SELECT p.*, 
+             COALESCE(c.name, ec.display_name, 'EPG Channel ' || p.channel_id) as channel_name, 
+             COALESCE(c.number, 9999) as channel_number
       FROM epg_programs p
-      JOIN channels c ON c.epg_id = p.channel_id
+      LEFT JOIN channels c ON c.epg_id = p.channel_id
+      LEFT JOIN epg_channels ec ON ec.epg_id = p.channel_id
       WHERE p.start_time <= ? AND p.end_time > ?
-      ORDER BY c.number
+      ORDER BY channel_number
     `, [now, now]);
     
     await cacheService.set('epg:current:all', currentPrograms, 120);

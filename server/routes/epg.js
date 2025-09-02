@@ -190,9 +190,11 @@ router.get('/now/:channelId', channelSwitchingMiddleware(), responseTimeMonitor(
 
     let program = await database.get(`
       SELECT p.title, p.description, p.start_time, p.end_time, p.category,
-             c.name as channel_name, c.number as channel_number
+             COALESCE(c.name, ec.display_name, 'EPG Channel ' || p.channel_id) as channel_name, 
+             COALESCE(c.number, 9999) as channel_number
       FROM epg_programs p
-      JOIN channels c ON c.epg_id = p.channel_id
+      LEFT JOIN channels c ON c.epg_id = p.channel_id
+      LEFT JOIN epg_channels ec ON ec.epg_id = p.channel_id
       WHERE p.channel_id = ? 
       AND p.start_time <= ? 
       AND p.end_time > ?
@@ -320,9 +322,12 @@ router.get('/next/:channelId', async (req, res) => {
     }
 
     const program = await database.get(`
-      SELECT p.*, c.name as channel_name, c.number as channel_number
+      SELECT p.*, 
+             COALESCE(c.name, ec.display_name, 'EPG Channel ' || p.channel_id) as channel_name, 
+             COALESCE(c.number, 9999) as channel_number
       FROM epg_programs p
-      JOIN channels c ON c.epg_id = p.channel_id
+      LEFT JOIN channels c ON c.epg_id = p.channel_id
+      LEFT JOIN epg_channels ec ON ec.epg_id = p.channel_id
       WHERE p.channel_id = ? 
       AND p.start_time > ?
       ORDER BY p.start_time ASC
@@ -351,9 +356,12 @@ router.get('/search', async (req, res) => {
     }
 
     let query = `
-      SELECT p.*, c.name as channel_name, c.number as channel_number
+      SELECT p.*, 
+             COALESCE(c.name, ec.display_name, 'EPG Channel ' || p.channel_id) as channel_name, 
+             COALESCE(c.number, 9999) as channel_number
       FROM epg_programs p
-      JOIN channels c ON c.epg_id = p.channel_id
+      LEFT JOIN channels c ON c.epg_id = p.channel_id
+      LEFT JOIN epg_channels ec ON ec.epg_id = p.channel_id
       WHERE (p.title LIKE ? OR p.description LIKE ?)
     `;
     
@@ -411,9 +419,13 @@ router.get('/grid', async (req, res) => {
     }
 
     const programs = await database.all(`
-      SELECT p.*, c.name as channel_name, c.number as channel_number, c.logo as channel_logo
+      SELECT p.*, 
+             COALESCE(c.name, ec.display_name, 'EPG Channel ' || p.channel_id) as channel_name, 
+             COALESCE(c.number, 9999) as channel_number, 
+             c.logo as channel_logo
       FROM epg_programs p
-      JOIN channels c ON c.epg_id = p.channel_id
+      LEFT JOIN channels c ON c.epg_id = p.channel_id
+      LEFT JOIN epg_channels ec ON ec.epg_id = p.channel_id
       WHERE p.start_time < ? AND p.end_time > ?${channelFilter}
       ORDER BY c.number, p.start_time
     `, params);

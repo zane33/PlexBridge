@@ -906,14 +906,31 @@ class EPGService {
       }
 
       let programs = await database.all(`
-        SELECT p.*, c.name as channel_name, c.number as channel_number, ec.source_id
+        SELECT p.*, 
+               COALESCE(c.name, ec.display_name, 'EPG Channel ' || p.channel_id) as channel_name, 
+               COALESCE(c.number, 9999) as channel_number, 
+               ec.source_id,
+               CASE WHEN c.epg_id IS NULL THEN 1 ELSE 0 END as is_orphaned
         FROM epg_programs p
-        JOIN channels c ON c.epg_id = p.channel_id
+        LEFT JOIN channels c ON c.epg_id = p.channel_id
         LEFT JOIN epg_channels ec ON ec.epg_id = p.channel_id
         WHERE p.start_time <= ? 
         AND p.end_time >= ?
-        ORDER BY c.number, p.start_time
+        ORDER BY channel_number, p.start_time
       `, [endTime, startTime]);
+
+      // Log EPG program statistics including orphaned programs
+      if (programs && programs.length > 0) {
+        const orphanedPrograms = programs.filter(p => p.is_orphaned === 1);
+        const mappedPrograms = programs.filter(p => p.is_orphaned === 0);
+        
+        logger.info('EPG data retrieved with orphaned program inclusion', {
+          totalPrograms: programs.length,
+          mappedPrograms: mappedPrograms.length,
+          orphanedPrograms: orphanedPrograms.length,
+          orphanedPercentage: Math.round((orphanedPrograms.length / programs.length) * 100)
+        });
+      }
 
       // If no programs found, generate fallback data for all channels
       if (!programs || programs.length === 0) {
