@@ -1733,8 +1733,14 @@ class StreamManager {
                 argCount: args.length
               });
             } else {
-              // For other profiles, replace standard args with enhanced encoding args
-              args = streamConfig.ffmpeg_options.concat(['-i', finalStreamUrl, 'pipe:1']);
+              // For other profiles, use enhanced encoding args but ensure proper output
+              args = streamConfig.ffmpeg_options.concat(['-i', finalStreamUrl, '-f', 'mpegts', 'pipe:1']);
+              logger.info('Applied enhanced encoding FFmpeg configuration', {
+                channelId: channel.id,
+                channelNumber: channel.number,
+                profile: streamConfig.encoding_profile,
+                argCount: args.length
+              });
             }
           }
         }

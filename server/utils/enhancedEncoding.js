@@ -22,18 +22,18 @@ const ENHANCED_ENCODING_PROFILES = {
       '-timeout', '10000000', // 10 second timeout
       '-user_agent', 'PlexBridge/1.0',
       
-      // CRITICAL: HLS Anti-Loop Protection
-      '-live_start_index', '-1',  // Start from live edge, not beginning
-      '-hls_flags', 'discont_start+omit_endlist',  // Handle discontinuities
+      // CRITICAL: Stream reliability settings
       '-seekable', '0',  // Disable seeking to prevent loop-back
+      '-thread_queue_size', '1024', // Thread queue for stability
       
-      // Advanced buffer management to prevent circular buffering
-      '-fflags', '+genpts+igndts+discardcorrupt',  // Removed nobuffer for stability
+      // Advanced buffer management for Plex compatibility
+      '-fflags', '+genpts+igndts+flush_packets',  // Generate PTS, ignore DTS, flush packets
       '-avoid_negative_ts', 'make_zero',
       '-max_delay', '5000000', // 5 second max delay for better stability
       '-rtbufsize', '2048k',    // Increased buffer for consumer session stability
-      '-probesize', '2000000', // Standard probe size for reliability
-      '-analyzeduration', '2000000', // Standard analysis for stability
+      '-probesize', '5000000', // Larger probe size for better stream analysis
+      '-analyzeduration', '5000000', // Longer analysis for stability
+      '-err_detect', 'ignore_err', // Ignore minor errors that could crash stream
       
       // Timestamp handling for HLS loop prevention
       '-copyts',              // Copy original timestamps
@@ -42,16 +42,18 @@ const ENHANCED_ENCODING_PROFILES = {
       // '-use_wallclock_as_timestamps', '1', // Causes consumer session loss
       // '-timestamp_monotonic', '1', // Not needed without wallclock
       
-      // Video encoding (maintain quality while improving reliability)
+      // Video encoding (Plex-compatible H.264 settings)
       '-c:v', 'libx264',
-      '-preset', 'veryfast',
-      '-tune', 'zerolatency',
+      '-preset', 'medium',     // Better quality than veryfast
+      '-tune', 'film',         // Better for general content than zerolatency
+      '-profile:v', 'high',    // Explicit H.264 profile
+      '-level:v', '4.1',       // Explicit H.264 level for compatibility
       '-crf', '23',
       '-maxrate', '8M',
-      '-bufsize', '8M',        // Smaller buffer to prevent accumulation
-      '-g', '30',              // Smaller GOP for better seeking (was 50)
-      '-keyint_min', '15',     // More frequent keyframes
-      '-force_key_frames', 'expr:gte(t,n_forced*2)', // Keyframe every 2 seconds
+      '-bufsize', '16M',       // Larger buffer for stable encoding
+      '-g', '60',              // Standard GOP size
+      '-keyint_min', '30',     // Standard keyframe interval
+      '-sc_threshold', '0',    // Disable scene change detection for stability
       
       // Audio encoding (ensure compatibility)
       '-c:a', 'aac',
@@ -59,22 +61,19 @@ const ENHANCED_ENCODING_PROFILES = {
       '-ac', '2',
       '-ar', '48000',
       
-      // Output format optimization for Plex with loop prevention
+      // Output format optimization for Plex compatibility
       '-f', 'mpegts',
       '-mpegts_m2ts_mode', '1',
       '-mpegts_copyts', '1',
+      '-mpegts_flags', '+resend_headers', // Ensure headers are sent regularly
       '-muxdelay', '0',        // No mux delay
       '-muxpreload', '0',      // No mux preload
       '-flush_packets', '1',   // Flush packets immediately
-      '-max_muxing_queue_size', '1024', // Limit queue size to prevent buildup
+      '-max_muxing_queue_size', '2048', // Larger queue for stability
       
-      // HLS-specific anti-loop settings (if output becomes HLS)
-      '-start_number', '0',
-      '-hls_time', '2',        // 2 second segments
-      '-hls_list_size', '5',   // Shorter playlist (was 10)  
-      '-hls_wrap', '10',       // Wrap after 10 segments to prevent infinite growth
-      '-hls_delete_threshold', '5', // Delete old segments aggressively
-      '-hls_flags', 'delete_segments+append_list+discont_start+round_durations'
+      // H.264 stream compatibility flags
+      '-bsf:v', 'h264_mp4toannexb', // Convert to Annex B format for MPEG-TS
+      '-x264opts', 'nal-hrd=cbr:force-cfr=1', // Constant bitrate for stability
     ],
     priority: 100,
     timeout_ms: 15000,
