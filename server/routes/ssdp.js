@@ -523,6 +523,232 @@ router.get('/library/metadata/:metadataId/:imageType', (req, res) => {
   res.send(pixel);
 });
 
+// Live TV sessions endpoint - handles Plex Live TV session requests
+router.get('/livetv/sessions/:sessionId', async (req, res) => {
+  try {
+    const { sessionId } = req.params;
+    const { includeBandwidths, offset } = req.query;
+    
+    logger.debug('Plex Live TV session request', { 
+      sessionId,
+      includeBandwidths,
+      offset,
+      query: req.query,
+      userAgent: req.get('User-Agent')
+    });
+    
+    // Return proper MediaContainer for Live TV sessions
+    const sessionResponse = {
+      MediaContainer: {
+        size: 1,
+        identifier: "com.plexapp.plugins.library",
+        mediaTagPrefix: "/system/bundle/media/flags/",
+        mediaTagVersion: Math.floor(Date.now() / 1000),
+        Session: [{
+          id: sessionId,
+          key: sessionId,
+          type: "video",
+          videoResolution: "1080",
+          duration: 86400000, // 24 hours for live TV
+          live: 1,
+          protocol: "http",
+          address: req.get('host')?.split(':')[0] || 'localhost',
+          port: process.env.PORT || 3000,
+          
+          // Bandwidth information if requested
+          ...(includeBandwidths === '1' && {
+            bandwidth: 5000,
+            location: "lan",
+            bandwidths: [
+              { resolution: "1920x1080", bandwidth: 5000 },
+              { resolution: "1280x720", bandwidth: 3000 },
+              { resolution: "640x480", bandwidth: 1500 }
+            ]
+          }),
+          
+          // Media information for transcoding decisions
+          Media: [{
+            id: 1,
+            videoProfile: "high",
+            videoCodec: "h264",
+            videoFrameRate: "25",
+            audioProfile: "lc",
+            audioCodec: "aac",
+            audioChannels: 2,
+            duration: 86400000,
+            bitrate: 5000,
+            width: 1920,
+            height: 1080,
+            aspectRatio: 1.78,
+            container: "mpegts",
+            
+            Part: [{
+              id: 1,
+              key: `/stream/${sessionId}`,
+              duration: 86400000,
+              file: `/stream/${sessionId}`,
+              size: 0,
+              container: "mpegts",
+              hasThumbnail: 0,
+              
+              Stream: [
+                {
+                  id: 1,
+                  streamType: 1,
+                  codec: "h264",
+                  index: 0,
+                  bitrate: 4000,
+                  height: 1080,
+                  width: 1920,
+                  frameRate: 25.0,
+                  profile: "high",
+                  level: "40"
+                },
+                {
+                  id: 2,
+                  streamType: 2,
+                  codec: "aac",
+                  index: 1,
+                  channels: 2,
+                  bitrate: 128,
+                  samplingRate: 48000,
+                  profile: "lc"
+                }
+              ]
+            }]
+          }],
+          
+          // Transcoding decision information
+          TranscodeSession: {
+            key: sessionId,
+            throttled: 0,
+            complete: false,
+            progress: -1,
+            speed: 1.0,
+            duration: 86400000,
+            remaining: 86400000,
+            context: "streaming",
+            sourceVideoCodec: "h264",
+            sourceAudioCodec: "aac",
+            videoDecision: "directplay",
+            audioDecision: "directplay",
+            subtitleDecision: "burn",
+            protocol: "http",
+            container: "mpegts",
+            videoCodec: "h264",
+            audioCodec: "aac",
+            audioChannels: 2,
+            transcodeHwRequested: false,
+            transcodeHwFullPipeline: false,
+            timeStamp: Date.now() / 1000
+          }
+        }]
+      }
+    };
+    
+    res.set({
+      'Content-Type': 'application/json; charset=utf-8',
+      'Cache-Control': 'no-cache, no-store, must-revalidate',
+      'X-Plex-Protocol': '1.0'
+    });
+    
+    res.json(sessionResponse);
+  } catch (error) {
+    logger.error('Live TV session error:', error);
+    // Always return valid MediaContainer to prevent crashes
+    res.set({
+      'Content-Type': 'application/json; charset=utf-8'
+    });
+    res.status(200).json({
+      MediaContainer: {
+        size: 0,
+        identifier: "com.plexapp.plugins.library"
+      }
+    });
+  }
+});
+
+// POST endpoint for Live TV session creation/updates
+router.post('/livetv/sessions/:sessionId', async (req, res) => {
+  try {
+    const { sessionId } = req.params;
+    
+    logger.debug('Plex Live TV session POST', { 
+      sessionId,
+      body: req.body,
+      query: req.query
+    });
+    
+    // Return success response for session creation/update
+    res.set({
+      'Content-Type': 'application/json; charset=utf-8',
+      'Cache-Control': 'no-cache'
+    });
+    
+    res.json({
+      MediaContainer: {
+        size: 1,
+        identifier: "com.plexapp.plugins.library",
+        Session: [{
+          id: sessionId,
+          key: sessionId,
+          status: "active",
+          created: true
+        }]
+      }
+    });
+  } catch (error) {
+    logger.error('Live TV session POST error:', error);
+    res.status(200).json({
+      MediaContainer: { size: 0 }
+    });
+  }
+});
+
+// Catch-all for other Live TV endpoints (GET)
+router.get('/livetv/*', async (req, res) => {
+  logger.debug('Plex Live TV catch-all GET request', { 
+    path: req.path,
+    query: req.query,
+    userAgent: req.get('User-Agent')
+  });
+  
+  // Always return valid MediaContainer
+  res.set({
+    'Content-Type': 'application/json; charset=utf-8',
+    'Cache-Control': 'no-cache'
+  });
+  
+  res.json({
+    MediaContainer: {
+      size: 0,
+      identifier: "com.plexapp.plugins.library",
+      machineIdentifier: process.env.DEVICE_UUID || 'plextv-001'
+    }
+  });
+});
+
+// Catch-all for other Live TV endpoints (POST)
+router.post('/livetv/*', async (req, res) => {
+  logger.debug('Plex Live TV catch-all POST request', { 
+    path: req.path,
+    body: req.body,
+    query: req.query
+  });
+  
+  res.set({
+    'Content-Type': 'application/json; charset=utf-8',
+    'Cache-Control': 'no-cache'
+  });
+  
+  res.json({
+    MediaContainer: {
+      size: 0,
+      identifier: "com.plexapp.plugins.library"
+    }
+  });
+});
+
 // Live TV consumer status - handles Plex live TV consumer tracking
 router.get('/live/:sessionId/status', async (req, res) => {
   try {
