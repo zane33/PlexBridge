@@ -7,55 +7,6 @@ const logger = require('../utils/logger');
 const { cacheMiddleware, responseTimeMonitor, generateLightweightEPG } = require('../utils/performanceOptimizer');
 const cacheService = require('../services/cacheService');
 
-// Universal JSON response middleware for Plex requests
-router.use('*', (req, res, next) => {
-  const userAgent = req.get('User-Agent') || '';
-  const isPlexRequest = userAgent.toLowerCase().includes('plex') || 
-                       userAgent.toLowerCase().includes('pms') ||
-                       userAgent.toLowerCase().includes('lavf') ||
-                       req.path.includes('/livetv/') ||
-                       req.path.includes('/library/') ||
-                       req.path.includes('/timeline/') ||
-                       req.path.includes('/consumer/');
-  
-  if (isPlexRequest) {
-    // Override res.status to ensure JSON responses for Plex
-    const originalStatus = res.status.bind(res);
-    res.status = function(statusCode) {
-      if (statusCode >= 400 && !res.headersSent) {
-        // Convert any error status to 200 with valid JSON to prevent HTML responses
-        res.set({
-          'Content-Type': 'application/json; charset=utf-8',
-          'Cache-Control': 'no-cache'
-        });
-        return originalStatus(200);
-      }
-      return originalStatus(statusCode);
-    };
-    
-    // Override error handling to ensure JSON
-    const originalSend = res.send.bind(res);
-    res.send = function(body) {
-      if (typeof body === 'string' && body.includes('<html')) {
-        // Convert HTML to JSON MediaContainer
-        res.set({
-          'Content-Type': 'application/json; charset=utf-8'
-        });
-        return originalSend(JSON.stringify({
-          MediaContainer: {
-            size: 0,
-            identifier: "com.plexapp.plugins.library",
-            machineIdentifier: process.env.DEVICE_UUID || 'plextv-001'
-          }
-        }));
-      }
-      return originalSend(body);
-    };
-  }
-  
-  next();
-});
-
 // HDHomeRun discovery endpoint with caching
 router.get('/discover.json', cacheMiddleware('discover'), responseTimeMonitor(100), async (req, res) => {
   try {
@@ -615,24 +566,21 @@ router.get('/livetv/sessions/:sessionId', async (req, res) => {
             ]
           }),
           
-          // Enhanced Media information for MDE decisions
+          // Media information for transcoding decisions
           Media: [{
             id: 1,
+            videoProfile: "high",
+            videoCodec: "h264",
+            videoFrameRate: "25",
+            audioProfile: "lc",
+            audioCodec: "aac",
+            audioChannels: 2,
             duration: 86400000,
             bitrate: 5000,
             width: 1920,
             height: 1080,
             aspectRatio: 1.78,
-            audioChannels: 2,
-            audioCodec: "aac",
-            videoCodec: "h264",
-            videoResolution: "1080",
             container: "mpegts",
-            videoFrameRate: "25",
-            audioProfile: "lc",
-            videoProfile: "high",
-            optimizedForStreaming: 1,
-            selected: 1,
             
             Part: [{
               id: 1,
@@ -641,59 +589,30 @@ router.get('/livetv/sessions/:sessionId', async (req, res) => {
               file: `/stream/${sessionId}`,
               size: 0,
               container: "mpegts",
-              videoProfile: "high",
-              audioProfile: "lc", 
-              has64bitOffsets: false,
-              optimizedForStreaming: true,
               hasThumbnail: 0,
-              indexes: "sd",
-              decision: "directplay",
-              selected: true,
               
-              // Enhanced Stream information for MDE
               Stream: [
                 {
                   id: 1,
-                  streamType: 1, // Video
-                  default: true,
+                  streamType: 1,
                   codec: "h264",
                   index: 0,
                   bitrate: 4000,
-                  language: "eng",
-                  languageCode: "eng",
                   height: 1080,
                   width: 1920,
-                  displayTitle: "1080p (H.264)",
-                  extendedDisplayTitle: "1080p (H.264)",
                   frameRate: 25.0,
                   profile: "high",
-                  level: "40",
-                  pixelFormat: "yuv420p",
-                  colorSpace: "bt709",
-                  chromaSubsampling: "4:2:0",
-                  bitDepth: 8,
-                  cabac: true,
-                  refFrames: 1,
-                  hasScalingMatrix: false,
-                  selected: true,
-                  decision: "directplay"
+                  level: "40"
                 },
                 {
                   id: 2,
-                  streamType: 2, // Audio
-                  selected: true,
-                  default: true,
+                  streamType: 2,
                   codec: "aac",
                   index: 1,
                   channels: 2,
                   bitrate: 128,
-                  language: "eng",
-                  languageCode: "eng",
-                  displayTitle: "Stereo (AAC)",
-                  extendedDisplayTitle: "Stereo (AAC)",
                   samplingRate: 48000,
-                  profile: "lc",
-                  decision: "directplay"
+                  profile: "lc"
                 }
               ]
             }]
@@ -1135,30 +1054,6 @@ router.get('/status', async (req, res) => {
     logger.error('Status endpoint error:', error);
     res.status(500).json({ error: 'Status request failed' });
   }
-});
-
-// Final catch-all for any unmatched requests
-router.use('*', (req, res) => {
-  logger.debug('Unmatched request caught by final handler', {
-    path: req.path,
-    method: req.method,
-    query: req.query,
-    userAgent: req.get('User-Agent')
-  });
-  
-  // Always return valid JSON to prevent HTML error pages
-  res.set({
-    'Content-Type': 'application/json; charset=utf-8',
-    'Cache-Control': 'no-cache'
-  });
-  
-  res.status(200).json({
-    MediaContainer: {
-      size: 0,
-      identifier: "com.plexapp.plugins.library",
-      machineIdentifier: process.env.DEVICE_UUID || 'plextv-001'
-    }
-  });
 });
 
 module.exports = router;
