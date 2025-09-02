@@ -2015,13 +2015,16 @@ class StreamManager {
             'Connection': 'close'
           });
           
-          // For transcoded streams that fail, send HTTP 503 to signal Plex to retry without transcoding
+          // For transcoded streams that fail, send HDHomeRun-style 503 with proper headers
           if (forceTranscode) {
-            logger.error('Transcoded stream failed - signaling service unavailable', {
+            logger.error('Transcoded stream failed - using HDHomeRun error format', {
               channelId: channel.id,
               sessionId
             });
-            res.status(503).end();
+            res.status(503).set({
+              'X-HDHomeRun-Error': '807', // No Video Data
+              'Content-Type': 'text/plain'
+            }).send('No Video Data');
           } else {
             // For copy streams, send minimal valid MPEG-TS packet then end
             const emptyTsPacket = Buffer.from([
@@ -2066,41 +2069,77 @@ class StreamManager {
           output: errorOutput.trim() 
         });
         
-        // Enhanced error detection for IPTV streams
-        const fatalErrors = [
+        // Categorize errors into different types for better handling
+        const upstreamReliabilityErrors = [
+          'Connection timed out',
+          'Connection reset',
+          'Temporary failure in name resolution',
+          'Network is unreachable',
+          'No route to host',
+          'Server returned 502', // Bad Gateway
+          'Server returned 503', // Service Unavailable
+          'Server returned 504', // Gateway Timeout
+          'recv failed',
+          'End of file',
+          'HTTP error 502',
+          'HTTP error 503', 
+          'HTTP error 504',
+          'Connection lost'
+        ];
+
+        const permanentErrors = [
           'No such file or directory',
           'Protocol not found',
           'Invalid argument',
-          'Server returned 4', // HTTP 4xx errors
-          'Server returned 5', // HTTP 5xx errors
-          'Invalid data found',
-          'Connection refused',
-          'Connection reset',
-          'Operation not permitted',
-          'HTTP error 403', // Forbidden
-          'HTTP error 401', // Unauthorized
-          'moov atom not found', // Invalid stream format
-          'Invalid NAL unit size', // Corrupted stream
-          'Could not find codec parameters' // Cannot decode stream
+          'Server returned 400', // Bad Request
+          'Server returned 404', // Not Found
+          'HTTP error 400',
+          'HTTP error 404',
+          'moov atom not found',
+          'Invalid NAL unit size',
+          'Could not find codec parameters',
+          'Operation not permitted'
         ];
         
-        const hasFatalError = fatalErrors.some(err => errorOutput.includes(err));
+        const authErrors = [
+          'Server returned 401', // Unauthorized
+          'Server returned 403', // Forbidden
+          'HTTP error 401',
+          'HTTP error 403',
+          'Unauthorized',
+          'Forbidden'
+        ];
         
-        // Check for authentication errors specifically
-        const authErrors = ['401', '403', 'Unauthorized', 'Forbidden'];
+        const hasUpstreamIssue = upstreamReliabilityErrors.some(err => errorOutput.includes(err));
+        const hasFatalError = permanentErrors.some(err => errorOutput.includes(err));
         const hasAuthError = authErrors.some(err => errorOutput.includes(err));
         
-        if (hasFatalError) {
+        // Handle upstream reliability issues differently from permanent failures
+        if (hasUpstreamIssue) {
+          logger.warn('Upstream reliability issue detected - FFmpeg will attempt reconnection', {
+            channelId: channel.id,
+            channelName: channel.name,
+            sessionId,
+            streamUrl: finalStreamUrl,
+            error: errorOutput.trim(),
+            upstreamIssue: true
+          });
+          
+          // Don't kill the process - let FFmpeg's reconnect logic handle it
+          // Just log for monitoring purposes
+          
+        } else if (hasFatalError) {
           logger.error('FFmpeg fatal error detected', {
             channelId: channel.id,
             channelName: channel.name,
             sessionId,
             streamUrl: finalStreamUrl,
             error: errorOutput.trim(),
-            isAuthError: hasAuthError
+            isAuthError: hasAuthError,
+            permanentFailure: true
           });
           
-          // Kill the FFmpeg process if fatal error
+          // Kill the FFmpeg process only for permanent failures
           if (ffmpegProcess && !ffmpegProcess.killed) {
             ffmpegProcess.kill('SIGTERM');
           }
@@ -2113,14 +2152,17 @@ class StreamManager {
               'Connection': 'close'
             });
             
-            // For transcoded streams that fail, send HTTP 503 to signal Plex to retry without transcoding
+            // For transcoded streams that fail, send HDHomeRun-style error
             if (forceTranscode) {
-              logger.error('Transcoded stream fatal error - signaling service unavailable', {
+              logger.error('Transcoded stream fatal error - using HDHomeRun error format', {
                 channelId: channel.id,
                 sessionId,
                 error: errorOutput.trim()
               });
-              res.status(503).end();
+              res.status(503).set({
+                'X-HDHomeRun-Error': '807', // No Video Data
+                'Content-Type': 'text/plain'
+              }).send('No Video Data');
             } else {
               // For copy streams, send minimal valid MPEG-TS packet then end
               const emptyTsPacket = Buffer.from([
