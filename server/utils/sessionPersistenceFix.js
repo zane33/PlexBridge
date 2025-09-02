@@ -261,17 +261,6 @@ class PersistentSessionManager {
     }, delay);
   }
 
-  /**
-   * Updates session activity to prevent timeout
-   */
-  updateSessionActivity(sessionId) {
-    const session = this.activeSessions.get(sessionId);
-    if (session) {
-      session.lastActivity = Date.now();
-      session.hasConsumer = true;
-      session.instanceAvailable = true;
-    }
-  }
 
   /**
    * Gets session status
@@ -370,8 +359,8 @@ class PersistentSessionManager {
   startHealthMonitoring() {
     this.healthCheckInterval = setInterval(() => {
       const now = Date.now();
-      const timeoutThreshold = 60000; // 60 seconds - increased for enhanced encoding streams
-
+      const timeoutThreshold = 300000; // 5 minutes - appropriate for live streaming
+      
       for (const [sessionId, session] of this.activeSessions.entries()) {
         // Check for inactive sessions
         if (now - session.lastActivity > timeoutThreshold) {
@@ -380,14 +369,14 @@ class PersistentSessionManager {
             inactiveFor: now - session.lastActivity
           });
           
-          // Don't immediately mark as no consumer - give more time for enhanced encoding
-          if (now - session.lastActivity > 120000) { // 2 minutes
+          // Mark as no consumer after 10 minutes of inactivity
+          if (now - session.lastActivity > 600000) { // 10 minutes
             session.hasConsumer = false;
             session.instanceAvailable = false;
           }
 
-          // If session is really stale (10 minutes), clean it up
-          if (now - session.lastActivity > 600000) {
+          // Clean up session after 30 minutes of inactivity (was crashing at 30min)
+          if (now - session.lastActivity > 1800000) { // 30 minutes
             this.cleanupSession(sessionId);
           }
         } else {

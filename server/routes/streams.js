@@ -255,6 +255,18 @@ router.get('/stream/:channelId/:filename?', async (req, res) => {
       }
     }
     
+    // Update session activity for HLS segment requests to keep sessions alive
+    if (isSubFile && sessionId && isPlexRequest) {
+      const sessionManager = getSessionManager();
+      sessionManager.updateSessionActivity(sessionId);
+      logger.debug('Updated session activity for HLS segment request', { 
+        sessionId, 
+        channelId, 
+        filename,
+        userAgent: req.get('User-Agent')
+      });
+    }
+    
     // For sub-files, use simpler direct proxy without detection/rewriting
     if (isSubFile) {
       try {
@@ -299,6 +311,18 @@ router.get('/stream/:channelId/:filename?', async (req, res) => {
         res.status(500).send(`Failed to proxy sub-file: ${error.message}`);
       }
     } else {
+      // Update session activity for all stream requests (including segments)
+      if (sessionId && isPlexRequest) {
+        const sessionManager = getSessionManager();
+        sessionManager.updateSessionActivity(sessionId);
+        logger.debug('Updated session activity for stream request', { 
+          sessionId, 
+          channelId, 
+          filename: filename || 'main',
+          userAgent: req.get('User-Agent')
+        });
+      }
+      
       // For main playlist requests, handle with persistent session management
       if (isPlexRequest && !isSubFile) {
         // Plex needs direct MPEG-TS stream with persistent session management
