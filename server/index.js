@@ -159,19 +159,7 @@ setInterval(() => {
   logger.debug(`Active WebSocket connections: ${sockets.size}`);
 }, 60000); // Every minute
 
-// Plex-specific middleware (must be loaded early)
-const { plexErrorHandler, preventHTMLForPlex } = require('./middleware/plexErrorHandler');
-const { plexRequestLogger, plexMetadataCapture } = require('./middleware/plexRequestLogger');
-
-// Add comprehensive request logging for Plex debugging
-app.use(plexRequestLogger);
-app.use(plexMetadataCapture);
-
-// Prevent HTML responses to Plex clients (applied to all routes)
-app.use(preventHTMLForPlex);
-
-// Error handling middleware - Plex handler first, then general handler
-app.use(plexErrorHandler);
+// Error handling middleware
 app.use((err, req, res, next) => {
   logger.error('Unhandled error:', err);
   res.status(500).json({
@@ -498,12 +486,10 @@ const initializeApp = async () => {
       const streamingRoutes = require('./routes/streaming');
       const diagnosticsRoutes = require('./routes/diagnostics');
       const adminFixRoutes = require('./routes/admin-fix');
-      const libraryRoutes = require('./routes/library');
 
       // API Routes - MUST BE BEFORE STATIC FILES
       app.use('/', healthRoutes);  // Health check routes
       app.use('/', plexSetupRoutes);  // Plex setup guide
-      app.use('/library', libraryRoutes);  // CRITICAL: Plex library API endpoints
       app.use('/api/diagnostics', diagnosticsRoutes);  // Diagnostics and crash tracking
       app.use('/api/admin', adminFixRoutes);  // Admin fix utilities
       app.use('/api/streams/parse/m3u', m3uRoutes);

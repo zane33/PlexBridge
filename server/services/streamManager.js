@@ -1645,38 +1645,37 @@ class StreamManager {
       const userAgent = req.get('User-Agent') || '';
       const isAndroidTV = userAgent.toLowerCase().includes('android') || userAgent.toLowerCase().includes('shield');
       
-      // EMERGENCY ROLLBACK: Use original FFmpeg command generation
       // Get configurable FFmpeg command line - use transcoding if forceTranscode is enabled
       let ffmpegCommand;
       if (forceTranscode) {
         // Use transcoding for streams that require it
         if (isAndroidTV) {
-          // Android TV specific transcoding to prevent buffering  
+          // Android TV specific transcoding to prevent buffering
           ffmpegCommand = settings?.plexlive?.transcoding?.androidtv?.transcodingArgs ||
                          settings?.plexlive?.transcoding?.mpegts?.transcodingArgs || 
                          config.plexlive?.transcoding?.mpegts?.transcodingArgs ||
-                         '-hide_banner -loglevel error -reconnect 1 -reconnect_at_eof 1 -reconnect_streamed 1 -reconnect_delay_max 5 -i [URL] -c:v libx264 -preset fast -tune film -profile:v high -level 4.0 -pix_fmt yuv420p -b:v 2500k -maxrate 3000k -bufsize 5000k -g 60 -keyint_min 30 -sc_threshold 40 -refs 1 -bf 0 -c:a aac -b:a 128k -ar 48000 -ac 2 -bsf:v h264_mp4toannexb -bsf:a aac_adtstoaac -f mpegts -mpegts_copyts 1 -avoid_negative_ts make_zero -fflags +genpts+igndts+discardcorrupt+nobuffer -flags +global_header+low_delay -max_muxing_queue_size 9999 -muxdelay 0 -muxpreload 0 -flush_packets 1 pipe:1';
+                         '-hide_banner -loglevel error -reconnect 1 -reconnect_at_eof 1 -reconnect_streamed 1 -reconnect_delay_max 5 -i [URL] -c:v libx264 -preset ultrafast -tune zerolatency -profile:v high -level 4.0 -pix_fmt yuv420p -b:v 2500k -maxrate 2500k -bufsize 1000k -g 30 -keyint_min 15 -sc_threshold 0 -c:a aac -b:a 128k -ar 48000 -ac 2 -f mpegts -mpegts_copyts 1 -avoid_negative_ts make_zero -fflags +genpts+igndts+discardcorrupt+nobuffer -flags +low_delay -max_muxing_queue_size 9999 -muxdelay 0 -muxpreload 0 -flush_packets 1 -rtbufsize 256k pipe:1';
           
-          logger.info('Using Android TV transcoding with H.264 fixes', { clientIP: req.ip });
+          logger.info('Using Android TV optimized transcoding configuration', { clientIP: req.ip });
         } else {
           ffmpegCommand = settings?.plexlive?.transcoding?.mpegts?.transcodingArgs || 
                          config.plexlive?.transcoding?.mpegts?.transcodingArgs ||
-                         '-hide_banner -loglevel error -reconnect 1 -reconnect_at_eof 1 -reconnect_streamed 1 -reconnect_delay_max 5 -i [URL] -c:v libx264 -preset fast -tune film -profile:v high -level 4.0 -pix_fmt yuv420p -b:v 2500k -maxrate 3000k -bufsize 5000k -g 60 -keyint_min 30 -sc_threshold 40 -refs 1 -bf 0 -c:a aac -b:a 128k -ar 48000 -ac 2 -bsf:v h264_mp4toannexb -bsf:a aac_adtstoaac -f mpegts -mpegts_copyts 1 -avoid_negative_ts make_zero -fflags +genpts+igndts+discardcorrupt -max_muxing_queue_size 9999 -muxdelay 0 -muxpreload 0 -flush_packets 1 pipe:1';
+                         '-hide_banner -loglevel error -reconnect 1 -reconnect_at_eof 1 -reconnect_streamed 1 -reconnect_delay_max 5 -i [URL] -c:v libx264 -preset fast -profile:v high -level 4.0 -pix_fmt yuv420p -b:v 2500k -maxrate 2500k -bufsize 5000k -g 50 -keyint_min 25 -sc_threshold 0 -c:a aac -b:a 128k -ar 48000 -ac 2 -f mpegts -mpegts_copyts 1 -avoid_negative_ts make_zero -fflags +genpts+igndts+discardcorrupt -max_muxing_queue_size 9999 -muxdelay 0 -muxpreload 0 -flush_packets 1 pipe:1';
         }
       } else {
-        // Use codec copy configuration for streams that don't need transcoding
+        // Use your tested codec copy configuration for streams that don't need transcoding
         if (isAndroidTV) {
           // Android TV specific codec copy to prevent buffering
           ffmpegCommand = settings?.plexlive?.transcoding?.androidtv?.ffmpegArgs ||
                          settings?.plexlive?.transcoding?.mpegts?.ffmpegArgs || 
                          config.plexlive?.transcoding?.mpegts?.ffmpegArgs ||
-                         '-hide_banner -loglevel error -reconnect 1 -reconnect_at_eof 1 -reconnect_streamed 1 -reconnect_delay_max 2 -i [URL] -c:v copy -c:a copy -bsf:v h264_mp4toannexb,dump_extra -bsf:a aac_adtstoaac -f mpegts -mpegts_copyts 1 -avoid_negative_ts make_zero -fflags +genpts+igndts+discardcorrupt+nobuffer -flags +global_header+low_delay -copyts -muxdelay 0 -muxpreload 0 -flush_packets 1 -max_delay 0 -max_muxing_queue_size 9999 -rtbufsize 256k -probesize 32 -analyzeduration 0 pipe:1';
+                         '-hide_banner -loglevel error -reconnect 1 -reconnect_at_eof 1 -reconnect_streamed 1 -reconnect_delay_max 2 -i [URL] -c:v copy -c:a copy -bsf:v dump_extra -f mpegts -mpegts_copyts 1 -avoid_negative_ts make_zero -fflags +genpts+igndts+discardcorrupt+nobuffer -flags +low_delay -copyts -muxdelay 0 -muxpreload 0 -flush_packets 1 -max_delay 0 -max_muxing_queue_size 9999 -rtbufsize 256k -probesize 32 -analyzeduration 0 pipe:1';
           
-          logger.info('Using Android TV codec copy with format fixes', { clientIP: req.ip });
+          logger.info('Using Android TV optimized codec copy configuration', { clientIP: req.ip });
         } else {
           ffmpegCommand = settings?.plexlive?.transcoding?.mpegts?.ffmpegArgs || 
                          config.plexlive?.transcoding?.mpegts?.ffmpegArgs ||
-                         '-hide_banner -loglevel error -reconnect 1 -reconnect_at_eof 1 -reconnect_streamed 1 -reconnect_delay_max 2 -i [URL] -c:v copy -c:a copy -bsf:v h264_mp4toannexb,dump_extra -bsf:a aac_adtstoaac -f mpegts -mpegts_copyts 1 -avoid_negative_ts make_zero -fflags +genpts+igndts+discardcorrupt -copyts -muxdelay 0 -muxpreload 0 -flush_packets 1 -max_delay 0 -max_muxing_queue_size 9999 pipe:1';
+                         '-hide_banner -loglevel error -reconnect 1 -reconnect_at_eof 1 -reconnect_streamed 1 -reconnect_delay_max 2 -i [URL] -c:v copy -c:a copy -bsf:v dump_extra -f mpegts -mpegts_copyts 1 -avoid_negative_ts make_zero -fflags +genpts+igndts+discardcorrupt -copyts -muxdelay 0 -muxpreload 0 -flush_packets 1 -max_delay 0 -max_muxing_queue_size 9999 pipe:1';
         }
       }
       

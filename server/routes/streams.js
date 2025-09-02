@@ -7,7 +7,6 @@ const streamPreviewService = require('../services/streamPreviewService');
 const logger = require('../utils/logger');
 const { createStreamingSession } = require('../utils/streamingDecisionFix');
 const { getSessionManager, sessionKeepAlive, addStreamHeaders } = require('../utils/sessionPersistenceFix');
-const { createUnifiedSessionMetadata, createUnifiedResponseHeaders } = require('../utils/plexMetadataUnificationFix');
 const { v4: uuidv4 } = require('uuid');
 
 // Apply session keep-alive middleware to all stream endpoints
@@ -37,46 +36,36 @@ router.get('/stream/:channelId/:filename?', async (req, res) => {
                    req.query.sessionId || 
                    `session_${channelId}_${Date.now()}`;
     
-    // CRITICAL FIX: Create unified persistent session for consumer tracking
-    // This fixes "Failed to find consumer" errors by using consistent metadata
+    // Create persistent streaming session for consumer tracking (fixes "Failed to find consumer")
     if (isPlexRequest && !isSubFile) {
       const sessionManager = getSessionManager();
       const clientInfo = {
         userAgent,
         platform: isAndroidTV ? 'AndroidTV' : 'Other',
-        product: 'Plex Media Server',
-        version: '1.0',
+        product: 'Plex',
         remoteAddress: req.ip || req.connection.remoteAddress
       };
       
-      // Create unified session metadata with consistent type handling
-      const unifiedSession = createUnifiedSessionMetadata(channelId, sessionId, clientInfo);
+      // Create or get existing persistent session
+      const persistentSession = sessionManager.createSession(channelId, sessionId, null, clientInfo);
       
-      // Create or get existing persistent session with unified metadata
-      const persistentSession = sessionManager.createSession(
-        channelId, 
-        unifiedSession.sessionId, 
-        null, 
-        unifiedSession.clientInfo
-      );
+      // Create streaming session for decision tracking (critical for Android TV)
+      const streamingSession = createStreamingSession(channelId, clientInfo);
       
-      // Store unified session metadata for consumer tracking
-      persistentSession.unifiedMetadata = unifiedSession;
-      persistentSession.consumerId = unifiedSession.consumerId;
-      persistentSession.consumerType = unifiedSession.consumerType;
-      persistentSession.consumerState = unifiedSession.consumerState;
+      // Add session info to response headers for Plex decision making and consumer tracking
+      addStreamHeaders(req, res, sessionId);
+      res.set({
+        'X-PlexBridge-Session': streamingSession.sessionId,
+        'X-Persistent-Session': persistentSession.sessionId,
+        'X-Content-Type': 'live-tv',
+        'X-Media-Type': '5'
+      });
       
-      // Set unified response headers for consistent Plex communication
-      const unifiedHeaders = createUnifiedResponseHeaders(unifiedSession.sessionId, channelId);
-      res.set(unifiedHeaders);
-      
-      logger.info('Created unified streaming session with consumer tracking', {
-        sessionId: unifiedSession.sessionId,
-        consumerId: unifiedSession.consumerId,
+      logger.info('Created persistent streaming session', {
+        sessionId,
         channelId,
         clientInfo: clientInfo.userAgent,
-        sessionStatus: persistentSession.status,
-        metadata: unifiedSession.streamingDecision
+        sessionStatus: persistentSession.status
       });
     }
     
@@ -435,7 +424,7 @@ router.get('/test/ffmpeg/:streamUrl', async (req, res) => {
     // Get configurable FFmpeg command line
     let ffmpegCommand = settings?.plexlive?.transcoding?.mpegts?.ffmpegArgs || 
                        config.plexlive?.transcoding?.mpegts?.ffmpegArgs ||
-                       '-hide_banner -loglevel error -reconnect 1 -reconnect_at_eof 1 -reconnect_streamed 1 -reconnect_delay_max 2 -i [URL] -c:v copy -c:a copy -bsf:v dump_extra -f mpegts -mpegts_copyts 1 -avoid_negative_ts make_zero -fflags +genpts+igndts+discardcorrupt -copyts -muxdelay 0 -muxpreload 0 -flush_packets 1 -max_delay 0 -max_muxing_queue_size 9999 pipe:1';
+                       '-hide_banner -loglevel error -reconnect 1 -reconnect_at_eof 1 -reconnect_streamed 1 -reconnect_delay_max 2 -i [URL] -c:v copy -c:a copy -f mpegts -mpegts_copyts 1 -avoid_negative_ts make_zero -fflags +genpts+igndts+discardcorrupt -copyts -muxdelay 0 -muxpreload 0 pipe:1';
     
     // Replace [URL] placeholder with actual stream URL
     ffmpegCommand = ffmpegCommand.replace('[URL]', finalUrl);
