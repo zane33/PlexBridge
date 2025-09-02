@@ -30,7 +30,7 @@ RUN mkdir -p /data/database /data/cache /data/logs /data/logos /var/lib/redis &&
 COPY package*.json ./
 
 # Install dependencies with npm configuration and rebuild native modules
-RUN npm config set registry https://registry.npmjs.org/ && \
+RUN npm config set registry https://registry.npmmirror.com/ && \
     npm ci --only=production && \
     npm rebuild better-sqlite3 && \
     npm cache clean --force
@@ -44,7 +44,7 @@ COPY client/ ./client/
 WORKDIR /app/client
 
 # Configure npm for Alpine Linux and build client
-RUN npm config set registry https://registry.npmjs.org/ && \
+RUN npm config set registry https://registry.npmmirror.com/ && \
     npm config set strict-ssl false && \
     npm ci --only=production && \
     npm run build
