@@ -6,9 +6,6 @@ const database = require('../services/database');
 const logger = require('../utils/logger');
 const { cacheMiddleware, responseTimeMonitor, generateLightweightEPG } = require('../utils/performanceOptimizer');
 const cacheService = require('../services/cacheService');
-const { enhanceChannelForStreaming, validateLineupForStreaming } = require('../utils/plexMetadataFix');
-const { enhanceLineupForStreamingDecisions, validateStreamingMetadata, generateDeviceXMLWithStreamingInfo } = require('../utils/streamingDecisionFix');
-const { channelSwitchingMiddleware, optimizeLineupForChannelSwitching } = require('../utils/channelSwitchingFix');
 
 // HDHomeRun discovery endpoint with caching
 router.get('/discover.json', cacheMiddleware('discover'), responseTimeMonitor(100), async (req, res) => {
@@ -55,8 +52,25 @@ router.get('/device.xml', responseTimeMonitor(50), async (req, res) => {
       tunerCount: discovery.TunerCount || 4
     };
     
-    // Generate enhanced device XML with streaming decision info
-    const deviceXml = generateDeviceXMLWithStreamingInfo(deviceInfo);
+    // Generate simple device XML
+    const deviceXml = `<?xml version="1.0" encoding="UTF-8"?>
+<root xmlns="urn:schemas-upnp-org:device-1-0">
+  <specVersion>
+    <major>1</major>
+    <minor>0</minor>
+  </specVersion>
+  <device>
+    <deviceType>urn:schemas-upnp-org:device:MediaServer:1</deviceType>
+    <friendlyName>${deviceInfo.friendlyName}</friendlyName>
+    <manufacturer>Silicondust</manufacturer>
+    <manufacturerURL>http://www.silicondust.com/</manufacturerURL>
+    <modelName>HDHomeRun</modelName>
+    <modelNumber>HDHR4-2US</modelNumber>
+    <serialNumber>${deviceInfo.uuid}</serialNumber>
+    <UDN>uuid:${deviceInfo.uuid}</UDN>
+    <presentationURL>http://${req.get('host')}/</presentationURL>
+  </device>
+</root>`;
     
     res.set({
       'Content-Type': 'application/xml',
@@ -172,10 +186,10 @@ router.get('/lineup_status.json', cacheMiddleware('lineup_status'), responseTime
   }
 });
 
-// Channel lineup endpoint optimized for Android TV channel switching
-router.get('/lineup.json', channelSwitchingMiddleware(), cacheMiddleware('lineup'), responseTimeMonitor(100), async (req, res) => {
+// Channel lineup endpoint - FIXED for Plex MediaContainer compatibility
+router.get('/lineup.json', async (req, res) => {
   try {
-    // Get all enabled channels from database with EPG information
+    // Get all enabled channels
     const channels = await database.all(`
       SELECT c.*, s.url, s.type 
       FROM channels c 
@@ -184,20 +198,18 @@ router.get('/lineup.json', channelSwitchingMiddleware(), cacheMiddleware('lineup
       ORDER BY c.number
     `);
 
-    // Get current settings to determine advertised host
+    // Get base URL for streams
     const settingsService = require('../services/settingsService');
     const config = require('../config');
     const settings = await settingsService.getSettings();
     
-    // Priority order: Environment variable > Settings > Config > Host header fallback
-    let baseHost = process.env.ADVERTISED_HOST ||                              // Docker environment
-                  settings?.plexlive?.network?.advertisedHost ||              // Settings UI
-                  config.plexlive?.network?.advertisedHost ||                 // Config file  
-                  config.network?.advertisedHost ||                           // Legacy config
-                  req.get('host') ||                                           // Host header fallback
-                  `localhost:${config.server?.port || process.env.HTTP_PORT || process.env.PORT || 3000}`;  // Final fallback
+    let baseHost = process.env.ADVERTISED_HOST ||
+                  settings?.plexlive?.network?.advertisedHost ||
+                  config.plexlive?.network?.advertisedHost ||
+                  config.network?.advertisedHost ||
+                  req.get('host') ||
+                  `localhost:${config.server?.port || process.env.HTTP_PORT || process.env.PORT || 3000}`;
     
-    // Ensure we have port if not included
     if (!baseHost.includes(':')) {
       const streamingPort = settings?.plexlive?.network?.streamingPort || 
                            config.plexlive?.network?.streamingPort || 
@@ -208,109 +220,39 @@ router.get('/lineup.json', channelSwitchingMiddleware(), cacheMiddleware('lineup
       baseHost += `:${streamingPort}`;
     }
     
-    // Ensure we have http:// prefix
     const baseURL = baseHost.startsWith('http') ? baseHost : `http://${baseHost}`;
     
-    // Try to get current programs from cache first for performance
-    const now = new Date().toISOString();
-    let currentPrograms = await cacheService.get('epg:current:simple');
-    
-    if (!currentPrograms) {
-      // Only fetch essential fields to reduce query time
-      currentPrograms = await database.all(`
-        SELECT p.channel_id, p.title, p.description
-        FROM epg_programs p
-        WHERE p.start_time <= ? AND p.end_time > ?
-        LIMIT 100
-      `, [now, now]);
-      
-      // Cache for 2 minutes
-      await cacheService.set('epg:current:simple', currentPrograms, 120);
-    }
-    
-    // Create a map of current programs by channel EPG ID
-    const programMap = new Map();
-    if (currentPrograms && currentPrograms.length > 0) {
-      currentPrograms.forEach(prog => {
-        programMap.set(prog.channel_id, prog);
-      });
-    }
-    
-    // Detect Android TV for optimization
-    const isAndroidTV = req.get('User-Agent')?.toLowerCase().includes('android') || false;
-    
-    // Create enhanced lineup with streaming decision metadata (fixes 'No part decision' error)
-    let lineup = enhanceLineupForStreamingDecisions(channels, baseURL, programMap);
-    
-    // Optimize for Android TV channel switching
-    if (isAndroidTV) {
-      lineup = optimizeLineupForChannelSwitching(lineup, true);
-    }
-    
-    // Validate streaming metadata to prevent decision errors
-    lineup = validateStreamingMetadata(lineup);
-    
-    // Final validation for Android TV compatibility
-    lineup = validateLineupForStreaming(lineup);
+    // Create simple, working lineup for Plex
+    const lineup = channels.map(channel => ({
+      GuideNumber: channel.number.toString(),
+      GuideName: channel.name,
+      VideoCodec: 'MPEG2', // Simple codec for Plex compatibility
+      AudioCodec: 'AC3',
+      URL: `${baseURL}/stream/${channel.id}`
+    }));
 
     logger.debug('Channel lineup request', { 
       channelCount: lineup.length,
-      userAgent: req.get('User-Agent'),
-      hasAndroidTV: req.get('User-Agent')?.includes('android') || false,
-      enhancedForStreaming: true
+      userAgent: req.get('User-Agent')
     });
 
-    // Ensure proper JSON content-type to prevent "expected MediaContainer element, found html" errors
+    // CRITICAL: Proper headers to prevent HTML response errors
     res.set({
       'Content-Type': 'application/json; charset=utf-8',
-      'Cache-Control': 'max-age=300', // Cache for 5 minutes
-      'Access-Control-Allow-Origin': '*'
+      'Cache-Control': 'no-cache, no-store, must-revalidate',
+      'Pragma': 'no-cache',
+      'Expires': '0'
     });
 
     res.json(lineup);
   } catch (error) {
     logger.error('Channel lineup error:', error);
     
-    // For Android TV, provide emergency fallback lineup instead of error
-    const userAgent = req.get('User-Agent') || '';
-    const isAndroidTV = userAgent.toLowerCase().includes('android');
-    
-    if (isAndroidTV) {
-      const fallbackLineup = [
-        {
-          GuideNumber: "1",
-          GuideName: "Live TV",
-          URL: "/stream/fallback",
-          HD: 1,
-          DRM: 0,
-          Favorite: 0,
-          EPGAvailable: false,
-          EPGChannelID: "fallback",
-          CurrentTitle: "Live Programming",
-          CurrentDescription: "Live television programming",
-          ContentType: "5",
-          MediaType: "LiveTV",
-          
-          // Proper metadata types for Android TV
-          type: 'episode',
-          metadata_type: 'episode',
-          content_type: 5,
-          mediaType: 'episode',
-          
-          AndroidTVFallback: true
-        }
-      ];
-      
-      res.set({
-        'Content-Type': 'application/json; charset=utf-8',
-        'X-Emergency-Fallback': 'true'
-      });
-      
-      logger.warn('Provided emergency Android TV lineup fallback');
-      return res.json(fallbackLineup);
-    }
-    
-    res.status(500).json({ error: 'Channel lineup failed' });
+    // Return minimal JSON response instead of HTML error
+    res.set({
+      'Content-Type': 'application/json; charset=utf-8'
+    });
+    res.status(500).json([]);
   }
 });
 
