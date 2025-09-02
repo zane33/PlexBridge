@@ -42,24 +42,11 @@ const ENHANCED_ENCODING_PROFILES = {
       // '-use_wallclock_as_timestamps', '1', // Causes consumer session loss
       // '-timestamp_monotonic', '1', // Not needed without wallclock
       
-      // Video encoding (Plex-compatible H.264 settings)
-      '-c:v', 'libx264',
-      '-preset', 'medium',     // Better quality than veryfast
-      '-tune', 'film',         // Better for general content than zerolatency
-      '-profile:v', 'high',    // Explicit H.264 profile
-      '-level:v', '4.1',       // Explicit H.264 level for compatibility
-      '-crf', '23',
-      '-maxrate', '8M',
-      '-bufsize', '16M',       // Larger buffer for stable encoding
-      '-g', '60',              // Standard GOP size
-      '-keyint_min', '30',     // Standard keyframe interval
-      '-sc_threshold', '0',    // Disable scene change detection for stability
+      // Video handling (copy to avoid encoding errors that cause crashes)
+      '-c:v', 'copy',          // Copy video stream to avoid H.264 encoding issues
       
-      // Audio encoding (ensure compatibility)
-      '-c:a', 'aac',
-      '-b:a', '128k',
-      '-ac', '2',
-      '-ar', '48000',
+      // Audio handling (copy to avoid encoding issues)
+      '-c:a', 'copy',          // Copy audio stream to avoid encoding issues
       
       // Output format optimization for Plex compatibility
       '-f', 'mpegts',
@@ -71,9 +58,8 @@ const ENHANCED_ENCODING_PROFILES = {
       '-flush_packets', '1',   // Flush packets immediately
       '-max_muxing_queue_size', '2048', // Larger queue for stability
       
-      // H.264 stream compatibility flags
-      '-bsf:v', 'h264_mp4toannexb', // Convert to Annex B format for MPEG-TS
-      '-x264opts', 'nal-hrd=cbr:force-cfr=1', // Constant bitrate for stability
+      // Stream reliability flags
+      '-bsf:v', 'h264_mp4toannexb', // Convert to Annex B format for MPEG-TS (if H.264)
     ],
     priority: 100,
     timeout_ms: 15000,

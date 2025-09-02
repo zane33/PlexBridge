@@ -1745,10 +1745,15 @@ class StreamManager {
           }
         }
       } catch (enhancedEncodingError) {
-        logger.warn('Enhanced encoding failed, using standard args', {
+        logger.error('Enhanced encoding configuration failed', {
           channelId: channel.id,
-          error: enhancedEncodingError.message
+          channelNumber: channel.number,
+          error: enhancedEncodingError.message,
+          stack: enhancedEncodingError.stack,
+          streamUrl: finalStreamUrl,
+          streamName: stream?.name
         });
+        // Continue with standard args
       }
       
       // Replace the URL in the args with the final URL (which may contain special characters)
@@ -2106,12 +2111,22 @@ class StreamManager {
           });
         }
         
+        // Check for enhanced encoding specific errors
+        const isEnhancedEncodingError = errorOutput.includes('no frame!') ||
+                                      errorOutput.includes('non-existing PPS') ||
+                                      errorOutput.includes('decode_slice_header error') ||
+                                      errorOutput.includes('mmco: unref short failure');
+        
         // Log all stderr output but don't kill processes aggressively
         // Let FFmpeg try to recover from transient errors
-        logger.info('FFmpeg MPEG-TS stderr', { 
+        const logLevel = isEnhancedEncodingError ? 'error' : 'info';
+        logger[logLevel]('FFmpeg MPEG-TS stderr', { 
           channelId: channel.id,
           sessionId,
-          output: errorOutput.trim() 
+          isEnhancedEncoding: stream?.enhanced_encoding || false,
+          encodingProfile: stream?.enhanced_encoding_profile,
+          output: errorOutput.trim(),
+          isEnhancedEncodingError 
         });
         
         // Categorize errors into different types for better handling
@@ -2143,7 +2158,11 @@ class StreamManager {
           'moov atom not found',
           'Invalid NAL unit size',
           'Could not find codec parameters',
-          'Operation not permitted'
+          'Operation not permitted',
+          'no frame!',                    // H.264 encoding error
+          'non-existing PPS',             // H.264 parameter set error
+          'decode_slice_header error',    // H.264 decode error
+          'mmco: unref short failure'     // H.264 memory management error
         ];
         
         const authErrors = [
