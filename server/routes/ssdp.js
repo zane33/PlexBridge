@@ -292,27 +292,235 @@ router.get('/timeline/:itemId?', async (req, res) => {
   try {
     const { itemId } = req.params;
     
-    logger.debug('Plex timeline request', { itemId });
+    logger.debug('Plex timeline request', { 
+      itemId,
+      query: req.query,
+      userAgent: req.get('User-Agent')
+    });
     
-    // Return minimal timeline response to prevent metadata errors
+    // Return complete timeline response with proper metadata
     res.set({
       'Content-Type': 'application/json; charset=utf-8', 
       'Cache-Control': 'no-cache'
     });
     
-    res.json({
+    // Provide a valid timeline entry to prevent completion duration errors
+    const timeline = {
       MediaContainer: {
-        size: 0,
+        size: 1,
         identifier: "com.plexapp.plugins.library",
-        machineIdentifier: process.env.DEVICE_UUID || 'plextv-001'
+        machineIdentifier: process.env.DEVICE_UUID || 'plextv-001',
+        Timeline: [{
+          state: "playing",
+          type: "video",
+          itemType: "episode",
+          ratingKey: itemId || "18961",
+          key: `/library/metadata/${itemId || "18961"}`,
+          playQueueItemID: parseInt(itemId) || 18961,
+          playQueueID: 1,
+          playQueueVersion: 1,
+          containerKey: `/playQueues/1`,
+          metadataId: itemId || "18961",
+          time: 0,
+          duration: 86400000, // 24 hours for live TV
+          seekRange: "0-86400000",
+          playbackTime: 0,
+          playbackRate: 1.0,
+          repeat: 0,
+          volume: 1.0,
+          shuffle: false,
+          viewOffset: 0,
+          hasMDE: 1,
+          audioStreamID: 1,
+          videoStreamID: 1,
+          subtitleStreamID: -1,
+          playMethod: "directplay",
+          protocol: "http",
+          address: req.get('host'),
+          port: process.env.PORT || 3000,
+          machineIdentifier: process.env.DEVICE_UUID || 'plextv-001'
+        }]
       }
-    });
+    };
+    
+    res.json(timeline);
   } catch (error) {
     logger.error('Timeline error:', error);
+    // Still return valid structure on error
     res.status(200).json({
-      MediaContainer: { size: 0 }
+      MediaContainer: {
+        size: 1,
+        Timeline: [{
+          state: "playing",
+          type: "video",
+          ratingKey: "1",
+          duration: 86400000
+        }]
+      }
     });
   }
+});
+
+// Metadata endpoint - handles all metadata requests to prevent unknown item errors
+router.get('/library/metadata/:metadataId', async (req, res) => {
+  try {
+    const { metadataId } = req.params;
+    
+    logger.debug('Plex metadata request', { 
+      metadataId,
+      userAgent: req.get('User-Agent')
+    });
+    
+    // Extract channel ID if this is a channel metadata request
+    let channelId = metadataId;
+    if (metadataId && metadataId.includes('_')) {
+      channelId = metadataId.split('_')[1];
+    }
+    
+    // Try to get real channel data
+    let channel = null;
+    try {
+      channel = await database.get(`
+        SELECT c.*, s.url, s.type 
+        FROM channels c 
+        LEFT JOIN streams s ON c.id = s.channel_id 
+        WHERE c.id = ? OR c.number = ?
+      `, [channelId, channelId]);
+    } catch (dbError) {
+      logger.debug('Could not fetch channel for metadata', { channelId, error: dbError.message });
+    }
+    
+    // Build metadata response with real or fallback data
+    const metadata = {
+      MediaContainer: {
+        size: 1,
+        allowSync: 0,
+        identifier: "com.plexapp.plugins.library",
+        librarySectionID: 1,
+        librarySectionTitle: "Live TV",
+        librarySectionUUID: "e05e77e4-1cc3-4e1e-9e79-8bf9b51f5f3f",
+        Video: [{
+          ratingKey: metadataId || "18961",
+          key: `/library/metadata/${metadataId}`,
+          parentRatingKey: `show_${channelId}`,
+          grandparentRatingKey: `series_${channelId}`,
+          guid: `plex://episode/${metadataId}`,
+          type: "episode",
+          title: channel?.name || `Channel ${channelId}`,
+          grandparentTitle: channel?.name || `Channel ${channelId}`,
+          parentTitle: "Live Programming",
+          contentRating: "TV-PG",
+          summary: channel?.description || "Live television programming",
+          index: 1,
+          parentIndex: 1,
+          year: new Date().getFullYear(),
+          thumb: `/library/metadata/${metadataId}/thumb`,
+          art: `/library/metadata/${metadataId}/art`,
+          parentThumb: `/library/metadata/${metadataId}/parentThumb`,
+          grandparentThumb: `/library/metadata/${metadataId}/grandparentThumb`,
+          duration: 86400000, // 24 hours for live TV
+          addedAt: Math.floor(Date.now() / 1000),
+          updatedAt: Math.floor(Date.now() / 1000),
+          live: 1,
+          Media: [{
+            id: channelId,
+            duration: 86400000,
+            bitrate: 5000,
+            width: 1920,
+            height: 1080,
+            aspectRatio: 1.78,
+            audioChannels: 2,
+            audioCodec: "aac",
+            videoCodec: "h264",
+            videoResolution: "1080",
+            container: "mpegts",
+            videoFrameRate: "25",
+            optimizedForStreaming: 1,
+            protocol: "http",
+            Part: [{
+              id: channelId,
+              key: `/stream/${channelId}`,
+              duration: 86400000,
+              file: `/stream/${channelId}`,
+              size: 0,
+              container: "mpegts",
+              indexes: "sd",
+              hasThumbnail: 0,
+              Stream: [
+                {
+                  id: 1,
+                  streamType: 1,
+                  codec: "h264",
+                  index: 0,
+                  bitrate: 4000,
+                  language: "eng",
+                  languageCode: "eng",
+                  height: 1080,
+                  width: 1920,
+                  frameRate: 25.0,
+                  profile: "high",
+                  level: "40",
+                  pixelFormat: "yuv420p"
+                },
+                {
+                  id: 2,
+                  streamType: 2,
+                  codec: "aac",
+                  index: 1,
+                  channels: 2,
+                  bitrate: 128,
+                  language: "eng",
+                  languageCode: "eng",
+                  samplingRate: 48000,
+                  profile: "lc"
+                }
+              ]
+            }]
+          }]
+        }]
+      }
+    };
+    
+    res.set({
+      'Content-Type': 'application/json; charset=utf-8',
+      'Cache-Control': 'no-cache'
+    });
+    
+    res.json(metadata);
+  } catch (error) {
+    logger.error('Metadata request error:', error);
+    // Return minimal valid metadata on error
+    res.status(200).json({
+      MediaContainer: {
+        size: 1,
+        Video: [{
+          ratingKey: req.params.metadataId,
+          type: "episode",
+          title: "Live TV",
+          duration: 86400000,
+          live: 1
+        }]
+      }
+    });
+  }
+});
+
+// Metadata thumbnail endpoints - prevent 404s for image requests
+router.get('/library/metadata/:metadataId/:imageType', (req, res) => {
+  const { metadataId, imageType } = req.params;
+  
+  logger.debug('Plex image request', { metadataId, imageType });
+  
+  // Return a 1x1 transparent pixel for any image request
+  const pixel = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==', 'base64');
+  
+  res.set({
+    'Content-Type': 'image/png',
+    'Content-Length': pixel.length,
+    'Cache-Control': 'public, max-age=86400'
+  });
+  
+  res.send(pixel);
 });
 
 // Live TV consumer status - handles Plex live TV consumer tracking
