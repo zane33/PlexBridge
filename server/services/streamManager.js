@@ -1704,7 +1704,32 @@ class StreamManager {
       }
       
       // Parse command line into arguments array, but handle special characters in URLs
-      const args = ffmpegCommand.split(' ').filter(arg => arg.trim() !== '');
+      let args = ffmpegCommand.split(' ').filter(arg => arg.trim() !== '');
+      
+      // Enhanced encoding integration for unreliable streams
+      try {
+        const { getStreamConfiguration } = require('../utils/enhancedEncoding');
+        const streamConfig = getStreamConfiguration(stream, channel);
+        
+        // Check if enhanced encoding is enabled for this stream
+        if (stream.enhanced_encoding || streamConfig.encoding_profile !== 'standard-reliability') {
+          logger.info('Applying enhanced encoding for unreliable stream', {
+            channelId: channel.id,
+            channelNumber: channel.number,
+            channelName: channel.name,
+            profile: streamConfig.encoding_profile,
+            description: streamConfig.profile_description
+          });
+          
+          // Replace standard args with enhanced encoding args
+          args = streamConfig.ffmpeg_options.concat(['-i', finalStreamUrl, 'pipe:1']);
+        }
+      } catch (enhancedEncodingError) {
+        logger.warn('Enhanced encoding failed, using standard args', {
+          channelId: channel.id,
+          error: enhancedEncodingError.message
+        });
+      }
       
       // Replace the URL in the args with the final URL (which may contain special characters)
       const urlArgIndex = args.findIndex(arg => arg === streamUrl || arg === finalStreamUrl);

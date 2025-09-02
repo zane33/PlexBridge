@@ -147,15 +147,15 @@ function generateFallbackLineup() {
       EPGChannelID: "fallback",
       CurrentTitle: "Live Programming",
       CurrentDescription: "Live television programming",
-      ContentType: "5",
+      ContentType: "4",
       MediaType: "LiveTV",
       
       // Proper metadata types for Android TV (fixes "Unknown metadata type" errors)
       type: 'episode',
       metadata_type: 'episode',
-      content_type: 5,
+      content_type: 4,
       mediaType: 'episode',
-      contentType: 5,
+      contentType: 4,
       
       // Episode metadata structure
       grandparentTitle: 'Live TV',
@@ -173,7 +173,7 @@ function generateFallbackLineup() {
       guid: `plexbridge://fallback/emergency/${Date.now()}`,
       key: '/library/metadata/fallback_emergency',
       live: 1,
-      duration: 3600000,
+      duration: 86400000,
       
       AndroidTVFallback: true
     }

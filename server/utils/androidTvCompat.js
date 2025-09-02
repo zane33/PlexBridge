@@ -64,7 +64,7 @@ function ensureAndroidTVCompatibility(program, channel) {
   program.originalTitle = program.originalTitle || program.title;
   program.summary = program.description;
   program.year = program.year || new Date().getFullYear();
-  program.duration = program.duration || 3600000; // 1 hour in milliseconds
+  program.duration = program.duration || 86400000; // 24 hours in milliseconds for Live TV
   
   // Add live TV specific fields
   program.live = 1;
@@ -93,7 +93,7 @@ function generateFallbackProgram(channel, startTime = new Date(), durationHours 
     end_time: endTime.toISOString(),
     category: 'Live TV',
     metadata_type: 'live_tv',
-    content_type: 5,
+    content_type: 4,
     is_fallback: true
   };
 }
@@ -114,7 +114,7 @@ function enhanceLineupForAndroidTV(lineup) {
       
       // Android TV specific enhancements
       MediaType: 'LiveTV',
-      ContentType: 5,
+      ContentType: 4,
       HasTitle: true,
       HasDescription: true,
       

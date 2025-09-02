@@ -89,7 +89,7 @@ class ChannelMetadataCache {
       },
       
       // Metadata type info for Plex
-      content_type: 5,
+      content_type: 4,
       metadata_type: 'live_tv',
       has_metadata: true,
       cached_at: now.toISOString()
@@ -116,7 +116,7 @@ class ChannelMetadataCache {
         end_time: new Date(now.getTime() + 3600000).toISOString(),
         category: 'Live TV'
       },
-      content_type: 5,
+      content_type: 4,
       metadata_type: 'live_tv',
       has_metadata: true,
       is_fallback: true,
@@ -182,9 +182,9 @@ function generateImmediateEPGResponse(channelId, forAndroidTV = false) {
       // Critical metadata for Android TV (fixes "Unknown metadata type" errors)
       type: 'episode', // Plex Android TV expects episode type for live TV
       metadata_type: 'episode', // Backup metadata type identifier  
-      content_type: 5, // Live TV content type
+      content_type: 4, // Live TV content type
       mediaType: 'episode', // Media type for Plex decision making
-      contentType: 5, // Alternative content type field
+      contentType: 4, // Alternative content type field
       
       // Episode metadata structure for Android TV compatibility
       grandparentTitle: metadata.name, // Channel name as show title
@@ -206,7 +206,7 @@ function generateImmediateEPGResponse(channelId, forAndroidTV = false) {
       has_video: true,
       has_audio: true,
       is_live: true,
-      duration: 3600000, // 1 hour in milliseconds
+      duration: 86400000, // 24 hours in milliseconds for Live TV
       
       // Immediate response indicator
       cached_response: true,
@@ -273,9 +273,9 @@ async function getCurrentProgramFast(channelId, isAndroidTV = false) {
       // Proper metadata types for Android TV (fixes "Unknown metadata type" errors)
       type: 'episode', // Plex Android TV expects episode type for live TV
       metadata_type: 'episode', // Backup metadata type identifier  
-      content_type: 5, // Live TV content type
+      content_type: 4, // Live TV content type
       mediaType: 'episode', // Media type for Plex decision making
-      contentType: 5, // Alternative content type field
+      contentType: 4, // Alternative content type field
       
       // Episode metadata structure for Android TV compatibility
       grandparentTitle: 'Live TV', // Show title
@@ -292,7 +292,7 @@ async function getCurrentProgramFast(channelId, isAndroidTV = false) {
       guid: `plexbridge://fallback/${channelId}/${Date.now()}`,
       key: `/library/metadata/fallback_${channelId}`,
       live: 1, // Live content flag
-      duration: 3600000 // 1 hour in milliseconds
+      duration: 86400000 // 24 hours in milliseconds for Live TV
     };
   }
 }

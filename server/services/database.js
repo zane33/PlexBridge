@@ -53,6 +53,9 @@ class DatabaseService {
       // Initialize default settings
       await this.initializeDefaultSettings();
       
+      // Add enhanced encoding support
+      await this.initializeEnhancedEncoding();
+      
       this.isInitialized = true;
       this.reconnectAttempts = 0;
       
@@ -472,6 +475,17 @@ class DatabaseService {
     } catch (error) {
       logger.error('Failed to initialize default settings:', error);
       throw error;
+    }
+  }
+
+  async initializeEnhancedEncoding() {
+    try {
+      const { addEnhancedEncodingSupport } = require('../utils/enhancedEncoding');
+      await addEnhancedEncodingSupport(this.db);
+      logger.info('Enhanced encoding support initialized successfully');
+    } catch (error) {
+      logger.error('Failed to initialize enhanced encoding support:', error);
+      // Don't throw error, just warn - this is not critical for basic functionality
     }
   }
 
