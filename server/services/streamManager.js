@@ -1645,72 +1645,68 @@ class StreamManager {
       const userAgent = req.get('User-Agent') || '';
       const isAndroidTV = userAgent.toLowerCase().includes('android') || userAgent.toLowerCase().includes('shield');
       
-      // Get configurable FFmpeg command line - use transcoding if forceTranscode is enabled
-      let ffmpegCommand;
-      if (forceTranscode) {
-        // Use transcoding for streams that require it
-        if (isAndroidTV) {
-          // Android TV specific transcoding to prevent buffering
-          ffmpegCommand = settings?.plexlive?.transcoding?.androidtv?.transcodingArgs ||
-                         settings?.plexlive?.transcoding?.mpegts?.transcodingArgs || 
-                         config.plexlive?.transcoding?.mpegts?.transcodingArgs ||
-                         '-hide_banner -loglevel error -reconnect 1 -reconnect_at_eof 1 -reconnect_streamed 1 -reconnect_delay_max 5 -i [URL] -c:v libx264 -preset ultrafast -tune zerolatency -profile:v high -level 4.0 -pix_fmt yuv420p -b:v 2500k -maxrate 2500k -bufsize 1000k -g 30 -keyint_min 15 -sc_threshold 0 -c:a aac -b:a 128k -ar 48000 -ac 2 -f mpegts -mpegts_copyts 1 -avoid_negative_ts make_zero -fflags +genpts+igndts+discardcorrupt+nobuffer -flags +low_delay -max_muxing_queue_size 9999 -muxdelay 0 -muxpreload 0 -flush_packets 1 -rtbufsize 256k pipe:1';
-          
-          logger.info('Using Android TV optimized transcoding configuration', { clientIP: req.ip });
-        } else {
-          ffmpegCommand = settings?.plexlive?.transcoding?.mpegts?.transcodingArgs || 
-                         config.plexlive?.transcoding?.mpegts?.transcodingArgs ||
-                         '-hide_banner -loglevel error -reconnect 1 -reconnect_at_eof 1 -reconnect_streamed 1 -reconnect_delay_max 5 -i [URL] -c:v libx264 -preset fast -profile:v high -level 4.0 -pix_fmt yuv420p -b:v 2500k -maxrate 2500k -bufsize 5000k -g 50 -keyint_min 25 -sc_threshold 0 -c:a aac -b:a 128k -ar 48000 -ac 2 -f mpegts -mpegts_copyts 1 -avoid_negative_ts make_zero -fflags +genpts+igndts+discardcorrupt -max_muxing_queue_size 9999 -muxdelay 0 -muxpreload 0 -flush_packets 1 pipe:1';
-        }
-      } else {
-        // Use your tested codec copy configuration for streams that don't need transcoding
-        if (isAndroidTV) {
-          // Android TV specific codec copy to prevent buffering
-          ffmpegCommand = settings?.plexlive?.transcoding?.androidtv?.ffmpegArgs ||
-                         settings?.plexlive?.transcoding?.mpegts?.ffmpegArgs || 
-                         config.plexlive?.transcoding?.mpegts?.ffmpegArgs ||
-                         '-hide_banner -loglevel error -reconnect 1 -reconnect_at_eof 1 -reconnect_streamed 1 -reconnect_delay_max 2 -i [URL] -c:v copy -c:a copy -bsf:v dump_extra -f mpegts -mpegts_copyts 1 -avoid_negative_ts make_zero -fflags +genpts+igndts+discardcorrupt+nobuffer -flags +low_delay -copyts -muxdelay 0 -muxpreload 0 -flush_packets 1 -max_delay 0 -max_muxing_queue_size 9999 -rtbufsize 256k -probesize 32 -analyzeduration 0 pipe:1';
-          
-          logger.info('Using Android TV optimized codec copy configuration', { clientIP: req.ip });
-        } else {
-          ffmpegCommand = settings?.plexlive?.transcoding?.mpegts?.ffmpegArgs || 
-                         config.plexlive?.transcoding?.mpegts?.ffmpegArgs ||
-                         '-hide_banner -loglevel error -reconnect 1 -reconnect_at_eof 1 -reconnect_streamed 1 -reconnect_delay_max 2 -i [URL] -c:v copy -c:a copy -bsf:v dump_extra -f mpegts -mpegts_copyts 1 -avoid_negative_ts make_zero -fflags +genpts+igndts+discardcorrupt -copyts -muxdelay 0 -muxpreload 0 -flush_packets 1 -max_delay 0 -max_muxing_queue_size 9999 pipe:1';
-        }
-      }
+      // CRITICAL FIX: Use Plex-compatible FFmpeg transcoding configuration  
+      // This fixes H.264 corruption errors: non-existing PPS, decode_slice_header error, etc.
+      const plexTranscodingFix = require('../utils/plexTranscodingFix');
       
-      // Replace [URL] placeholder with actual stream URL
-      ffmpegCommand = ffmpegCommand.replace('[URL]', finalStreamUrl);
+      // Get Plex-compatible FFmpeg arguments
+      const ffmpegArgs = plexTranscodingFix.getPlexCompatibleCommand(finalStreamUrl, {
+        forceTranscode,
+        isAndroidTV,
+        protocolOptions: stream?.protocol_options ? 
+          (typeof stream.protocol_options === 'string' ? JSON.parse(stream.protocol_options) : stream.protocol_options) : 
+          {}
+      });
+      
+      logger.info('Using Plex-compatible FFmpeg configuration', {
+        forceTranscode,
+        isAndroidTV, 
+        commandType: forceTranscode ? 'transcode' : 'copy',
+        clientIP: req.ip,
+        argsCount: ffmpegArgs.length
+      });
+      
+      // Use the Plex-compatible FFmpeg arguments directly (no need to parse strings)
+      let args = [...ffmpegArgs]; // Copy the array to avoid modifying the original
       
       // Add HLS-specific arguments if needed
       if (finalStreamUrl.includes('.m3u8')) {
-        let hlsArgs = settings?.plexlive?.transcoding?.mpegts?.hlsProtocolArgs || 
-                     config.plexlive?.transcoding?.mpegts?.hlsProtocolArgs ||
-                     '-allowed_extensions ALL -protocol_whitelist file,http,https,tcp,tls,pipe,crypto';
-        
-        // For redirected streams (like TVNZ), add additional HLS options for better compatibility
-        if (finalStreamUrl !== streamUrl) {
-          hlsArgs += ' -http_seekable 0 -multiple_requests 1 -http_persistent 0';
+        const inputIndex = args.findIndex(arg => arg === finalStreamUrl);
+        if (inputIndex > 0) {
+          // Insert HLS-specific protocol args before the input URL
+          const hlsProtocolArgs = [
+            '-allowed_extensions', 'ALL',
+            '-protocol_whitelist', 'file,http,https,tcp,tls,pipe,crypto'
+          ];
           
-          logger.info('Added HLS compatibility options for redirected stream', {
-            channelId: channel.id,
-            originalUrl: streamUrl,
-            finalUrl: finalStreamUrl
-          });
+          // For redirected streams, add additional HLS options for better compatibility
+          if (finalStreamUrl !== streamUrl) {
+            hlsProtocolArgs.push(
+              '-http_seekable', '0',
+              '-multiple_requests', '1', 
+              '-http_persistent', '0'
+            );
+            
+            logger.info('Added HLS compatibility options for redirected stream', {
+              channelId: channel.id,
+              originalUrl: streamUrl,
+              finalUrl: finalStreamUrl
+            });
+          }
+          
+          // Insert HLS args before the -i flag
+          const iIndex = args.findIndex((arg, i) => arg === '-i' && args[i + 1] === finalStreamUrl);
+          if (iIndex >= 0) {
+            args.splice(iIndex, 0, ...hlsProtocolArgs);
+          }
         }
-        
-        // Insert HLS args BEFORE the input URL for proper protocol handling
-        ffmpegCommand = ffmpegCommand.replace('-i ' + finalStreamUrl, hlsArgs + ' -i ' + finalStreamUrl);
       }
       
-      // Parse command line into arguments array, but handle special characters in URLs
-      const args = ffmpegCommand.split(' ').filter(arg => arg.trim() !== '');
-      
-      // Replace the URL in the args with the final URL (which may contain special characters)
-      const urlArgIndex = args.findIndex(arg => arg === streamUrl || arg === finalStreamUrl);
+      // Ensure the final stream URL is properly set in the args
+      const urlArgIndex = args.findIndex(arg => arg === streamUrl || arg.includes(streamUrl.split('://')[1]?.split('/')[0] || ''));
       if (urlArgIndex !== -1) {
         args[urlArgIndex] = finalStreamUrl;
-        logger.info('Replaced URL in FFmpeg args', {
+        logger.info('Updated URL in FFmpeg args', {
           channelId: channel.id,
           originalUrl: streamUrl,
           finalUrl: finalStreamUrl,
@@ -1718,8 +1714,9 @@ class StreamManager {
         });
       }
 
-      // Special FFmpeg configuration for premiumpowers.net streams or redirected URLs
-      if (streamUrl.includes('premiumpowers') || finalStreamUrl.includes('85.92.112') || finalStreamUrl.includes('premiumpowers')) {
+      // DISABLED: Old special handling - replaced by Plex-compatible transcoding fix
+      // The new plexTranscodingFix.js handles all necessary parameters properly
+      if (false && (streamUrl.includes('premiumpowers') || finalStreamUrl.includes('85.92.112') || finalStreamUrl.includes('premiumpowers'))) {
         // Find the -i flag position
         const inputFlagIndex = args.findIndex(arg => arg === '-i');
         if (inputFlagIndex > 0) {
