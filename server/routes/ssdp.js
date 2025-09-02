@@ -8,7 +8,7 @@ const { cacheMiddleware, responseTimeMonitor, generateLightweightEPG } = require
 const cacheService = require('../services/cacheService');
 const { enhanceChannelForStreaming, validateLineupForStreaming } = require('../utils/plexMetadataFix');
 const { enhanceLineupForStreamingDecisions, validateStreamingMetadata, generateDeviceXMLWithStreamingInfo } = require('../utils/streamingDecisionFix');
-const { createUnifiedChannelMetadata, validateAndFixLineupMetadata, createUnifiedResponseHeaders } = require('../utils/plexMetadataUnificationFix');
+const { createUnifiedChannelMetadata, validateAndFixLineupMetadata, createUnifiedResponseHeaders, extractTranscodingInfo } = require('../utils/plexMetadataUnificationFix');
 const { channelSwitchingMiddleware, optimizeLineupForChannelSwitching } = require('../utils/channelSwitchingFix');
 
 // HDHomeRun discovery endpoint with caching
@@ -242,9 +242,21 @@ router.get('/lineup.json', channelSwitchingMiddleware(), cacheMiddleware('lineup
     
     // CRITICAL FIX: Create unified channel metadata to prevent Plex errors
     // This addresses "Unable to find title for item of type 5" and "Unknown metadata type" errors
+    // UPDATED: Now includes transcoding information for accurate Plex decisions
     let lineup = channels.map(channel => {
       const currentProgram = programMap.get(channel.epg_id || channel.id);
-      return createUnifiedChannelMetadata(channel, baseURL, currentProgram);
+      // Extract transcoding information from stream data
+      const transcodeInfo = extractTranscodingInfo({ protocol_options: channel.protocol_options });
+      
+      logger.debug('Channel transcoding analysis', {
+        channelId: channel.id,
+        channelName: channel.name,
+        forceTranscode: transcodeInfo.forceTranscode,
+        videoBitrate: transcodeInfo.videoBitrate,
+        videoProfile: transcodeInfo.videoProfile
+      });
+      
+      return createUnifiedChannelMetadata(channel, baseURL, currentProgram, transcodeInfo);
     });
     
     // Apply additional fixes and validation

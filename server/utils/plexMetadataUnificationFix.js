@@ -42,9 +42,22 @@ const PLEX_METADATA_CONFIG = {
 /**
  * Creates consistent channel metadata for lineup responses
  * Fixes "Unable to find title", "Unknown metadata type", "No part decision", and MediaContainer errors
+ * UPDATED: Now handles transcoding metadata requirements
  */
-function createUnifiedChannelMetadata(channel, baseURL, currentProgram = null) {
+function createUnifiedChannelMetadata(channel, baseURL, currentProgram = null, transcodeInfo = null) {
   const streamUrl = `${baseURL}/stream/${channel.id}`;
+  
+  // Determine if this channel uses transcoding and adjust metadata accordingly
+  const isTranscoding = transcodeInfo?.forceTranscode || false;
+  const transcodingProfile = isTranscoding ? transcodeInfo : {};
+  
+  // Transcoding-aware codec and quality settings
+  const effectiveVideoCodec = isTranscoding ? (transcodingProfile.videoCodec || 'h264') : PLEX_METADATA_CONFIG.videoCodec;
+  const effectiveAudioCodec = isTranscoding ? (transcodingProfile.audioCodec || 'aac') : PLEX_METADATA_CONFIG.audioCodec;
+  const effectiveVideoBitrate = isTranscoding ? (transcodingProfile.videoBitrate || 2500) : 4000;
+  const effectiveAudioBitrate = isTranscoding ? (transcodingProfile.audioBitrate || 128) : 128;
+  const effectiveVideoProfile = isTranscoding ? (transcodingProfile.videoProfile || 'high') : 'main';
+  const effectiveContainer = isTranscoding ? 'mpegts' : PLEX_METADATA_CONFIG.container;
   
   return {
     // HDHomeRun compatibility (basic requirements)
@@ -61,11 +74,16 @@ function createUnifiedChannelMetadata(channel, baseURL, currentProgram = null) {
     metadata_type: PLEX_METADATA_CONFIG.metadataType, // Metadata type
     mediaType: PLEX_METADATA_CONFIG.mediaType,        // Media type
     
-    // Container and codec information for streaming decisions
-    Container: PLEX_METADATA_CONFIG.container,
-    VideoCodec: PLEX_METADATA_CONFIG.videoCodec,
-    AudioCodec: PLEX_METADATA_CONFIG.audioCodec,
+    // Container and codec information for streaming decisions (transcoding-aware)
+    Container: effectiveContainer,
+    VideoCodec: effectiveVideoCodec,
+    AudioCodec: effectiveAudioCodec,
     Protocol: PLEX_METADATA_CONFIG.protocol,
+    
+    // Transcoding indicators for Plex decision making
+    IsTranscoding: isTranscoding,
+    TranscodingRequired: isTranscoding,
+    OriginalFormat: isTranscoding ? 'varies' : effectiveContainer,
     
     // Live TV properties
     Live: PLEX_METADATA_CONFIG.isLive,
@@ -101,22 +119,28 @@ function createUnifiedChannelMetadata(channel, baseURL, currentProgram = null) {
     TranscodeSupported: true,
     
     // CRITICAL: Complete Media structure to fix "No part decision" and MediaContainer errors
+    // UPDATED: Now uses transcoding-aware parameters for accurate Plex decisions
     Media: [{
       id: `media_${channel.id}`,
       duration: 0,        // Live content
-      bitrate: 5000,      // Estimated bitrate in kbps
+      bitrate: effectiveVideoBitrate + effectiveAudioBitrate, // Total bitrate for transcoded streams
       width: 1920,
       height: 1080,
       aspectRatio: 1.78,  // 16:9 aspect ratio
       audioChannels: 2,
-      audioCodec: PLEX_METADATA_CONFIG.audioCodec,
-      videoCodec: PLEX_METADATA_CONFIG.videoCodec,
-      container: PLEX_METADATA_CONFIG.container,
+      audioCodec: effectiveAudioCodec,
+      videoCodec: effectiveVideoCodec,
+      container: effectiveContainer,
       videoFrameRate: 'PAL',
       audioSampleRate: 48000,
-      videoProfile: 'main',
+      videoProfile: effectiveVideoProfile,
       videoLevel: 41,
       protocol: PLEX_METADATA_CONFIG.protocol,
+      
+      // Transcoding-specific metadata for Plex decision engine
+      isTranscoding: isTranscoding,
+      transcodingProfile: isTranscoding ? 'live_tv_transcode' : 'live_tv_direct',
+      optimizedForStreaming: true,
       
       // ESSENTIAL: Part object that Plex uses for streaming decisions
       Part: [{
@@ -125,29 +149,35 @@ function createUnifiedChannelMetadata(channel, baseURL, currentProgram = null) {
         file: streamUrl,
         size: 0,
         duration: 0,
-        container: PLEX_METADATA_CONFIG.container,
-        videoProfile: 'main',
+        container: effectiveContainer,
+        videoProfile: effectiveVideoProfile,
         
-        // Decision-making properties for Plex
-        decision: 'directplay',
+        // Decision-making properties for Plex (transcoding-aware)
+        decision: isTranscoding ? 'transcode' : 'directplay',
         selected: true,
         accessible: true,
         exists: true,
+        
+        // Transcoding decision metadata
+        hasThumbnail: false,
+        isTranscoded: isTranscoding,
+        canDirectPlay: !isTranscoding,
+        canDirectStream: !isTranscoding,
         
         // Streaming optimization flags
         optimizedForStreaming: true,
         has64bitOffsets: false,
         hasThumbnail: false,
         
-        // CRITICAL: Stream objects for transcoding decisions
+        // CRITICAL: Stream objects for transcoding decisions (transcoding-aware)
         Stream: [
           {
             id: `${channel.id}_video`,
             streamType: 1,
             default: true,
-            codec: PLEX_METADATA_CONFIG.videoCodec,
+            codec: effectiveVideoCodec,
             index: 0,
-            bitrate: 4000,
+            bitrate: effectiveVideoBitrate,
             bitDepth: 8,
             chromaLocation: 'left',
             chromaSubsampling: '4:2:0',
@@ -163,28 +193,36 @@ function createUnifiedChannelMetadata(channel, baseURL, currentProgram = null) {
             hasScalingMatrix: false,
             level: 41,
             pixelFormat: 'yuv420p',
-            profile: 'main',
-            refFrames: 4,
+            profile: effectiveVideoProfile,
+            refFrames: isTranscoding ? 1 : 4, // Lower ref frames for transcoded streams
             scanType: 'progressive',
-            displayTitle: `${PLEX_METADATA_CONFIG.videoCodec.toUpperCase()} (Main)`,
-            extendedDisplayTitle: `${PLEX_METADATA_CONFIG.videoCodec.toUpperCase()} (Main)`
+            displayTitle: `${effectiveVideoCodec.toUpperCase()} (${isTranscoding ? 'Transcoded' : 'Main'})`,
+            extendedDisplayTitle: `${effectiveVideoCodec.toUpperCase()} (${isTranscoding ? 'Transcoded' : 'Main'})`,
+            
+            // Transcoding-specific stream properties
+            isTranscoded: isTranscoding,
+            transcodingDecision: isTranscoding ? 'transcode' : 'copy'
           },
           {
             id: `${channel.id}_audio`,
             streamType: 2,
             selected: true,
             default: true,
-            codec: PLEX_METADATA_CONFIG.audioCodec,
+            codec: effectiveAudioCodec,
             index: 1,
             channels: 2,
-            bitrate: 128,
+            bitrate: effectiveAudioBitrate,
             bitDepth: 16,
-            profile: 'lc',
+            profile: isTranscoding ? 'lc' : 'lc', // AAC LC profile for both cases
             samplingRate: 48000,
-            displayTitle: `${PLEX_METADATA_CONFIG.audioCodec.toUpperCase()} (Main)`,
-            extendedDisplayTitle: `${PLEX_METADATA_CONFIG.audioCodec.toUpperCase()} (Main)`,
+            displayTitle: `${effectiveAudioCodec.toUpperCase()} (${isTranscoding ? 'Transcoded' : 'Main'})`,
+            extendedDisplayTitle: `${effectiveAudioCodec.toUpperCase()} (${isTranscoding ? 'Transcoded' : 'Main'})`,
             languageCode: 'eng',
-            languageTag: 'en'
+            languageTag: 'en',
+            
+            // Transcoding-specific stream properties
+            isTranscoded: isTranscoding,
+            transcodingDecision: isTranscoding ? 'transcode' : 'copy'
           }
         ]
       }]
@@ -215,6 +253,39 @@ function createUnifiedChannelMetadata(channel, baseURL, currentProgram = null) {
     _mediaType: 'episode',
     _contentType: 1
   };
+}
+
+/**
+ * Extracts transcoding information from stream data
+ * Used to create transcoding-aware metadata
+ */
+function extractTranscodingInfo(stream) {
+  if (!stream || !stream.protocol_options) {
+    return { forceTranscode: false };
+  }
+
+  try {
+    const protocolOptions = typeof stream.protocol_options === 'string' 
+      ? JSON.parse(stream.protocol_options) 
+      : stream.protocol_options;
+    
+    const forceTranscode = protocolOptions.forceTranscode === true;
+    
+    // Extract transcoding parameters if available
+    const transcodeInfo = {
+      forceTranscode,
+      videoCodec: forceTranscode ? 'h264' : 'h264', // Force H.264 for transcoding
+      audioCodec: forceTranscode ? 'aac' : 'aac',   // Force AAC for transcoding
+      videoBitrate: forceTranscode ? 2500 : 4000,   // Lower bitrate for transcoding
+      audioBitrate: forceTranscode ? 128 : 128,     // Standard audio bitrate
+      videoProfile: forceTranscode ? 'high' : 'main' // High profile for transcoding
+    };
+
+    return transcodeInfo;
+  } catch (error) {
+    // If parsing fails, assume no transcoding
+    return { forceTranscode: false };
+  }
 }
 
 /**
@@ -479,6 +550,7 @@ module.exports = {
   validateAndFixLineupMetadata,
   createUnifiedResponseHeaders,
   createMediaContainerResponse,
+  extractTranscodingInfo,
   getUnifiedPlexConfig,
   escapeXML,
   PLEX_METADATA_CONFIG
