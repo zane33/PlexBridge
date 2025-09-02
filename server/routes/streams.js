@@ -20,14 +20,24 @@ router.get('/stream/:channelId/:filename?', async (req, res) => {
     
     // Check if this is a Plex request that needs MPEG-TS format
     const userAgent = req.get('User-Agent') || '';
-    const isPlexRequest = userAgent.toLowerCase().includes('plex') || 
-                         userAgent.toLowerCase().includes('pms') ||
-                         userAgent.toLowerCase().includes('lavf') ||      // FFmpeg/libav from Plex
-                         userAgent.toLowerCase().includes('ffmpeg') ||    // Direct FFmpeg
-                         userAgent.toLowerCase().includes('vlc') ||       // VLC Media Player
-                         userAgent.toLowerCase().includes('libvlc') ||    // VLC Library
-                         req.query.format === 'mpegts' ||
-                         req.query.raw === 'true';
+    const isDirectPlexClient = userAgent.toLowerCase().includes('plex') || 
+                              userAgent.toLowerCase().includes('pms') ||
+                              userAgent.toLowerCase().includes('lavf') ||      // FFmpeg/libav from Plex
+                              userAgent.toLowerCase().includes('ffmpeg') ||    // Direct FFmpeg
+                              userAgent.toLowerCase().includes('vlc') ||       // VLC Media Player
+                              userAgent.toLowerCase().includes('libvlc');      // VLC Library
+    
+    // Web browsers accessing Plex should also be treated as Plex requests for enhanced encoding
+    const isWebBrowserPlex = (userAgent.toLowerCase().includes('mozilla') || 
+                              userAgent.toLowerCase().includes('chrome') ||
+                              userAgent.toLowerCase().includes('firefox') ||
+                              userAgent.toLowerCase().includes('safari')) &&
+                             (req.headers.referer?.includes('plex') || 
+                              req.headers['x-plex-product'] || 
+                              req.query.format === 'mpegts' ||
+                              req.query.raw === 'true');
+    
+    const isPlexRequest = isDirectPlexClient || isWebBrowserPlex;
     
     const isAndroidTV = userAgent.toLowerCase().includes('android');
     
@@ -92,15 +102,21 @@ router.get('/stream/:channelId/:filename?', async (req, res) => {
       });
     }
     
-    // Simple debug logging
+    // Enhanced debug logging for client type analysis
     logger.info('Stream request received', { 
       channelId, 
       filename, 
       isSubFile,
-      userAgent: req.get('User-Agent'),
-      method: req.method,
-      url: req.url,
+      userAgent,
+      isDirectPlexClient,
+      isWebBrowserPlex,
       isPlexRequest,
+      isAndroidTV,
+      headers: {
+        referer: req.headers.referer,
+        'x-plex-product': req.headers['x-plex-product'],
+        'x-plex-platform': req.headers['x-plex-platform']
+      },
       queryParams: req.query
     });
     

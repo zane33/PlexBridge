@@ -263,13 +263,25 @@ router.get('/consumer/:sessionId/:action?', async (req, res) => {
     const { sessionId, action } = req.params;
     const userAgent = req.get('User-Agent') || '';
     
+    // Detect client type for better debugging
+    const isAndroidTV = userAgent.toLowerCase().includes('android');
+    const isWebBrowser = userAgent.toLowerCase().includes('mozilla') || 
+                        userAgent.toLowerCase().includes('chrome') ||
+                        userAgent.toLowerCase().includes('firefox') ||
+                        userAgent.toLowerCase().includes('safari');
+    const clientType = isAndroidTV ? 'AndroidTV' : (isWebBrowser ? 'WebBrowser' : 'Unknown');
+
     logger.info('Plex consumer request', { 
       sessionId, 
       action, 
       userAgent,
+      clientType,
       headers: {
         'x-plex-session-identifier': req.headers['x-plex-session-identifier'],
-        'x-session-id': req.headers['x-session-id']
+        'x-session-id': req.headers['x-session-id'],
+        'x-plex-product': req.headers['x-plex-product'],
+        'x-plex-platform': req.headers['x-plex-platform'],
+        'x-plex-client-identifier': req.headers['x-plex-client-identifier']
       },
       query: req.query,
       ip: req.ip || req.connection.remoteAddress
@@ -306,6 +318,9 @@ router.get('/consumer/:sessionId/:action?', async (req, res) => {
     // Get session status for better consumer response
     const sessionStatus = sessionManager ? sessionManager.getSessionStatus(sessionId) : null;
     
+    // Web browser clients need more explicit consumer session responses
+    const isWebBrowserConsumer = clientType === 'WebBrowser';
+    
     res.json({
       success: true,
       sessionId: sessionId,
@@ -318,13 +333,27 @@ router.get('/consumer/:sessionId/:action?', async (req, res) => {
         lastActivity: Date.now(),
         status: 'connected',
         instanceAvailable: sessionStatus?.instanceAvailable || true,
-        hasConsumer: sessionStatus?.hasConsumer || true
+        hasConsumer: sessionStatus?.hasConsumer || true,
+        // Web browsers might need these additional fields
+        ...(isWebBrowserConsumer && {
+          ready: true,
+          buffering: false,
+          error: false,
+          clientType: 'WebBrowser'
+        })
       },
       session: sessionStatus ? {
         exists: sessionStatus.exists,
         isRunning: sessionStatus.isRunning,
         isMapped: sessionStatus.isMapped
       } : null,
+      // Additional debug info for troubleshooting
+      debug: {
+        clientType,
+        sessionFound: !!sessionStatus,
+        originalSessionId: sessionId,
+        mappedSession: sessionStatus?.isMapped || false
+      },
       timestamp: new Date().toISOString()
     });
   } catch (error) {
@@ -803,26 +832,56 @@ router.post('/livetv/*', async (req, res) => {
 router.get('/live/:sessionId/status', async (req, res) => {
   try {
     const { sessionId } = req.params;
+    const userAgent = req.get('User-Agent') || '';
+    const isWebBrowser = userAgent.toLowerCase().includes('mozilla') || 
+                        userAgent.toLowerCase().includes('chrome');
     
-    logger.debug('Plex live consumer status request', { sessionId });
+    logger.info('Plex live consumer status request', { 
+      sessionId,
+      userAgent,
+      isWebBrowser,
+      headers: req.headers
+    });
+    
+    // Get actual session status
+    const { getSessionManager } = require('../utils/sessionPersistenceFix');
+    const sessionManager = getSessionManager();
+    const sessionStatus = sessionManager ? sessionManager.getSessionStatus(sessionId) : null;
     
     // Always report consumer as active to prevent "Failed to find consumer"
     res.set({
       'Content-Type': 'application/json; charset=utf-8',
-      'Cache-Control': 'no-cache'
+      'Cache-Control': 'no-cache, no-store, must-revalidate',
+      'Pragma': 'no-cache',
+      'Expires': '0'
     });
     
     res.json({
       sessionId: sessionId,
-      status: 'streaming',
+      status: sessionStatus?.exists ? 'streaming' : 'active',
       consumer: {
         id: sessionId,
-        state: 'active',
-        available: true
+        state: sessionStatus?.exists ? 'streaming' : 'active',
+        available: true,
+        active: true,
+        instanceAvailable: sessionStatus?.instanceAvailable || true,
+        hasConsumer: sessionStatus?.hasConsumer || true,
+        // Web browser specific fields
+        ...(isWebBrowser && {
+          ready: true,
+          buffering: false,
+          clientType: 'WebBrowser'
+        })
       },
       instance: {
-        available: true,
-        ready: true
+        id: sessionId,
+        available: sessionStatus?.instanceAvailable || true,
+        ready: true,
+        streaming: sessionStatus?.isRunning || false
+      },
+      debug: {
+        sessionExists: sessionStatus?.exists || false,
+        clientType: isWebBrowser ? 'WebBrowser' : 'Other'
       },
       timestamp: Date.now()
     });
@@ -830,9 +889,24 @@ router.get('/live/:sessionId/status', async (req, res) => {
     logger.error('Live consumer status error:', error);
     res.status(200).json({ 
       status: 'active',
-      consumer: { state: 'active' }
+      consumer: { 
+        id: req.params.sessionId,
+        state: 'active',
+        available: true
+      }
     });
   }
+});
+
+// Additional consumer endpoint that web browsers might use
+router.get('/consumer/:sessionId', async (req, res) => {
+  // Redirect to the main consumer endpoint with status action
+  const { sessionId } = req.params;
+  logger.info('Consumer endpoint redirect', { sessionId });
+  
+  // Call the main consumer endpoint logic
+  req.params.action = 'status';
+  return router.handle(req, res);
 });
 
 // Tuner status endpoint
