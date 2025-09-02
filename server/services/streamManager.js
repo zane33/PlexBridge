@@ -1718,11 +1718,22 @@ class StreamManager {
             channelNumber: channel.number,
             channelName: channel.name,
             profile: streamConfig.encoding_profile,
-            description: streamConfig.profile_description
+            description: streamConfig.profile_description,
+            antiLoop: streamConfig.encoding_profile === 'anti-loop'
           });
           
-          // Replace standard args with enhanced encoding args
-          args = streamConfig.ffmpeg_options.concat(['-i', finalStreamUrl, 'pipe:1']);
+          // For anti-loop profile, completely replace args to prevent conflicts
+          if (streamConfig.encoding_profile === 'anti-loop') {
+            args = streamConfig.ffmpeg_options.concat(['-i', finalStreamUrl, 'pipe:1']);
+            logger.info('Applied anti-loop FFmpeg configuration', {
+              channelId: channel.id,
+              channelNumber: channel.number,
+              argCount: args.length
+            });
+          } else {
+            // For other profiles, replace standard args with enhanced encoding args
+            args = streamConfig.ffmpeg_options.concat(['-i', finalStreamUrl, 'pipe:1']);
+          }
         }
       } catch (enhancedEncodingError) {
         logger.warn('Enhanced encoding failed, using standard args', {
