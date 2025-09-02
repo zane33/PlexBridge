@@ -843,19 +843,23 @@ class EPGService {
 
   async getEPGData(channelId, startTime, endTime) {
     try {
-      // Check cache first
-      const cacheKey = `epg:${channelId}:${startTime}:${endTime}`;
+      // Get channel info first to resolve EPG ID for proper caching
+      const channel = await database.get('SELECT * FROM channels WHERE id = ? OR epg_id = ?', 
+        [channelId, channelId]);
+
+      // Determine the EPG channel ID to use for the query
+      // If channelId is a UUID, use the channel's epg_id; otherwise use channelId directly
+      const epgChannelId = channel?.epg_id || channelId;
+
+      // Check cache using EPG channel ID for consistent caching
+      const cacheKey = `epg:${epgChannelId}:${startTime}:${endTime}`;
       const cached = await cacheService.get(cacheKey);
       
       if (cached) {
         return cached;
       }
 
-      // Get channel info for fallback generation
-      const channel = await database.get('SELECT * FROM channels WHERE id = ? OR epg_id = ?', 
-        [channelId, channelId]);
-
-      // Query database
+      // Query database using the correct EPG channel ID
       let programs = await database.all(`
         SELECT p.*, ec.source_id 
         FROM epg_programs p
@@ -864,7 +868,7 @@ class EPGService {
         AND p.start_time <= ? 
         AND p.end_time >= ?
         ORDER BY start_time
-      `, [channelId, endTime, startTime]);
+      `, [epgChannelId, endTime, startTime]);
 
       // If no programs found, generate fallback data for Android TV compatibility
       if (!programs || programs.length === 0) {

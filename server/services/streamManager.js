@@ -1813,7 +1813,7 @@ class StreamManager {
               streamUrl: finalStreamUrl
             });
             
-            // Send empty MPEG-TS response to Plex
+            // Send empty MPEG-TS response to Plex (never HTML or JSON)
             if (!res.headersSent) {
               res.set({
                 'Content-Type': 'video/mp2t',
@@ -1866,6 +1866,20 @@ class StreamManager {
       
       if (!ffmpegProcess.pid) {
         console.log('DEBUG: FFmpeg failed to start');
+        // Send empty MPEG-TS response to Plex (never HTML or JSON)
+        if (!res.headersSent) {
+          res.set({
+            'Content-Type': 'video/mp2t',
+            'Cache-Control': 'no-cache'
+          });
+          const emptyTsPacket = Buffer.from([
+            0x47, 0x40, 0x00, 0x10,
+            0x00, 0x00, 0x01, 0xE0,
+            ...Array(180).fill(0xFF)
+          ]);
+          res.write(emptyTsPacket);
+          return res.end();
+        }
         throw new Error('Failed to start FFmpeg MPEG-TS transcoding process');
       }
 
@@ -2007,7 +2021,7 @@ class StreamManager {
         // Clean up session
         this.cleanupStream(sessionId, 'ffmpeg_error');
         
-        // Send proper MPEG-TS error response to Plex (never HTML)
+        // Send proper MPEG-TS error response to Plex (never HTML or JSON)
         if (!res.headersSent) {
           res.set({
             'Content-Type': 'video/mp2t',
@@ -2094,7 +2108,7 @@ class StreamManager {
             ffmpegProcess.kill('SIGTERM');
           }
           
-          // Send proper MPEG-TS error response to Plex (never HTML)
+          // Send proper MPEG-TS error response to Plex (never HTML or JSON)
           if (!res.headersSent) {
             // Send empty MPEG-TS stream instead of error status
             // This prevents Plex from receiving HTML error pages
@@ -2228,34 +2242,18 @@ class StreamManager {
         stack: error.stack 
       });
       if (!res.headersSent) {
-        // Send 503 with no body for Plex compatibility
-        res.status(503).end();
-      }
-    }
-  }
-
-
-  // Simple proxy stream method for direct stream proxying (used by routes)
-  async proxyStream(streamUrl, req, res) {
-    try {
-      logger.stream('Proxying stream directly', { url: streamUrl });
-
-      // Detect stream format to determine appropriate handling
-      const detection = await this.detectStreamFormat(streamUrl);
-      logger.stream('Detected stream format', { url: streamUrl, format: detection });
-
-      // For HLS/DASH streams, we can redirect directly or proxy based on CORS
-      if (detection.type === 'hls' || detection.type === 'dash') {
-        return await this.proxyWebCompatibleStream(streamUrl, detection.type, req, res);
-      }
-
-      // For other stream types, use FFmpeg transcoding to web-compatible format
-      return await this.proxyTranscodedStream(streamUrl, detection.type, req, res);
-
-    } catch (error) {
-      logger.error('Stream proxy error', { url: streamUrl, error: error.message });
-      if (!res.headersSent) {
-        res.status(500).json({ error: 'Stream proxy failed', details: error.message });
+        // Send empty MPEG-TS response to Plex (never HTML or JSON)
+        res.set({
+          'Content-Type': 'video/mp2t',
+          'Cache-Control': 'no-cache'
+        });
+        const emptyTsPacket = Buffer.from([
+          0x47, 0x40, 0x00, 0x10,
+          0x00, 0x00, 0x01, 0xE0,
+          ...Array(180).fill(0xFF)
+        ]);
+        res.write(emptyTsPacket);
+        res.end();
       }
     }
   }
