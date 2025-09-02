@@ -504,7 +504,14 @@ const initializeApp = async () => {
       const { androidTVErrorHandler } = require('./middleware/androidTVErrorHandler');
       app.use(androidTVErrorHandler());
       
-      logger.info('✅ API routes registered successfully with Android TV optimization');
+      // CRITICAL: Add metadata type enforcement to fix all remaining type 5 issues
+      const { createMetadataTypeMiddleware, cleanupDatabaseMetadataTypes } = require('./utils/metadataTypeFix');
+      app.use(createMetadataTypeMiddleware());
+      
+      // Clean up any stored type 5 references in database
+      await cleanupDatabaseMetadataTypes(database);
+      
+      logger.info('✅ API routes registered successfully with Android TV optimization and metadata type fixes');
     } catch (routeError) {
       logger.error('❌ Failed to register API routes:', routeError.message);
       throw routeError;
