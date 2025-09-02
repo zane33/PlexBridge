@@ -6,6 +6,7 @@ const database = require('../services/database');
 const logger = require('../utils/logger');
 const { cacheMiddleware, responseTimeMonitor, generateLightweightEPG } = require('../utils/performanceOptimizer');
 const cacheService = require('../services/cacheService');
+const { getSessionManager } = require('../utils/sessionPersistenceFix');
 
 // HDHomeRun discovery endpoint with caching
 router.get('/discover.json', cacheMiddleware('discover'), responseTimeMonitor(100), async (req, res) => {
@@ -269,7 +270,6 @@ router.get('/consumer/:sessionId/:action?', async (req, res) => {
     });
 
     // Update session activity in the persistent session manager
-    const { getSessionManager } = require('../utils/sessionPersistenceFix');
     const sessionManager = getSessionManager();
     
     // Update or create session tracking
