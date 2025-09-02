@@ -105,38 +105,45 @@ const ENHANCED_ENCODING_PROFILES = {
     name: 'Anti-Loop Protection',
     description: 'Specialized profile for streams that loop back to start every 10-15 seconds',
     ffmpeg_options: [
-      '-y', // Overwrite output
+      // Aggressive input handling to break loops
+      '-reconnect', '0',      // DISABLE reconnect to prevent loop restart
+      '-reconnect_at_eof', '0', // DISABLE EOF reconnect
+      '-eof_action', 'repeat', // Repeat last frame instead of looping
+      '-stream_loop', '0',    // Explicitly disable stream looping
+      '-timeout', '5000000',  // 5 second timeout (shorter)
       
-      // Basic input handling with reliability
-      '-reconnect', '1',
-      '-reconnect_at_eof', '1',
-      '-reconnect_streamed', '1', 
-      '-reconnect_delay_max', '3',
-      '-timeout', '8000000',  // 8 second timeout (less than loop time)
-      '-user_agent', 'PlexBridge/1.0',
-      
-      // Prevent looping behavior
+      // Force linear playback
+      '-ss', '0',             // Start at absolute beginning
+      '-copyts',              // Copy timestamps exactly
+      '-start_at_zero',       // Reset timestamps to zero
       '-avoid_negative_ts', 'make_zero',
-      '-fflags', '+genpts+igndts+discardcorrupt',
-      '-analyzeduration', '1000000',  // 1 second analysis
-      '-probesize', '2000000',        // 2MB probe size
-      '-max_delay', '1000000',        // 1 second max delay
       
-      // Simple transcoding to break problematic streams
-      '-c:v', 'libx264',
-      '-preset', 'ultrafast',
-      '-tune', 'zerolatency',
-      '-crf', '28',  // Reasonable quality
-      '-g', '30',    // GOP size
-      '-keyint_min', '15',
+      // Buffer controls to prevent circular buffering  
+      '-fflags', '+genpts+igndts+discardcorrupt+nobuffer+flush_packets',
+      '-analyzeduration', '500000',  // Very short analysis (0.5s)
+      '-probesize', '500000',        // Small probe size
+      '-max_delay', '500000',        // 0.5 second max delay
       
-      // Audio copy (usually works)
+      // Timestamp monotonic enforcement
+      '-use_wallclock_as_timestamps', '1',
+      '-timestamp_monotonic', '1',
+      '-vstats_file', '/dev/null', // Disable video stats to prevent seeking
+      
+      // Simple copy to avoid re-encoding loops
+      '-c:v', 'copy',
       '-c:a', 'copy',
+      '-bsf:v', 'extract_extradata', // Extract video metadata once
       
-      // MPEG-TS output for Plex
+      // Output with strict packet ordering
       '-f', 'mpegts',
       '-muxdelay', '0',
-      '-muxpreload', '0'
+      '-muxpreload', '0',
+      '-flush_packets', '1',
+      '-max_muxing_queue_size', '512',
+      
+      // Disable any HLS processing that might cause loops
+      '-hls_time', '0',       // Disable HLS segmentation
+      '-hls_list_size', '0'   // Disable HLS playlist
     ],
     priority: 200, // Higher priority than high-reliability
     timeout_ms: 8000, // Must be less than the 10-second loop
@@ -173,15 +180,14 @@ function selectEncodingProfile(streamInfo, channelNumber = null) {
   const streamName = (streamInfo.name || '').toLowerCase();
   const streamUrl = (streamInfo.url || '').toLowerCase();
   
-  // TEMPORARY: Disable anti-loop for channel 505 due to FFmpeg errors
-  // Use high-reliability instead until anti-loop is stabilized
+  // PRIORITY 1: Check for known looping channels first
   if (channelNumber && loopingChannels.includes(channelNumber)) {
-    logger.info('Using high-reliability encoding for problematic channel (anti-loop temporarily disabled)', {
+    logger.info('Using anti-loop encoding for channel with known looping behavior', {
       channelNumber,
       streamName: streamInfo.name,
-      profile: 'high-reliability'
+      profile: 'anti-loop'
     });
-    return 'high-reliability';
+    return 'anti-loop';
   }
   
   // PRIORITY 2: Check failure history for looping patterns
@@ -300,13 +306,13 @@ async function addEnhancedEncodingSupport(database) {
         ALTER TABLE streams ADD COLUMN monitoring_enabled INTEGER DEFAULT 0;
       `);
       
-      // Enable high-reliability encoding for channel 505 (FOX Sports AU) - anti-loop temporarily disabled
+      // Enable anti-loop encoding for channel 505 (FOX Sports AU) which has looping issues
       const foxSportsLoopUpdate = database.prepare(`
         UPDATE streams 
         SET enhanced_encoding = 1, 
-            enhanced_encoding_profile = 'high-reliability',
+            enhanced_encoding_profile = 'anti-loop',
             monitoring_enabled = 1,
-            reliability_score = 0.7
+            reliability_score = 0.3
         WHERE id IN (
           SELECT s.id FROM streams s
           INNER JOIN channels c ON s.channel_id = c.id
@@ -316,7 +322,7 @@ async function addEnhancedEncodingSupport(database) {
       
       const loopUpdatedRows = foxSportsLoopUpdate.run();
       if (loopUpdatedRows.changes > 0) {
-        logger.info('High-reliability encoding enabled for FOX Sports 505 AU (anti-loop disabled temporarily)', {
+        logger.info('Anti-loop encoding enabled for FOX Sports 505 AU (looping channel)', {
           updatedChannels: loopUpdatedRows.changes
         });
       }
