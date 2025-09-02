@@ -14,12 +14,12 @@ const PRODUCTION_URL = 'http://192.168.3.148:3000';
 const tests = {
   workingStream: {
     channelId: '0f350a4c-9a41-4600-85a9-0be879e55be2',
-    channelName: 'TVNZ 1',
+    channelName: ' 1',
     expectedType: 'hls'
   },
   problematicStream: {
     channelId: 'c83e4187-f358-45b0-81ce-05bc2567cf08',
-    channelName: 'FOX Cricket 501 AU',
+    channelName: ' Cricket 501 AU',
     expectedType: 'http'  // Should be HTTP, not HLS
   }
 };
@@ -184,35 +184,35 @@ async function runTests() {
   const statusOk = await checkIPTVStreamStatus();
   
   // Test working stream
-  log('\n=== Testing Working Stream (TVNZ 1) ===', 'green');
-  const tvnzStream = await getStreamInfo(tests.workingStream.channelId);
-  if (tvnzStream) {
-    log(`Stream URL: ${tvnzStream.url}`);
-    log(`Stream Type: ${tvnzStream.type}`);
+  log('\n=== Testing Working Stream ( 1) ===', 'green');
+  const Stream = await getStreamInfo(tests.workingStream.channelId);
+  if (Stream) {
+    log(`Stream URL: ${Stream.url}`);
+    log(`Stream Type: ${Stream.type}`);
     
-    const tvnzEndpointOk = await testStreamEndpoint(tests.workingStream.channelId, tests.workingStream.channelName);
+    const EndpointOk = await testStreamEndpoint(tests.workingStream.channelId, tests.workingStream.channelName);
     
-    if (tvnzStream.url) {
-      await testFFmpegCommand(tvnzStream.url, tests.workingStream.channelName);
+    if (Stream.url) {
+      await testFFmpegCommand(Stream.url, tests.workingStream.channelName);
     }
   }
   
   // Test problematic stream
-  log('\n=== Testing Problematic Stream (FOX Cricket) ===', 'yellow');
-  const foxStream = await getStreamInfo(tests.problematicStream.channelId);
-  if (foxStream) {
-    log(`Stream URL: ${foxStream.url}`);
-    log(`Stream Type: ${foxStream.type}`);
+  log('\n=== Testing Problematic Stream ( Cricket) ===', 'yellow');
+  const Stream = await getStreamInfo(tests.problematicStream.channelId);
+  if (Stream) {
+    log(`Stream URL: ${Stream.url}`);
+    log(`Stream Type: ${Stream.type}`);
     
-    if (foxStream.type === 'hls' && foxStream.url.includes('premiumpowers')) {
+    if (Stream.type === 'hls' && Stream.url.includes('premiumpowers')) {
       log('⚠️  WARNING: Stream is incorrectly typed as HLS!', 'red');
       log('  This stream should be type "http" for proper handling', 'yellow');
     }
     
-    const foxEndpointOk = await testStreamEndpoint(tests.problematicStream.channelId, tests.problematicStream.channelName);
+    const EndpointOk = await testStreamEndpoint(tests.problematicStream.channelId, tests.problematicStream.channelName);
     
-    if (foxStream.url) {
-      await testFFmpegCommand(foxStream.url, tests.problematicStream.channelName);
+    if (Stream.url) {
+      await testFFmpegCommand(Stream.url, tests.problematicStream.channelName);
     }
   }
   

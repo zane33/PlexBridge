@@ -35,30 +35,30 @@ if (!db) {
   process.exit(1);
 }
 
-console.log('\n=== FOX SPORTS CHANNELS (After Your Updates) ===');
-const foxChannels = db.prepare(`
+console.log('\n===  SPORTS CHANNELS (After Your Updates) ===');
+const Channels = db.prepare(`
   SELECT id, name, number, epg_id, enabled 
   FROM channels 
-  WHERE name LIKE '%FOX%' 
+  WHERE name LIKE '%%' 
   ORDER BY number
 `).all();
 
-foxChannels.forEach(ch => {
+Channels.forEach(ch => {
   const status = ch.epg_id ? '✅' : '❌';
   console.log(`${status} Channel ${ch.number}: ${ch.name}`);
   console.log(`   EPG ID: ${ch.epg_id || 'NOT SET'}`);
   console.log(`   Enabled: ${ch.enabled ? 'Yes' : 'No'}`);
 });
 
-console.log('\n=== SKY SPORT CHANNELS ===');
-const skyChannels = db.prepare(`
+console.log('\n===  SPORT CHANNELS ===');
+const Channels = db.prepare(`
   SELECT id, name, number, epg_id, enabled 
   FROM channels 
-  WHERE name LIKE '%Sky Sport%' 
+  WHERE name LIKE '% Sport%' 
   ORDER BY number
 `).all();
 
-skyChannels.forEach(ch => {
+Channels.forEach(ch => {
   const status = ch.epg_id ? '✅' : '❌';
   console.log(`${status} Channel ${ch.number}: ${ch.name}`);
   console.log(`   EPG ID: ${ch.epg_id || 'NOT SET'}`);
@@ -69,13 +69,13 @@ console.log('\n=== AVAILABLE EPG CHANNELS (What EPG Source Provides) ===');
 const epgChannels = db.prepare(`
   SELECT epg_id, display_name, source_id 
   FROM epg_channels 
-  WHERE display_name LIKE '%Fox%' 
-     OR display_name LIKE '%FOX%'
-     OR display_name LIKE '%Sky%'
-     OR epg_id LIKE '%Fox%'
-     OR epg_id LIKE '%fox%'
-     OR epg_id LIKE '%Sky%'
-     OR epg_id LIKE '%sky%'
+  WHERE display_name LIKE '%%' 
+     OR display_name LIKE '%%'
+     OR display_name LIKE '%%'
+     OR epg_id LIKE '%%'
+     OR epg_id LIKE '%%'
+     OR epg_id LIKE '%%'
+     OR epg_id LIKE '%%'
   ORDER BY display_name
   LIMIT 30
 `).all();
@@ -85,12 +85,12 @@ if (epgChannels.length > 0) {
     console.log(`📺 EPG ID: "${ch.epg_id}" → ${ch.display_name} (Source: ${ch.source_id})`);
   });
 } else {
-  console.log('❌ No EPG channels found matching FOX or Sky');
+  console.log('❌ No EPG channels found matching  or ');
 }
 
 console.log('\n=== EPG ID MATCHING ANALYSIS ===');
 // Check if channel EPG IDs match any available EPG channels
-const allChannels = [...foxChannels, ...skyChannels];
+const allChannels = [...Channels, ...Channels];
 let matchedCount = 0;
 let unmatchedChannels = [];
 

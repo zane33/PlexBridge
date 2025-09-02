@@ -17,11 +17,11 @@ async function testChannels() {
 
     // Test specific channels
     const testChannels = [
-      'TVNZ 1',
-      'TVNZ 2', 
-      'FOX Cricket',
-      'Fox Sports',
-      'Sky Sport'
+      ' 1',
+      ' 2', 
+      ' Cricket',
+      ' Sports',
+      ' Sport'
     ];
 
     for (const searchName of testChannels) {

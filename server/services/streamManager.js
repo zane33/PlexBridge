@@ -911,7 +911,7 @@ class StreamManager {
     
     try {
       // Check if URL redirects
-      if (url.includes('mjh.nz') || url.includes('tvnz')) {
+      if (url.includes('mjh.nz') || url.includes('')) {
         const response = await axios.head(url, {
           maxRedirects: 5,
           timeout: 5000,
@@ -1448,7 +1448,7 @@ class StreamManager {
         const axios = require('axios');
         logger.info('Resolving stream redirects', { channelId: channel.id, streamUrl });
         
-        // Special handling for premiumpowers.net streams (Fox Sports, etc)
+        // Special handling for premiumpowers.net streams ( Sports, etc)
         if (streamUrl.includes('premiumpowers.net') || streamUrl.includes('line.premiumpowers')) {
           logger.info('Detected premiumpowers.net stream, using IPTV-specific headers and retry strategy', {
             channelId: channel.id,
@@ -1517,8 +1517,8 @@ class StreamManager {
             redirected: finalStreamUrl !== streamUrl
           });
         }
-        // For TVNZ and mjh.nz streams, follow redirects properly
-        else if (streamUrl.includes('mjh.nz') || streamUrl.includes('tvnz')) {
+        // For  and mjh.nz streams, follow redirects properly
+        else if (streamUrl.includes('mjh.nz') || streamUrl.includes('')) {
           // Use a HEAD request without following redirects to get the Location header
           const response = await axios.head(streamUrl, {
             maxRedirects: 0, // Don't follow redirects automatically
@@ -1536,7 +1536,7 @@ class StreamManager {
           if (response.status === 302 && response.headers.location) {
             finalStreamUrl = response.headers.location;
             
-            logger.info('TVNZ/mjh.nz redirect resolved', {
+            logger.info('/mjh.nz redirect resolved', {
               channelId: channel.id,
               originalUrl: streamUrl,
               finalUrl: finalStreamUrl,
@@ -1544,7 +1544,7 @@ class StreamManager {
               redirected: true
             });
           } else {
-            logger.warn('TVNZ/mjh.nz redirect not found', {
+            logger.warn('/mjh.nz redirect not found', {
               channelId: channel.id,
               status: response.status,
               headers: response.headers
@@ -1581,7 +1581,7 @@ class StreamManager {
       
       // Pre-flight stream health check for problematic channels
       const channelNameLower = (channel.name || '').toLowerCase();
-      const problematicChannels = ['fox', 'bein', 'sky sports', 'bt sport', 'dazn'];
+      const problematicChannels = ['', 'bein', ' sports', 'bt sport', 'dazn'];
       const isProblematicChannel = problematicChannels.some(name => channelNameLower.includes(name));
       
       if (isProblematicChannel) {
@@ -1688,7 +1688,7 @@ class StreamManager {
                      config.plexlive?.transcoding?.mpegts?.hlsProtocolArgs ||
                      '-allowed_extensions ALL -protocol_whitelist file,http,https,tcp,tls,pipe,crypto';
         
-        // For redirected streams (like TVNZ), add additional HLS options for better compatibility
+        // For redirected streams (like ), add additional HLS options for better compatibility
         if (finalStreamUrl !== streamUrl) {
           hlsArgs += ' -http_seekable 0 -multiple_requests 1 -http_persistent 0';
           

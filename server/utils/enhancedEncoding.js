@@ -9,7 +9,7 @@ const logger = require('./logger');
  * Enhanced encoding configuration for unreliable streams
  */
 const ENHANCED_ENCODING_PROFILES = {
-  // High reliability profile for problematic streams like FOX Sports 505 AU with anti-loop protection
+  // High reliability profile for problematic streams like  Sports 505 AU with anti-loop protection
   'high-reliability': {
     name: 'High Reliability',
     description: 'Enhanced encoding for unreliable upstream sources with anti-loop protection',
@@ -28,18 +28,19 @@ const ENHANCED_ENCODING_PROFILES = {
       '-seekable', '0',  // Disable seeking to prevent loop-back
       
       // Advanced buffer management to prevent circular buffering
-      '-fflags', '+genpts+igndts+discardcorrupt+nobuffer',
+      '-fflags', '+genpts+igndts+discardcorrupt',  // Removed nobuffer for stability
       '-avoid_negative_ts', 'make_zero',
-      '-max_delay', '1000000', // 1 second max delay (reduced)
-      '-rtbufsize', '512k',    // Smaller RT buffer to prevent accumulation
-      '-probesize', '1000000', // Smaller probe size for faster detection
-      '-analyzeduration', '1000000', // Shorter analysis to prevent buffering
+      '-max_delay', '5000000', // 5 second max delay for better stability
+      '-rtbufsize', '2048k',    // Increased buffer for consumer session stability
+      '-probesize', '2000000', // Standard probe size for reliability
+      '-analyzeduration', '2000000', // Standard analysis for stability
       
       // Timestamp handling for HLS loop prevention
       '-copyts',              // Copy original timestamps
       '-start_at_zero',       // Start timestamps at zero
-      '-use_wallclock_as_timestamps', '1', // Use wall clock time
-      '-timestamp_monotonic', '1', // Ensure monotonic timestamps
+      // Removed wallclock timestamps as it causes session sync issues
+      // '-use_wallclock_as_timestamps', '1', // Causes consumer session loss
+      // '-timestamp_monotonic', '1', // Not needed without wallclock
       
       // Video encoding (maintain quality while improving reliability)
       '-c:v', 'libx264',
@@ -173,9 +174,9 @@ const ENHANCED_ENCODING_PROFILES = {
  */
 function selectEncodingProfile(streamInfo, channelNumber = null) {
   // Check for specific anti-loop needs based on channel behavior
-  const loopingChannels = [505]; // FOX Sports 505 AU specifically exhibits looping
+  const loopingChannels = [505]; //  Sports 505 AU specifically exhibits looping
   const problematicChannels = [505, 506, 507]; // Add more channel numbers as needed
-  const problematicKeywords = ['fox sports', 'sports', 'live sport', 'espn'];
+  const problematicKeywords = [' sports', 'sports', 'live sport', 'espn'];
   
   const streamName = (streamInfo.name || '').toLowerCase();
   const streamUrl = (streamInfo.url || '').toLowerCase();
@@ -306,8 +307,8 @@ async function addEnhancedEncodingSupport(database) {
         ALTER TABLE streams ADD COLUMN monitoring_enabled INTEGER DEFAULT 0;
       `);
       
-      // Enable anti-loop encoding for channel 505 (FOX Sports AU) which has looping issues
-      const foxSportsLoopUpdate = database.prepare(`
+      // Enable anti-loop encoding for channel 505 ( Sports AU) which has looping issues
+      const SportsLoopUpdate = database.prepare(`
         UPDATE streams 
         SET enhanced_encoding = 1, 
             enhanced_encoding_profile = 'anti-loop',
@@ -320,15 +321,15 @@ async function addEnhancedEncodingSupport(database) {
         )
       `);
       
-      const loopUpdatedRows = foxSportsLoopUpdate.run();
+      const loopUpdatedRows = SportsLoopUpdate.run();
       if (loopUpdatedRows.changes > 0) {
-        logger.info('Anti-loop encoding enabled for FOX Sports 505 AU (looping channel)', {
+        logger.info('Anti-loop encoding enabled for  Sports 505 AU (looping channel)', {
           updatedChannels: loopUpdatedRows.changes
         });
       }
       
-      // Enable high-reliability encoding for other FOX Sports channels
-      const otherFoxSportsUpdate = database.prepare(`
+      // Enable high-reliability encoding for other  Sports channels
+      const otherSportsUpdate = database.prepare(`
         UPDATE streams 
         SET enhanced_encoding = 1, 
             enhanced_encoding_profile = 'high-reliability',
@@ -336,14 +337,14 @@ async function addEnhancedEncodingSupport(database) {
         WHERE id IN (
           SELECT s.id FROM streams s
           INNER JOIN channels c ON s.channel_id = c.id
-          WHERE (c.number IN (506, 507) OR c.name LIKE '%FOX Sports%') 
+          WHERE (c.number IN (506, 507) OR c.name LIKE '% Sports%') 
           AND c.number != 505
         )
       `);
       
-      const otherUpdatedRows = otherFoxSportsUpdate.run();
+      const otherUpdatedRows = otherSportsUpdate.run();
       if (otherUpdatedRows.changes > 0) {
-        logger.info('High-reliability encoding enabled for other FOX Sports channels', {
+        logger.info('High-reliability encoding enabled for other  Sports channels', {
           updatedChannels: otherUpdatedRows.changes
         });
       }

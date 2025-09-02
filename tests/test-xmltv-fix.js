@@ -5,7 +5,7 @@ const epgService = require('./server/services/epgService');
 const logger = require('./server/utils/logger');
 
 async function testXMLTVFix() {
-  console.log('🧪 Testing XMLTV EPG Fix for Sky Sport 6 NZ');
+  console.log('🧪 Testing XMLTV EPG Fix for  Sport 6 NZ');
   console.log('===============================================\n');
 
   try {

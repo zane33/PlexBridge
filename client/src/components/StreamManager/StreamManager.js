@@ -1605,7 +1605,7 @@ function StreamManager() {
                                 🔄 Force Enhanced Transcoding
                               </Typography>
                               <Typography variant="caption" color="text.secondary">
-                                Enables enhanced transcoding with optimized headers for IPTV providers (recommended for Fox Sports, Sky Sports, etc.)
+                                Enables enhanced transcoding with optimized headers for IPTV providers (recommended for  Sports,  Sports, etc.)
                               </Typography>
                             </Box>
                           }

@@ -3,11 +3,11 @@
     {
       "channel": {
         "id": "0f350a4c-9a41-4600-85a9-0be879e55be2",
-        "name": "TVNZ 1",
+        "name": " 1",
         "number": 1,
         "enabled": 1,
-        "logo": "https://i.mjh.nz/.images/tvnz-1.png",
-        "epg_id": "mjh-tvnz-1",
+        "logo": "https://i.mjh.nz/.images/-1.png",
+        "epg_id": "mjh--1",
         "created_at": "2025-08-22 07:13:57",
         "updated_at": "2025-08-31T07:17:13.976Z",
         "stream_count": 1,
@@ -16,8 +16,8 @@
       "stream": {
         "id": "9677f3b5-ddc8-4750-990c-02af83f86d7e",
         "channel_id": "0f350a4c-9a41-4600-85a9-0be879e55be2",
-        "name": "TVNZ 1",
-        "url": "https://i.mjh.nz/.r/tvnz-1.m3u8",
+        "name": " 1",
+        "url": "https://i.mjh.nz/.r/-1.m3u8",
         "type": "hls",
         "backup_urls": "[]",
         "auth_username": null,
@@ -27,11 +27,11 @@
         "enabled": 1,
         "created_at": "2025-08-22 07:13:57",
         "updated_at": "2025-08-31T07:17:13.978Z",
-        "channel_name": "TVNZ 1",
+        "channel_name": " 1",
         "channel_number": 1
       },
       "endpointTest": {
-        "channelName": "TVNZ 1",
+        "channelName": " 1",
         "channelId": "0f350a4c-9a41-4600-85a9-0be879e55be2",
         "endpoints": {
           "head": {
@@ -47,8 +47,8 @@
         }
       },
       "ffmpegTest": {
-        "channelName": "TVNZ 1",
-        "streamUrl": "https://i.mjh.nz/.r/tvnz-1.m3u8",
+        "channelName": " 1",
+        "streamUrl": "https://i.mjh.nz/.r/-1.m3u8",
         "ffmpeg": {
           "skipped": true,
           "reason": "FFmpeg not available",
@@ -68,10 +68,10 @@
     {
       "channel": {
         "id": "c83e4187-f358-45b0-81ce-05bc2567cf08",
-        "name": "FOX Cricket 501 AU",
+        "name": " Cricket 501 AU",
         "number": 45,
         "enabled": 1,
-        "logo": "https://r2.thesportsdb.com/images/media/channel/logo/FOX_Cricket.png",
+        "logo": "https://r2.thesportsdb.com/images/media/channel/logo/_Cricket.png",
         "epg_id": "FS1",
         "created_at": "2025-08-21 10:38:15",
         "updated_at": "2025-08-31T07:17:13.977Z",
@@ -81,7 +81,7 @@
       "stream": {
         "id": "fea1b584-7534-4844-afc4-61fd9ac9d0f5",
         "channel_id": "c83e4187-f358-45b0-81ce-05bc2567cf08",
-        "name": "FOX CRICKET 501",
+        "name": " CRICKET 501",
         "url": "http://line.premiumpowers.net:80/fc98427248/ab83b073d8/1520176",
         "type": "hls",
         "backup_urls": "[]",
@@ -92,11 +92,11 @@
         "enabled": 1,
         "created_at": "2025-08-21 10:38:15",
         "updated_at": "2025-08-31T07:17:13.978Z",
-        "channel_name": "FOX Cricket 501 AU",
+        "channel_name": " Cricket 501 AU",
         "channel_number": 45
       },
       "endpointTest": {
-        "channelName": "FOX Cricket 501 AU",
+        "channelName": " Cricket 501 AU",
         "channelId": "c83e4187-f358-45b0-81ce-05bc2567cf08",
         "endpoints": {
           "head": {
@@ -117,7 +117,7 @@
         }
       },
       "ffmpegTest": {
-        "channelName": "FOX Cricket 501 AU",
+        "channelName": " Cricket 501 AU",
         "streamUrl": "http://line.premiumpowers.net:80/fc98427248/ab83b073d8/1520176",
         "ffmpeg": {
           "skipped": true,
@@ -136,10 +136,10 @@
     {
       "channel": {
         "id": "92d26499-8fcc-48ad-b180-f672d59501f8",
-        "name": "Fox Sports 1 US",
+        "name": " Sports 1 US",
         "number": 24,
         "enabled": 1,
-        "logo": "https://upload.wikimedia.org/wikipedia/commons/thumb/9/98/Fox_Sports_1_logo.svg/640px-Fox_Sports_1_logo.svg.png",
+        "logo": "https://upload.wikimedia.org/wikipedia/commons/thumb/9/98/_Sports_1_logo.svg/640px-_Sports_1_logo.svg.png",
         "epg_id": "403908",
         "created_at": "2025-08-23 18:13:28",
         "updated_at": "2025-08-31T07:17:13.977Z",
@@ -149,7 +149,7 @@
       "stream": {
         "id": "03e5cd53-6264-46e6-a93d-31b6fbadd186",
         "channel_id": "92d26499-8fcc-48ad-b180-f672d59501f8",
-        "name": "Fox Sports 1",
+        "name": " Sports 1",
         "url": "http://line.premiumpowers.net:80/fc98427248/ab83b073d8/45571",
         "type": "http",
         "backup_urls": "[]",
@@ -160,11 +160,11 @@
         "enabled": 1,
         "created_at": "2025-08-23 18:13:28",
         "updated_at": "2025-08-31T07:17:13.979Z",
-        "channel_name": "Fox Sports 1 US",
+        "channel_name": " Sports 1 US",
         "channel_number": 24
       },
       "endpointTest": {
-        "channelName": "Fox Sports 1 US",
+        "channelName": " Sports 1 US",
         "channelId": "92d26499-8fcc-48ad-b180-f672d59501f8",
         "endpoints": {
           "head": {
@@ -185,7 +185,7 @@
         }
       },
       "ffmpegTest": {
-        "channelName": "Fox Sports 1 US",
+        "channelName": " Sports 1 US",
         "streamUrl": "http://line.premiumpowers.net:80/fc98427248/ab83b073d8/45571",
         "ffmpeg": {
           "skipped": true,

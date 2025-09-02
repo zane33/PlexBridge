@@ -268,22 +268,53 @@ router.get('/consumer/:sessionId/:action?', async (req, res) => {
       userAgent 
     });
 
+    // Update session activity in the persistent session manager
+    const { getSessionManager } = require('../utils/sessionPersistenceFix');
+    const sessionManager = getSessionManager();
+    
+    // Update or create session tracking
+    if (sessionId) {
+      sessionManager.updateSessionActivity(sessionId);
+      
+      // Check if session exists and is healthy
+      const sessionStatus = sessionManager.getSessionStatus(sessionId);
+      
+      // If session doesn't exist, create a placeholder
+      if (!sessionStatus.exists) {
+        sessionManager.createSession('consumer', sessionId, '', {
+          userAgent,
+          isConsumerEndpoint: true,
+          action: action || 'status'
+        });
+      }
+    }
+
     // Always respond with success for consumer requests
     // This prevents "Failed to find consumer" errors that crash streams
     res.set({
       'Content-Type': 'application/json; charset=utf-8',
-      'Cache-Control': 'no-cache'
+      'Cache-Control': 'no-cache',
+      'Connection': 'keep-alive'
     });
     
     res.json({
       success: true,
       sessionId: sessionId,
       status: 'active',
+      consumer: {
+        available: true,
+        lastActivity: Date.now(),
+        status: 'connected'
+      },
       timestamp: new Date().toISOString()
     });
   } catch (error) {
     logger.error('Consumer tracking error:', error);
-    res.status(200).json({ success: true }); // Always succeed to prevent crashes
+    // Always succeed to prevent crashes but include consumer object
+    res.status(200).json({ 
+      success: true,
+      consumer: { available: true }
+    });
   }
 });
 

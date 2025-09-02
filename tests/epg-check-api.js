@@ -17,18 +17,18 @@ async function checkEPG() {
     const channelsResponse = await axios.get(`${API_BASE}/api/channels`);
     const channels = channelsResponse.data;
     
-    console.log('=== FOX SPORTS CHANNELS (After Your Updates) ===');
-    const foxChannels = channels.filter(ch => ch.name.includes('FOX'));
-    foxChannels.forEach(ch => {
+    console.log('===  SPORTS CHANNELS (After Your Updates) ===');
+    const Channels = channels.filter(ch => ch.name.includes(''));
+    Channels.forEach(ch => {
       const status = ch.epg_id ? '✅' : '❌';
       console.log(`${status} Channel ${ch.number}: ${ch.name}`);
       console.log(`   EPG ID: ${ch.epg_id || 'NOT SET'}`);
       console.log(`   ID: ${ch.id}`);
     });
     
-    console.log('\n=== SKY SPORT CHANNELS ===');
-    const skyChannels = channels.filter(ch => ch.name.includes('Sky Sport'));
-    skyChannels.forEach(ch => {
+    console.log('\n===  SPORT CHANNELS ===');
+    const Channels = channels.filter(ch => ch.name.includes(' Sport'));
+    Channels.forEach(ch => {
       const status = ch.epg_id ? '✅' : '❌';
       console.log(`${status} Channel ${ch.number}: ${ch.name}`);
       console.log(`   EPG ID: ${ch.epg_id || 'NOT SET'}`);
@@ -50,7 +50,7 @@ async function checkEPG() {
     
     // Check EPG programs for specific channels
     console.log('\n=== EPG PROGRAM CHECK ===');
-    const testChannels = [...foxChannels.slice(0, 3), ...skyChannels.slice(0, 3)];
+    const testChannels = [...Channels.slice(0, 3), ...Channels.slice(0, 3)];
     
     for (const channel of testChannels) {
       if (channel.epg_id) {
@@ -78,21 +78,21 @@ async function checkEPG() {
     const epgChannels = epgChannelsResponse.data;
     
     // Find EPG channels that might match our problem channels
-    console.log('\nAvailable EPG channels for FOX:');
-    const foxEpgChannels = epgChannels.filter(ch => 
-      ch.display_name.toLowerCase().includes('fox') || 
-      ch.epg_id.toLowerCase().includes('fox')
+    console.log('\nAvailable EPG channels for :');
+    const EpgChannels = epgChannels.filter(ch => 
+      ch.display_name.toLowerCase().includes('') || 
+      ch.epg_id.toLowerCase().includes('')
     );
-    foxEpgChannels.slice(0, 10).forEach(ch => {
+    EpgChannels.slice(0, 10).forEach(ch => {
       console.log(`   EPG ID: "${ch.epg_id}" → ${ch.display_name}`);
     });
     
-    console.log('\nAvailable EPG channels for Sky:');
-    const skyEpgChannels = epgChannels.filter(ch => 
-      ch.display_name.toLowerCase().includes('sky') ||
-      ch.epg_id.toLowerCase().includes('sky')
+    console.log('\nAvailable EPG channels for :');
+    const EpgChannels = epgChannels.filter(ch => 
+      ch.display_name.toLowerCase().includes('') ||
+      ch.epg_id.toLowerCase().includes('')
     );
-    skyEpgChannels.slice(0, 10).forEach(ch => {
+    EpgChannels.slice(0, 10).forEach(ch => {
       console.log(`   EPG ID: "${ch.epg_id}" → ${ch.display_name}`);
     });
     
@@ -103,7 +103,7 @@ async function checkEPG() {
         headers: { 'Accept': 'application/xml' }
       });
       
-      // Check if FOX channels appear in XMLTV
+      // Check if  channels appear in XMLTV
       const xmlContent = xmltvResponse.data;
       
       // Count channel entries
@@ -111,7 +111,7 @@ async function checkEPG() {
       console.log(`Total channels in XMLTV: ${channelMatches.length}`);
       
       // Check for specific channels
-      const foxInXml = foxChannels.filter(ch => {
+      const InXml = Channels.filter(ch => {
         if (ch.epg_id) {
           return xmlContent.includes(`channel="${ch.epg_id}"`) || 
                  xmlContent.includes(`id="${ch.epg_id}"`);
@@ -119,7 +119,7 @@ async function checkEPG() {
         return false;
       });
       
-      console.log(`FOX channels in XMLTV: ${foxInXml.length} of ${foxChannels.filter(ch => ch.epg_id).length}`);
+      console.log(` channels in XMLTV: ${InXml.length} of ${Channels.filter(ch => ch.epg_id).length}`);
       
       // Count programs
       const programMatches = xmlContent.match(/<programme\s/g) || [];

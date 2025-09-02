@@ -19,7 +19,7 @@ async function debugEPGChannelMapping() {
     const channels = await database.all(`
       SELECT id, name, number, enabled, epg_id 
       FROM channels 
-      WHERE name LIKE '%Sky Sport%' OR name LIKE '%sport%'
+      WHERE name LIKE '% Sport%' OR name LIKE '%sport%'
       ORDER BY number
     `);
     
@@ -89,18 +89,18 @@ async function debugEPGChannelMapping() {
     const now = new Date().toISOString();
     const tomorrow = new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString();
     
-    // Find channels that might be Sky Sport 6 NZ
-    const skyChannel = await database.get(`
+    // Find channels that might be  Sport 6 NZ
+    const Channel = await database.get(`
       SELECT * FROM channels 
-      WHERE name LIKE '%Sky Sport 6%' OR name LIKE '%Sky Sport%6%'
+      WHERE name LIKE '% Sport 6%' OR name LIKE '% Sport%6%'
       LIMIT 1
     `);
     
-    if (skyChannel) {
-      console.log(`Found Sky Sport channel: ${skyChannel.name} (#${skyChannel.number})`);
-      console.log(`  EPG ID: ${skyChannel.epg_id || 'NOT SET'}`);
+    if (Channel) {
+      console.log(`Found  Sport channel: ${Channel.name} (#${Channel.number})`);
+      console.log(`  EPG ID: ${Channel.epg_id || 'NOT SET'}`);
       
-      if (skyChannel.epg_id) {
+      if (Channel.epg_id) {
         // Check if programs exist for this EPG ID
         const programs = await database.all(`
           SELECT id, title, start_time, end_time, channel_id 
@@ -110,7 +110,7 @@ async function debugEPGChannelMapping() {
           AND start_time <= ?
           ORDER BY start_time
           LIMIT 10
-        `, [skyChannel.epg_id, now, tomorrow]);
+        `, [Channel.epg_id, now, tomorrow]);
         
         console.log(`  Programs found: ${programs.length}`);
         
@@ -130,7 +130,7 @@ async function debugEPGChannelMapping() {
             GROUP BY channel_id
             ORDER BY program_count DESC
             LIMIT 5
-          `, [`%sky%`]);
+          `, [`%%`]);
           
           if (similarPrograms.length > 0) {
             console.log('  Similar EPG channel IDs found:');
@@ -143,19 +143,19 @@ async function debugEPGChannelMapping() {
         console.log('  ❌ No EPG ID assigned to this channel');
       }
     } else {
-      console.log('❌ No Sky Sport 6 channel found');
+      console.log('❌ No  Sport 6 channel found');
       
-      // List all Sky Sport channels
-      const skyChannels = await database.all(`
+      // List all  Sport channels
+      const Channels = await database.all(`
         SELECT name, number, epg_id 
         FROM channels 
-        WHERE name LIKE '%Sky%Sport%' 
+        WHERE name LIKE '%%Sport%' 
         ORDER BY number
       `);
       
-      if (skyChannels.length > 0) {
-        console.log('Other Sky Sport channels found:');
-        skyChannels.forEach(ch => {
+      if (Channels.length > 0) {
+        console.log('Other  Sport channels found:');
+        Channels.forEach(ch => {
           console.log(`  - ${ch.name} (#${ch.number}) EPG ID: ${ch.epg_id || 'NOT SET'}`);
         });
       }

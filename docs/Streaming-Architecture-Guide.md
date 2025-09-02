@@ -268,7 +268,7 @@ Many IPTV streams use redirects. PlexBridge must resolve these before passing to
 
 ```javascript
 // Special handling for known redirect services
-if (streamUrl.includes('mjh.nz') || streamUrl.includes('tvnz')) {
+if (streamUrl.includes('mjh.nz') || streamUrl.includes('')) {
   const response = await axios.head(streamUrl, {
     maxRedirects: 0,  // Get redirect location
     validateStatus: (status) => status === 302

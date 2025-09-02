@@ -42,37 +42,37 @@ async function testEPGFix() {
         console.log('');
       }
       
-      // Check for Sky Sport 6 NZ specifically
-      const skySport6Programs = programs.filter(p => 
-        p.channel_name && p.channel_name.toLowerCase().includes('sky sport 6')
+      // Check for  Sport 6 NZ specifically
+      const Sport6Programs = programs.filter(p => 
+        p.channel_name && p.channel_name.toLowerCase().includes(' sport 6')
       );
       
-      if (skySport6Programs.length > 0) {
-        console.log('🏆 Sky Sport 6 NZ programs found:');
-        skySport6Programs.slice(0, 3).forEach(p => {
+      if (Sport6Programs.length > 0) {
+        console.log('🏆  Sport 6 NZ programs found:');
+        Sport6Programs.slice(0, 3).forEach(p => {
           console.log(`  - ${p.title} (${p.start_time})`);
         });
-        console.log('  ✅ Sky Sport 6 NZ EPG data is now working!\n');
+        console.log('  ✅  Sport 6 NZ EPG data is now working!\n');
       } else {
-        console.log('⚠️ No Sky Sport 6 NZ programs in current time window\n');
+        console.log('⚠️ No  Sport 6 NZ programs in current time window\n');
       }
     }
 
     // Test single channel EPG data
-    console.log('🔍 Testing getEPGData for Sky Sport 6 NZ...');
+    console.log('🔍 Testing getEPGData for  Sport 6 NZ...');
     
-    // Find Sky Sport 6 NZ channel ID
-    const skyChannel = await database.get(`
+    // Find  Sport 6 NZ channel ID
+    const Channel = await database.get(`
       SELECT id, name, epg_id 
       FROM channels 
-      WHERE name LIKE '%Sky Sport 6%' 
+      WHERE name LIKE '% Sport 6%' 
       LIMIT 1
     `);
     
-    if (skyChannel && skyChannel.epg_id) {
-      const channelPrograms = await epgService.getEPGData(skyChannel.epg_id, now, tomorrow);
+    if (Channel && Channel.epg_id) {
+      const channelPrograms = await epgService.getEPGData(Channel.epg_id, now, tomorrow);
       
-      console.log(`📺 Sky Sport 6 NZ (EPG ID: ${skyChannel.epg_id}):`);
+      console.log(`📺  Sport 6 NZ (EPG ID: ${Channel.epg_id}):`);
       console.log(`  Programs found: ${channelPrograms.length}`);
       
       if (channelPrograms.length > 0) {
@@ -83,7 +83,7 @@ async function testEPGFix() {
         console.log('  ✅ Single channel EPG data working!\n');
       }
     } else {
-      console.log('  ❌ Sky Sport 6 NZ channel not found or no EPG ID\n');
+      console.log('  ❌  Sport 6 NZ channel not found or no EPG ID\n');
     }
 
     // Test direct database query to compare before/after
@@ -136,7 +136,7 @@ async function testEPGFix() {
     console.log('✅ Changed JOIN to LEFT JOIN in EPG queries');
     console.log('✅ Added COALESCE for channel names from epg_channels table');
     console.log('✅ Orphaned programs now included in EPG data');
-    console.log('✅ Sky Sport 6 NZ and other unmapped channels should now show EPG data');
+    console.log('✅  Sport 6 NZ and other unmapped channels should now show EPG data');
     console.log('✅ Plex will now receive complete EPG information');
 
   } catch (error) {

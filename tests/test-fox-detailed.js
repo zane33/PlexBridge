@@ -1,10 +1,10 @@
 const axios = require('axios');
 
-async function testFoxStream() {
-  const foxChannelId = 'c83e4187-f358-45b0-81ce-05bc2567cf08';
-  const streamUrl = `http://192.168.3.148:3000/stream/${foxChannelId}`;
+async function testStream() {
+  const ChannelId = 'c83e4187-f358-45b0-81ce-05bc2567cf08';
+  const streamUrl = `http://192.168.3.148:3000/stream/${ChannelId}`;
   
-  console.log('🦊 Testing Fox Cricket Stream in Detail');
+  console.log('🦊 Testing  Cricket Stream in Detail');
   console.log('=====================================');
   
   // Test 1: HEAD request (working)
@@ -105,4 +105,4 @@ async function testFoxStream() {
   }
 }
 
-testFoxStream().catch(console.error);
+testStream().catch(console.error);

@@ -16,17 +16,17 @@ console.log(`Using database: ${dbPath}\n`);
 
 const db = new Database(dbPath, { readonly: true, fileMustExist: true });
 
-// Check FOX Sports channels (after user's updates)
-console.log('=== FOX SPORTS CHANNELS (User Updated These) ===');
-const foxChannels = db.prepare(`
+// Check  Sports channels (after user's updates)
+console.log('===  SPORTS CHANNELS (User Updated These) ===');
+const Channels = db.prepare(`
   SELECT id, name, number, epg_id, enabled 
   FROM channels 
-  WHERE name LIKE '%FOX%' 
+  WHERE name LIKE '%%' 
   ORDER BY number
 `).all();
 
-const foxChannelStatus = [];
-foxChannels.forEach(ch => {
+const ChannelStatus = [];
+Channels.forEach(ch => {
   const hasEpg = ch.epg_id ? '✅' : '❌';
   console.log(`${hasEpg} Channel ${ch.number}: ${ch.name}`);
   console.log(`   EPG ID: "${ch.epg_id || 'NOT SET'}"`);
@@ -57,7 +57,7 @@ foxChannels.forEach(ch => {
       console.log(`   ❌ NO programs found!`);
     }
     
-    foxChannelStatus.push({
+    ChannelStatus.push({
       name: ch.name,
       epg_id: ch.epg_id,
       has_epg_channel: !!epgChannel,
@@ -67,17 +67,17 @@ foxChannels.forEach(ch => {
   console.log('');
 });
 
-// Check Sky Sport channels
-console.log('=== SKY SPORT CHANNELS (Numeric EPG IDs) ===');
-const skyChannels = db.prepare(`
+// Check  Sport channels
+console.log('===  SPORT CHANNELS (Numeric EPG IDs) ===');
+const Channels = db.prepare(`
   SELECT id, name, number, epg_id, enabled 
   FROM channels 
-  WHERE name LIKE '%Sky Sport%' 
+  WHERE name LIKE '% Sport%' 
   ORDER BY number
 `).all();
 
-const skyChannelStatus = [];
-skyChannels.forEach(ch => {
+const ChannelStatus = [];
+Channels.forEach(ch => {
   const hasEpg = ch.epg_id ? '✅' : '❌';
   console.log(`${hasEpg} Channel ${ch.number}: ${ch.name}`);
   console.log(`   EPG ID: "${ch.epg_id || 'NOT SET'}"`);
@@ -107,7 +107,7 @@ skyChannels.forEach(ch => {
       console.log(`   ❌ NO programs found!`);
     }
     
-    skyChannelStatus.push({
+    ChannelStatus.push({
       name: ch.name,
       epg_id: ch.epg_id,
       has_epg_channel: !!epgChannel,
@@ -117,55 +117,55 @@ skyChannels.forEach(ch => {
   console.log('');
 });
 
-// Find correct EPG IDs for FOX channels
-console.log('=== AVAILABLE FOX EPG CHANNELS (What\'s Actually in EPG Data) ===');
-const foxEpgChannels = db.prepare(`
+// Find correct EPG IDs for  channels
+console.log('=== AVAILABLE  EPG CHANNELS (What\'s Actually in EPG Data) ===');
+const EpgChannels = db.prepare(`
   SELECT epg_id, display_name, source_id 
   FROM epg_channels 
-  WHERE display_name LIKE '%Fox%' 
-     OR display_name LIKE '%FOX%'
-     OR epg_id LIKE '%Fox%'
-     OR epg_id LIKE '%fox%'
+  WHERE display_name LIKE '%%' 
+     OR display_name LIKE '%%'
+     OR epg_id LIKE '%%'
+     OR epg_id LIKE '%%'
   ORDER BY display_name
   LIMIT 20
 `).all();
 
-if (foxEpgChannels.length > 0) {
-  foxEpgChannels.forEach(ch => {
+if (EpgChannels.length > 0) {
+  EpgChannels.forEach(ch => {
     console.log(`   "${ch.epg_id}" → ${ch.display_name} (Source: ${ch.source_id})`);
   });
 } else {
-  console.log('   ❌ No FOX EPG channels found in EPG data!');
+  console.log('   ❌ No  EPG channels found in EPG data!');
 }
 
-// Find correct EPG IDs for Sky channels
-console.log('\n=== AVAILABLE SKY EPG CHANNELS ===');
-const skyEpgChannels = db.prepare(`
+// Find correct EPG IDs for  channels
+console.log('\n=== AVAILABLE  EPG CHANNELS ===');
+const EpgChannels = db.prepare(`
   SELECT epg_id, display_name, source_id 
   FROM epg_channels 
-  WHERE display_name LIKE '%Sky%Sport%'
-     OR epg_id LIKE '%sky%sport%'
+  WHERE display_name LIKE '%%Sport%'
+     OR epg_id LIKE '%%sport%'
      OR epg_id IN ('56', '57', '59')
   ORDER BY display_name
   LIMIT 20
 `).all();
 
-if (skyEpgChannels.length > 0) {
-  skyEpgChannels.forEach(ch => {
+if (EpgChannels.length > 0) {
+  EpgChannels.forEach(ch => {
     console.log(`   "${ch.epg_id}" → ${ch.display_name} (Source: ${ch.source_id})`);
   });
 } else {
-  console.log('   ❌ No Sky Sport EPG channels found!');
+  console.log('   ❌ No  Sport EPG channels found!');
 }
 
 // Suggest corrections
 console.log('\n=== SUGGESTED EPG ID CORRECTIONS ===');
 
-// For FOX channels without working EPG
-const brokenFoxChannels = foxChannelStatus.filter(ch => !ch.has_epg_channel || ch.program_count === 0);
-if (brokenFoxChannels.length > 0) {
-  console.log('\nFOX Channels needing fixes:');
-  brokenFoxChannels.forEach(ch => {
+// For  channels without working EPG
+const brokenChannels = ChannelStatus.filter(ch => !ch.has_epg_channel || ch.program_count === 0);
+if (brokenChannels.length > 0) {
+  console.log('\n Channels needing fixes:');
+  brokenChannels.forEach(ch => {
     console.log(`\n❌ ${ch.name} (Current: "${ch.epg_id}")`);
     
     // Try to find a better match
@@ -186,26 +186,26 @@ if (brokenFoxChannels.length > 0) {
   });
 }
 
-// For Sky channels without working EPG
-const brokenSkyChannels = skyChannelStatus.filter(ch => !ch.has_epg_channel || ch.program_count === 0);
-if (brokenSkyChannels.length > 0) {
-  console.log('\n\nSky Sport channels needing fixes:');
-  brokenSkyChannels.forEach(ch => {
+// For  channels without working EPG
+const brokenChannels = ChannelStatus.filter(ch => !ch.has_epg_channel || ch.program_count === 0);
+if (brokenChannels.length > 0) {
+  console.log('\n\n Sport channels needing fixes:');
+  brokenChannels.forEach(ch => {
     console.log(`\n❌ ${ch.name} (Current: "${ch.epg_id}")`);
     
-    // Look for numeric matches in Sky TV NZ source
-    const skyTvSource = db.prepare(`
-      SELECT id FROM epg_sources WHERE name LIKE '%SKY%'
+    // Look for numeric matches in  TV NZ source
+    const TvSource = db.prepare(`
+      SELECT id FROM epg_sources WHERE name LIKE '%%'
     `).get();
     
-    if (skyTvSource) {
+    if (TvSource) {
       const possibleMatches = db.prepare(`
         SELECT epg_id, display_name 
         FROM epg_channels 
         WHERE source_id = ? 
           AND (display_name LIKE ? OR display_name LIKE ?)
         LIMIT 3
-      `).all(skyTvSource.id, `%${ch.name}%`, `%Sport%${ch.epg_id}%`);
+      `).all(TvSource.id, `%${ch.name}%`, `%Sport%${ch.epg_id}%`);
       
       if (possibleMatches.length > 0) {
         console.log('   Suggested EPG IDs:');
@@ -219,16 +219,16 @@ if (brokenSkyChannels.length > 0) {
 
 // Summary statistics
 console.log('\n\n=== SUMMARY ===');
-const totalFoxWithEpg = foxChannelStatus.filter(ch => ch.has_epg_channel && ch.program_count > 0).length;
-const totalSkyWithEpg = skyChannelStatus.filter(ch => ch.has_epg_channel && ch.program_count > 0).length;
+const totalWithEpg = ChannelStatus.filter(ch => ch.has_epg_channel && ch.program_count > 0).length;
+const totalWithEpg = ChannelStatus.filter(ch => ch.has_epg_channel && ch.program_count > 0).length;
 
-console.log(`FOX Channels: ${foxChannels.length} total`);
-console.log(`  ✅ Working EPG: ${totalFoxWithEpg}`);
-console.log(`  ❌ Broken EPG: ${foxChannels.length - totalFoxWithEpg}`);
+console.log(` Channels: ${Channels.length} total`);
+console.log(`  ✅ Working EPG: ${totalWithEpg}`);
+console.log(`  ❌ Broken EPG: ${Channels.length - totalWithEpg}`);
 
-console.log(`\nSky Sport Channels: ${skyChannels.length} total`);
-console.log(`  ✅ Working EPG: ${totalSkyWithEpg}`);
-console.log(`  ❌ Broken EPG: ${skyChannels.length - totalSkyWithEpg}`);
+console.log(`\n Sport Channels: ${Channels.length} total`);
+console.log(`  ✅ Working EPG: ${totalWithEpg}`);
+console.log(`  ❌ Broken EPG: ${Channels.length - totalWithEpg}`);
 
 // Check EPG sources
 console.log('\n=== EPG SOURCES STATUS ===');

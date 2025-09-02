@@ -62,27 +62,40 @@ class PersistentSessionManager {
       const {
         outputFormat = 'mpegts',
         videoCodec = 'copy',
-        audioCodec = 'copy'
+        audioCodec = 'copy',
+        isEnhancedEncoding = false,
+        enhancedArgs = []
       } = options;
 
-      // Enhanced FFmpeg command for stability
-      const ffmpegArgs = [
-        '-hide_banner',
-        '-loglevel', 'error',
-        '-fflags', '+genpts+igndts',
-        '-avoid_negative_ts', 'make_zero',
-        '-analyzeduration', '2000000',
-        '-probesize', '2000000',
-        '-thread_queue_size', '1024',
-        '-i', session.streamUrl,
-        '-c:v', videoCodec,
-        '-c:a', audioCodec,
-        '-f', outputFormat,
-        '-muxrate', '8000k',
-        '-bufsize', '2000k',
-        '-flush_packets', '1',
-        'pipe:1'
-      ];
+      // Use enhanced args if provided, otherwise use standard stability args
+      let ffmpegArgs;
+      if (isEnhancedEncoding && enhancedArgs.length > 0) {
+        // For enhanced encoding, use the provided args but ensure stability
+        ffmpegArgs = enhancedArgs;
+        logger.info('Using enhanced encoding args for persistent session', {
+          sessionId: session.sessionId,
+          argsCount: ffmpegArgs.length
+        });
+      } else {
+        // Standard FFmpeg command for stability
+        ffmpegArgs = [
+          '-hide_banner',
+          '-loglevel', 'error',
+          '-fflags', '+genpts+igndts',
+          '-avoid_negative_ts', 'make_zero',
+          '-analyzeduration', '2000000',
+          '-probesize', '2000000',
+          '-thread_queue_size', '1024',
+          '-i', session.streamUrl,
+          '-c:v', videoCodec,
+          '-c:a', audioCodec,
+          '-f', outputFormat,
+          '-muxrate', '8000k',
+          '-bufsize', '2000k',
+          '-flush_packets', '1',
+          'pipe:1'
+        ];
+      }
 
       const ffmpegProcess = spawn('ffmpeg', ffmpegArgs, {
         stdio: ['ignore', 'pipe', 'pipe']
@@ -263,7 +276,7 @@ class PersistentSessionManager {
   startHealthMonitoring() {
     this.healthCheckInterval = setInterval(() => {
       const now = Date.now();
-      const timeoutThreshold = 30000; // 30 seconds
+      const timeoutThreshold = 60000; // 60 seconds - increased for enhanced encoding streams
 
       for (const [sessionId, session] of this.activeSessions.entries()) {
         // Check for inactive sessions
@@ -273,13 +286,20 @@ class PersistentSessionManager {
             inactiveFor: now - session.lastActivity
           });
           
-          session.hasConsumer = false;
-          session.instanceAvailable = false;
+          // Don't immediately mark as no consumer - give more time for enhanced encoding
+          if (now - session.lastActivity > 120000) { // 2 minutes
+            session.hasConsumer = false;
+            session.instanceAvailable = false;
+          }
 
-          // If session is really stale (5 minutes), clean it up
-          if (now - session.lastActivity > 300000) {
+          // If session is really stale (10 minutes), clean it up
+          if (now - session.lastActivity > 600000) {
             this.cleanupSession(sessionId);
           }
+        } else {
+          // Session is active - ensure consumer flags are set
+          session.hasConsumer = true;
+          session.instanceAvailable = true;
         }
 
         // Check process health

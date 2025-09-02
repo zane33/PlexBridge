@@ -1,10 +1,10 @@
 const axios = require('axios');
 
-async function testFoxDirect() {
+async function testDirect() {
   // Test the exact redirected URL that PlexBridge should be using
   const redirectedUrl = 'http://85.92.112.107:80/live/play/ZHl0ME1rZG5NR1Y0VDBrd1kwOVVlVkZqWWtsNlpuYzlVWGxrYzFnMWJtMTBPRWQwWmxVMWNETkJNRDA9/1520176';
   
-  console.log('🦊 Testing Fox Cricket Redirected URL Direct');
+  console.log('🦊 Testing  Cricket Redirected URL Direct');
   console.log('===========================================');
   console.log(`URL: ${redirectedUrl}`);
   
@@ -78,7 +78,7 @@ async function testFoxDirect() {
     console.log(`   📊 Total bytes received: ${bytesReceived}`);
     if (bytesReceived > 0) {
       console.log(`   📊 Average bitrate: ${Math.round((bytesReceived * 8) / 5)} bps`);
-      console.log(`   ✅ Fox Cricket redirected URL is streaming successfully!`);
+      console.log(`   ✅  Cricket redirected URL is streaming successfully!`);
     } else {
       console.log(`   ❌ No data received from redirected URL`);
     }
@@ -88,4 +88,4 @@ async function testFoxDirect() {
   }
 }
 
-testFoxDirect().catch(console.error);
+testDirect().catch(console.error);

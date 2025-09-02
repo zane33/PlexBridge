@@ -471,9 +471,9 @@ function generateXMLTV(channels, programs, epgSourceCategories = new Map(), epgS
   // This is a simplified approach - in a full implementation, this mapping should be stored in DB
   channels.forEach(channel => {
     // Try to match channel to EPG source based on EPG data origin
-    // For TVNZ channels (epg_id starts with numbers or mjh-), use Freeview source
+    // For  channels (epg_id starts with numbers or mjh-), use  source
     if (channel.epg_id && (channel.epg_id.match(/^\d/) || channel.epg_id.startsWith('mjh-'))) {
-      // Find the Freeview EPG source ID
+      // Find the  EPG source ID
       for (const [sourceId, category] of epgSourceCategories.entries()) {
         // This is a temporary solution - ideally this mapping should be in the database
         if (category) { // If source has a category set, it's likely the one being used

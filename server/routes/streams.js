@@ -39,15 +39,36 @@ router.get('/stream/:channelId/:filename?', async (req, res) => {
     // Create persistent streaming session for consumer tracking (fixes "Failed to find consumer")
     if (isPlexRequest && !isSubFile) {
       const sessionManager = getSessionManager();
+      
+      // Extract the consumer session ID that Plex will use
+      const consumerSessionId = req.headers['x-plex-session-identifier'] ||
+                               req.query.X_Plex_Session_Identifier ||
+                               req.query.session ||
+                               sessionId;
+      
       const clientInfo = {
         userAgent,
         platform: isAndroidTV ? 'AndroidTV' : 'Other',
         product: 'Plex',
-        remoteAddress: req.ip || req.connection.remoteAddress
+        remoteAddress: req.ip || req.connection.remoteAddress,
+        consumerSessionId: consumerSessionId
       };
       
       // Create or get existing persistent session
       const persistentSession = sessionManager.createSession(channelId, sessionId, null, clientInfo);
+      
+      // Also create a consumer session alias if different
+      if (consumerSessionId !== sessionId) {
+        sessionManager.createSession(channelId, consumerSessionId, null, {
+          ...clientInfo,
+          isConsumerAlias: true,
+          primarySessionId: sessionId
+        });
+        logger.info('Created consumer session alias', {
+          primarySessionId: sessionId,
+          consumerSessionId: consumerSessionId
+        });
+      }
       
       // Create streaming session for decision tracking (critical for Android TV)
       const streamingSession = createStreamingSession(channelId, clientInfo);
@@ -57,12 +78,14 @@ router.get('/stream/:channelId/:filename?', async (req, res) => {
       res.set({
         'X-PlexBridge-Session': streamingSession.sessionId,
         'X-Persistent-Session': persistentSession.sessionId,
+        'X-Consumer-Session': consumerSessionId,
         'X-Content-Type': 'live-tv',
         'X-Media-Type': '4'  // Episode type for Live TV, not 5 (trailer)
       });
       
       logger.info('Created persistent streaming session', {
         sessionId,
+        consumerSessionId,
         channelId,
         clientInfo: clientInfo.userAgent,
         sessionStatus: persistentSession.status

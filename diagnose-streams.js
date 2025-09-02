@@ -6,12 +6,12 @@ const PRODUCTION_URL = 'http://192.168.3.148:3000';
 // Channels you mentioned
 const TEST_CHANNELS = {
   working: [
-    { name: 'Sky Sports 1', pattern: 'sky sports 1' },
-    { name: 'TVNZ 1', pattern: 'tvnz 1' }
+    { name: ' Sports 1', pattern: ' sports 1' },
+    { name: ' 1', pattern: ' 1' }
   ],
   failing: [
-    { name: 'Fox Cricket 201 AU', pattern: 'fox cricket' },
-    { name: 'Fox Sports', pattern: 'fox sport' }
+    { name: ' Cricket 201 AU', pattern: ' cricket' },
+    { name: ' Sports', pattern: ' sport' }
   ]
 };
 

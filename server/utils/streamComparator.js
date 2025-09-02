@@ -6,13 +6,13 @@ const logger = require('./logger');
 class StreamComparator {
   constructor() {
     this.workingChannels = [
-      'Sky Sports 1',
-      'TVNZ 1'
+      ' Sports 1',
+      ' 1'
     ];
     
     this.failingChannels = [
-      'Fox Cricket',
-      'Fox Sports'
+      ' Cricket',
+      ' Sports'
     ];
   }
 
@@ -98,7 +98,7 @@ class StreamComparator {
           hasMPD: url.pathname.includes('.mpd'),
           isRedirectService: url.hostname.includes('mjh.nz') || 
                             url.hostname.includes('i.mjh.nz') ||
-                            url.hostname.includes('tvnz'),
+                            url.hostname.includes(''),
           domain: this.extractDomain(url.hostname)
         };
       }
