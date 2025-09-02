@@ -371,6 +371,40 @@ router.get('/library/metadata/:metadataId', async (req, res) => {
       userAgent: req.get('User-Agent')
     });
     
+    // Use metadata persistence manager to handle the request
+    const { getMetadataManager } = require('../utils/metadataPersistence');
+    const metadataManager = getMetadataManager();
+    
+    const persistentMetadata = metadataManager.handleMetadataRequest(metadataId);
+    
+    if (persistentMetadata) {
+      logger.info('Using persistent metadata for request', { 
+        metadataId,
+        channelId: persistentMetadata.channelId 
+      });
+      
+      // Return the persistent metadata
+      const response = {
+        MediaContainer: {
+          size: 1,
+          allowSync: 0,
+          identifier: "com.plexapp.plugins.library",
+          librarySectionID: 1,
+          librarySectionTitle: "Live TV",
+          librarySectionUUID: "e05e77e4-1cc3-4e1e-9e79-8bf9b51f5f3f",
+          Video: [persistentMetadata]
+        }
+      };
+      
+      res.set({
+        'Content-Type': 'application/xml; charset=utf-8',
+        'Access-Control-Allow-Origin': '*'
+      });
+      
+      return res.json(response);
+    }
+    
+    // Fallback to original logic if not found in persistence manager
     // Extract channel ID if this is a channel metadata request
     let channelId = metadataId;
     if (metadataId && metadataId.includes('_')) {

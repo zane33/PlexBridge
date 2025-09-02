@@ -52,18 +52,35 @@ router.get('/stream/:channelId/:filename?', async (req, res) => {
       // Create streaming session for decision tracking (critical for Android TV)
       const streamingSession = createStreamingSession(channelId, clientInfo);
       
+      // Create persistent metadata to prevent "metadata item no longer exists" errors
+      const { getMetadataManager } = require('../utils/metadataPersistence');
+      const metadataManager = getMetadataManager();
+      
+      // Get channel info for metadata
+      let channelInfo = null;
+      try {
+        channelInfo = await database.get('SELECT * FROM channels WHERE id = ? OR number = ?', [channelId, channelId]);
+      } catch (error) {
+        logger.debug('Could not fetch channel info for metadata persistence', { channelId });
+      }
+      
+      const metadataId = metadataManager.getOrCreateMetadata(channelId, channelInfo || { name: `Channel ${channelId}` });
+      metadataManager.associateSessionMetadata(sessionId, metadataId);
+      
       // Add session info to response headers for Plex decision making and consumer tracking
       addStreamHeaders(req, res, sessionId);
       res.set({
         'X-PlexBridge-Session': streamingSession.sessionId,
         'X-Persistent-Session': persistentSession.sessionId,
         'X-Content-Type': 'live-tv',
-        'X-Media-Type': '4'  // Episode type for Live TV, not 5 (trailer)
+        'X-Media-Type': '4',  // Episode type for Live TV, not 5 (trailer)
+        'X-Metadata-ID': metadataId  // Provide metadata ID for Plex
       });
       
-      logger.info('Created persistent streaming session', {
+      logger.info('Created persistent streaming session with metadata', {
         sessionId,
         channelId,
+        metadataId,
         clientInfo: clientInfo.userAgent,
         sessionStatus: persistentSession.status
       });
