@@ -256,6 +256,101 @@ router.get('/lineup.json', async (req, res) => {
   }
 });
 
+// Consumer tracking endpoint - prevents "Failed to find consumer" errors
+router.get('/consumer/:sessionId/:action?', async (req, res) => {
+  try {
+    const { sessionId, action } = req.params;
+    const userAgent = req.get('User-Agent') || '';
+    
+    logger.debug('Plex consumer request', { 
+      sessionId, 
+      action, 
+      userAgent 
+    });
+
+    // Always respond with success for consumer requests
+    // This prevents "Failed to find consumer" errors that crash streams
+    res.set({
+      'Content-Type': 'application/json; charset=utf-8',
+      'Cache-Control': 'no-cache'
+    });
+    
+    res.json({
+      success: true,
+      sessionId: sessionId,
+      status: 'active',
+      timestamp: new Date().toISOString()
+    });
+  } catch (error) {
+    logger.error('Consumer tracking error:', error);
+    res.status(200).json({ success: true }); // Always succeed to prevent crashes
+  }
+});
+
+// Timeline endpoint - prevents unknown metadata item errors  
+router.get('/timeline/:itemId?', async (req, res) => {
+  try {
+    const { itemId } = req.params;
+    
+    logger.debug('Plex timeline request', { itemId });
+    
+    // Return minimal timeline response to prevent metadata errors
+    res.set({
+      'Content-Type': 'application/json; charset=utf-8', 
+      'Cache-Control': 'no-cache'
+    });
+    
+    res.json({
+      MediaContainer: {
+        size: 0,
+        identifier: "com.plexapp.plugins.library",
+        machineIdentifier: process.env.DEVICE_UUID || 'plextv-001'
+      }
+    });
+  } catch (error) {
+    logger.error('Timeline error:', error);
+    res.status(200).json({
+      MediaContainer: { size: 0 }
+    });
+  }
+});
+
+// Live TV consumer status - handles Plex live TV consumer tracking
+router.get('/live/:sessionId/status', async (req, res) => {
+  try {
+    const { sessionId } = req.params;
+    
+    logger.debug('Plex live consumer status request', { sessionId });
+    
+    // Always report consumer as active to prevent "Failed to find consumer"
+    res.set({
+      'Content-Type': 'application/json; charset=utf-8',
+      'Cache-Control': 'no-cache'
+    });
+    
+    res.json({
+      sessionId: sessionId,
+      status: 'streaming',
+      consumer: {
+        id: sessionId,
+        state: 'active',
+        available: true
+      },
+      instance: {
+        available: true,
+        ready: true
+      },
+      timestamp: Date.now()
+    });
+  } catch (error) {
+    logger.error('Live consumer status error:', error);
+    res.status(200).json({ 
+      status: 'active',
+      consumer: { state: 'active' }
+    });
+  }
+});
+
 // Tuner status endpoint
 router.get('/tuner.json', (req, res) => {
   try {
