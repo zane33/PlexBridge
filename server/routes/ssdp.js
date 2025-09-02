@@ -271,22 +271,13 @@ router.get('/lineup.json', async (req, res) => {
     
     const baseURL = baseHost.startsWith('http') ? baseHost : `http://${baseHost}`;
     
-    // Create lineup with direct play indicators to prevent transcoding
+    // Create simple, working lineup for Plex
     const lineup = channels.map(channel => ({
       GuideNumber: channel.number.toString(),
       GuideName: channel.name,
-      VideoCodec: 'H264',  // H.264 for direct play
-      AudioCodec: 'AAC',   // AAC for direct play  
-      URL: `${baseURL}/stream/${channel.id}`,
-      // Direct play indicators
-      HD: 1,
-      DRM: 0,
-      Favorite: 0,
-      // Prevent transcoding
-      TranscodeEnabled: 0,
-      DirectPlay: 1,
-      // Container format
-      Container: 'mpegts'
+      VideoCodec: 'MPEG2', // Simple codec for Plex compatibility
+      AudioCodec: 'AC3',
+      URL: `${baseURL}/stream/${channel.id}`
     }));
 
     logger.debug('Channel lineup request', { 
@@ -337,29 +328,11 @@ router.get('/consumer/:sessionId/:action?', async (req, res) => {
       success: true,
       sessionId: sessionId,
       status: 'active',
-      state: 'streaming',
-      consumer: {
-        id: sessionId,
-        available: true,
-        active: true,
-        streaming: true,
-        directPlay: true,
-        transcoding: false
-      },
-      stream: {
-        alive: true,
-        ready: true,
-        buffering: false,
-        segmentBased: false
-      },
       timestamp: new Date().toISOString()
     });
   } catch (error) {
     logger.error('Consumer tracking error:', error);
-    res.status(200).json({ 
-      success: true,
-      consumer: { available: true, active: true }
-    }); // Always succeed to prevent crashes
+    res.status(200).json({ success: true }); // Always succeed to prevent crashes
   }
 });
 
@@ -726,29 +699,21 @@ router.get('/livetv/sessions/:sessionId', async (req, res) => {
             }]
           }],
           
-          // Direct play session (NO transcoding)
-          Player: {
-            local: 1,
-            platform: "Android TV",
-            platformVersion: "10.0",
-            product: "Plex for Android TV"
-          },
-          
-          // Transcoding explicitly disabled
+          // Transcoding decision information
           TranscodeSession: {
             key: sessionId,
             throttled: 0,
-            complete: true,    // Mark as complete to prevent runner
-            progress: 100,     // 100% complete (no transcoding needed)
+            complete: false,
+            progress: -1,
             speed: 1.0,
             duration: 86400000,
-            remaining: 0,      // Nothing remaining to transcode
+            remaining: 86400000,
             context: "streaming",
             sourceVideoCodec: "h264",
             sourceAudioCodec: "aac",
-            videoDecision: "directplay",  // FORCE direct play
-            audioDecision: "directplay",  // FORCE direct play
-            subtitleDecision: "none",     // No subtitles to prevent transcoding
+            videoDecision: "directplay",
+            audioDecision: "directplay",
+            subtitleDecision: "burn",
             protocol: "http",
             container: "mpegts",
             videoCodec: "h264",
@@ -756,17 +721,7 @@ router.get('/livetv/sessions/:sessionId', async (req, res) => {
             audioChannels: 2,
             transcodeHwRequested: false,
             transcodeHwFullPipeline: false,
-            transcodeHwDecoding: false,
-            transcodeHwEncoding: false,
-            hasDirectPlay: true,          // Direct play available
-            canDirectPlay: true,          // Can direct play
-            directPlayAllowed: true,      // Direct play allowed
-            timeStamp: Date.now() / 1000,
-            
-            // Prevent segment-based processing
-            segmentBased: false,
-            segments: [],
-            segmentCount: 0
+            timeStamp: Date.now() / 1000
           }
         }]
       }
@@ -850,46 +805,6 @@ router.get('/livetv/*', async (req, res) => {
       size: 0,
       identifier: "com.plexapp.plugins.library",
       machineIdentifier: process.env.DEVICE_UUID || 'plextv-001'
-    }
-  });
-});
-
-// Live TV segments endpoint - prevents segment-based transcoding
-router.get('/livetv/sessions/:sessionId/segments/:segmentId', (req, res) => {
-  const { sessionId, segmentId } = req.params;
-  
-  logger.debug('Plex Live TV segment request', { 
-    sessionId, 
-    segmentId,
-    note: 'Redirecting to direct stream to prevent transcoding'
-  });
-  
-  // Redirect segment requests to direct stream
-  const baseHost = process.env.ADVERTISED_HOST || req.get('host') || 'localhost:3000';
-  const redirectUrl = `http://${baseHost}/stream/${sessionId}`;
-  
-  res.redirect(302, redirectUrl);
-});
-
-// Live TV segments list - always empty to prevent transcoding
-router.get('/livetv/sessions/:sessionId/segments', (req, res) => {
-  const { sessionId } = req.params;
-  
-  logger.debug('Plex Live TV segments list request', { 
-    sessionId,
-    note: 'Returning empty segments to force direct play'
-  });
-  
-  res.set({
-    'Content-Type': 'application/json; charset=utf-8',
-    'Cache-Control': 'no-cache'
-  });
-  
-  res.json({
-    MediaContainer: {
-      size: 0,
-      identifier: "com.plexapp.plugins.library",
-      segments: []
     }
   });
 });
