@@ -2011,16 +2011,27 @@ class StreamManager {
         if (!res.headersSent) {
           res.set({
             'Content-Type': 'video/mp2t',
-            'Cache-Control': 'no-cache'
+            'Cache-Control': 'no-cache',
+            'Connection': 'close'
           });
-          // Send minimal valid MPEG-TS packet then end
-          const emptyTsPacket = Buffer.from([
-            0x47, 0x40, 0x00, 0x10,
-            0x00, 0x00, 0x01, 0xE0,
-            ...Array(180).fill(0xFF)
-          ]);
-          res.write(emptyTsPacket);
-          res.end();
+          
+          // For transcoded streams that fail, send HTTP 503 to signal Plex to retry without transcoding
+          if (forceTranscode) {
+            logger.error('Transcoded stream failed - signaling service unavailable', {
+              channelId: channel.id,
+              sessionId
+            });
+            res.status(503).end();
+          } else {
+            // For copy streams, send minimal valid MPEG-TS packet then end
+            const emptyTsPacket = Buffer.from([
+              0x47, 0x40, 0x00, 0x10,
+              0x00, 0x00, 0x01, 0xE0,
+              ...Array(180).fill(0xFF)
+            ]);
+            res.write(emptyTsPacket);
+            res.end();
+          }
         }
       });
 
@@ -2096,20 +2107,30 @@ class StreamManager {
           
           // Send proper MPEG-TS error response to Plex (never HTML)
           if (!res.headersSent) {
-            // Send empty MPEG-TS stream instead of error status
-            // This prevents Plex from receiving HTML error pages
             res.set({
               'Content-Type': 'video/mp2t',
-              'Cache-Control': 'no-cache'
+              'Cache-Control': 'no-cache',
+              'Connection': 'close'
             });
-            // Send minimal valid MPEG-TS packet then end
-            const emptyTsPacket = Buffer.from([
-              0x47, 0x40, 0x00, 0x10, // TS header with payload start
-              0x00, 0x00, 0x01, 0xE0, // PES header start
-              ...Array(180).fill(0xFF) // Padding
-            ]);
-            res.write(emptyTsPacket);
-            res.end();
+            
+            // For transcoded streams that fail, send HTTP 503 to signal Plex to retry without transcoding
+            if (forceTranscode) {
+              logger.error('Transcoded stream fatal error - signaling service unavailable', {
+                channelId: channel.id,
+                sessionId,
+                error: errorOutput.trim()
+              });
+              res.status(503).end();
+            } else {
+              // For copy streams, send minimal valid MPEG-TS packet then end
+              const emptyTsPacket = Buffer.from([
+                0x47, 0x40, 0x00, 0x10, // TS header with payload start
+                0x00, 0x00, 0x01, 0xE0, // PES header start
+                ...Array(180).fill(0xFF) // Padding
+              ]);
+              res.write(emptyTsPacket);
+              res.end();
+            }
           }
         }
       });
