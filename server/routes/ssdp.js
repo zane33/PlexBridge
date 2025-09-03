@@ -944,6 +944,131 @@ router.get('/live/:sessionId/status', async (req, res) => {
   }
 });
 
+// Capital /Live/ endpoint - Plex sometimes uses capital L for Live TV consumer tracking
+router.get('/Live/:sessionId', async (req, res) => {
+  try {
+    const { sessionId } = req.params;
+    const userAgent = req.get('User-Agent') || '';
+    
+    logger.info('Plex /Live/ consumer request (capital L)', { 
+      sessionId, 
+      userAgent,
+      headers: req.headers,
+      query: req.query,
+      ip: req.ip || req.connection.remoteAddress,
+      url: req.originalUrl,
+      path: req.path
+    });
+
+    // Update session activity in the persistent session manager
+    const sessionManager = getSessionManager();
+    
+    if (sessionId && sessionManager) {
+      sessionManager.updateSessionActivity(sessionId);
+      
+      // Check if session exists
+      const sessionStatus = sessionManager.getSessionStatus(sessionId);
+      
+      // If session doesn't exist, create a placeholder consumer session
+      if (!sessionStatus.exists) {
+        sessionManager.createSession('live', sessionId, '', {
+          userAgent,
+          isConsumerEndpoint: true,
+          isLiveEndpoint: true,
+          action: 'consumer'
+        });
+      }
+    }
+
+    // Always respond with success to prevent "Failed to find consumer" errors
+    res.set({
+      'Content-Type': 'application/json; charset=utf-8',
+      'Cache-Control': 'no-cache',
+      'Connection': 'keep-alive'
+    });
+    
+    const consumerResponse = {
+      success: true,
+      sessionId: sessionId,
+      consumer: {
+        id: sessionId,
+        available: true,
+        active: true,
+        state: 'streaming',
+        lastActivity: Date.now(),
+        status: 'connected',
+        instanceAvailable: true,
+        hasConsumer: true,
+        ready: true
+      },
+      instance: {
+        available: true,
+        ready: true,
+        active: true
+      },
+      live: true,
+      timestamp: new Date().toISOString()
+    };
+    
+    res.json(consumerResponse);
+  } catch (error) {
+    logger.error('/Live/ consumer tracking error:', error);
+    // Always succeed to prevent stream crashes
+    res.status(200).json({ 
+      success: true,
+      consumer: { 
+        available: true,
+        active: true,
+        state: 'streaming'
+      }
+    });
+  }
+});
+
+// Also handle /Live/ with action parameter
+router.get('/Live/:sessionId/:action', async (req, res) => {
+  try {
+    const { sessionId, action } = req.params;
+    
+    logger.info('Plex /Live/ consumer action request', { 
+      sessionId, 
+      action,
+      userAgent: req.get('User-Agent'),
+      url: req.originalUrl
+    });
+
+    // Update session activity
+    const sessionManager = getSessionManager();
+    if (sessionId && sessionManager) {
+      sessionManager.updateSessionActivity(sessionId);
+    }
+
+    res.set({
+      'Content-Type': 'application/json; charset=utf-8',
+      'Cache-Control': 'no-cache'
+    });
+    
+    res.json({
+      success: true,
+      sessionId: sessionId,
+      action: action,
+      consumer: {
+        id: sessionId,
+        available: true,
+        active: true,
+        state: 'streaming'
+      },
+      timestamp: Date.now()
+    });
+  } catch (error) {
+    logger.error('/Live/ consumer action error:', error);
+    res.status(200).json({ 
+      success: true,
+      consumer: { available: true }
+    });
+  }
+});
+
 // Tuner status endpoint
 router.get('/tuner.json', (req, res) => {
   try {
