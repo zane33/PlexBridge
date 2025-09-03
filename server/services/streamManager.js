@@ -1643,12 +1643,18 @@ class StreamManager {
         userAgent: userAgent,
         isWebBrowser: isWebBrowser,
         isAndroidTV: isAndroidTV,
+<<<<<<< HEAD
         referer: req?.headers?.referer,
         plexProduct: req?.headers?.['x-plex-product'],
         secChUa: req?.headers?.['sec-ch-ua']
 =======
         transcodeMode: forceTranscode ? 'H.264/AAC' : 'codec_copy'
 >>>>>>> parent of 2b1e140 (updates)
+=======
+        referer: req.headers.referer,
+        plexProduct: req.headers['x-plex-product'],
+        secChUa: req.headers['sec-ch-ua']
+>>>>>>> parent of d672a0f (updates)
       });
 
       // Check if request is from Android TV for specific optimizations
@@ -1665,17 +1671,21 @@ class StreamManager {
         userAgent.toLowerCase().includes('safari')
 <<<<<<< HEAD
       )) || 
-      // Also detect Plex web app specifically (with safe null checks)
-      (req?.headers?.referer?.includes('plex') && !userAgent.toLowerCase().includes('android')) ||
-      req?.headers?.['x-plex-product'] === 'Plex Web' ||
-      req?.query?.format === 'mpegts' ||
+      // Also detect Plex web app specifically
+      (req.headers.referer?.includes('plex') && !userAgent.toLowerCase().includes('android')) ||
+      req.headers['x-plex-product'] === 'Plex Web' ||
+      req.query.format === 'mpegts' ||
       // Additional web detection patterns
       userAgent.toLowerCase().includes('webkit') ||
       userAgent.toLowerCase().includes('gecko') ||
+<<<<<<< HEAD
       (req?.headers?.['sec-ch-ua'] && !userAgent.toLowerCase().includes('android'));
 =======
       );
 >>>>>>> parent of 2b1e140 (updates)
+=======
+      (req.headers['sec-ch-ua'] && !userAgent.toLowerCase().includes('android'));
+>>>>>>> parent of d672a0f (updates)
       
 =======
 >>>>>>> parent of da729fe (experimental stream fixes)
@@ -1754,17 +1764,21 @@ class StreamManager {
           userAgent.toLowerCase().includes('safari')
 <<<<<<< HEAD
         )) || 
-        // Also detect Plex web app specifically (with safe null checks)
-        (req?.headers?.referer?.includes('plex') && !userAgent.toLowerCase().includes('android')) ||
-        req?.headers?.['x-plex-product'] === 'Plex Web' ||
-        req?.query?.format === 'mpegts' ||
+        // Also detect Plex web app specifically
+        (req.headers.referer?.includes('plex') && !userAgent.toLowerCase().includes('android')) ||
+        req.headers['x-plex-product'] === 'Plex Web' ||
+        req.query.format === 'mpegts' ||
         // Additional web detection patterns
         userAgent.toLowerCase().includes('webkit') ||
         userAgent.toLowerCase().includes('gecko') ||
+<<<<<<< HEAD
         (req?.headers?.['sec-ch-ua'] && !userAgent.toLowerCase().includes('android'));
 =======
         );
 >>>>>>> parent of 2b1e140 (updates)
+=======
+        (req.headers['sec-ch-ua'] && !userAgent.toLowerCase().includes('android'));
+>>>>>>> parent of d672a0f (updates)
         
 =======
 >>>>>>> parent of da729fe (experimental stream fixes)
