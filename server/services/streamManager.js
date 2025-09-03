@@ -1617,10 +1617,6 @@ class StreamManager {
       const settingsService = require('./settingsService');
       const settings = await settingsService.getSettings();
       
-      // Check if request is from Android TV and get user agent
-      const userAgent = req.get('User-Agent') || '';
-      const isAndroidTV = userAgent.toLowerCase().includes('android') || userAgent.toLowerCase().includes('shield');
-      
       // Check if stream requires transcoding (forceTranscode setting)
       let forceTranscode = false;
       if (stream && stream.protocol_options) {
@@ -1642,6 +1638,7 @@ class StreamManager {
         streamId: stream?.id,
         streamName: stream?.name,
         forceTranscode,
+<<<<<<< HEAD
         transcodeMode: forceTranscode ? 'H.264/AAC' : 'codec_copy',
         userAgent: userAgent,
         isWebBrowser: isWebBrowser,
@@ -1649,17 +1646,24 @@ class StreamManager {
         referer: req?.headers?.referer,
         plexProduct: req?.headers?.['x-plex-product'],
         secChUa: req?.headers?.['sec-ch-ua']
+=======
+        transcodeMode: forceTranscode ? 'H.264/AAC' : 'codec_copy'
+>>>>>>> parent of 2b1e140 (updates)
       });
+
+      // Check if request is from Android TV for specific optimizations
+      const userAgent = req.get('User-Agent') || '';
+      const isAndroidTV = userAgent.toLowerCase().includes('android') || userAgent.toLowerCase().includes('shield');
       
 <<<<<<< HEAD
 <<<<<<< HEAD
       // Detect web browser clients that need copy codecs instead of hardware transcoding
-      // Use same logic as streams.js for consistency
-      const isWebBrowser = (userAgent && (
+      const isWebBrowser = userAgent && (
         userAgent.toLowerCase().includes('mozilla') ||
         userAgent.toLowerCase().includes('chrome') ||
         userAgent.toLowerCase().includes('firefox') ||
         userAgent.toLowerCase().includes('safari')
+<<<<<<< HEAD
       )) || 
       // Also detect Plex web app specifically (with safe null checks)
       (req?.headers?.referer?.includes('plex') && !userAgent.toLowerCase().includes('android')) ||
@@ -1669,6 +1673,9 @@ class StreamManager {
       userAgent.toLowerCase().includes('webkit') ||
       userAgent.toLowerCase().includes('gecko') ||
       (req?.headers?.['sec-ch-ua'] && !userAgent.toLowerCase().includes('android'));
+=======
+      );
+>>>>>>> parent of 2b1e140 (updates)
       
 =======
 >>>>>>> parent of da729fe (experimental stream fixes)
@@ -1740,12 +1747,12 @@ class StreamManager {
 <<<<<<< HEAD
 <<<<<<< HEAD
         // Detect web browser clients that need enhanced encoding copy codecs
-        // Use same comprehensive detection logic as forceTranscode path
-        const isWebBrowser = (userAgent && (
+        const isWebBrowser = userAgent && (
           userAgent.toLowerCase().includes('mozilla') ||
           userAgent.toLowerCase().includes('chrome') ||
           userAgent.toLowerCase().includes('firefox') ||
           userAgent.toLowerCase().includes('safari')
+<<<<<<< HEAD
         )) || 
         // Also detect Plex web app specifically (with safe null checks)
         (req?.headers?.referer?.includes('plex') && !userAgent.toLowerCase().includes('android')) ||
@@ -1755,6 +1762,9 @@ class StreamManager {
         userAgent.toLowerCase().includes('webkit') ||
         userAgent.toLowerCase().includes('gecko') ||
         (req?.headers?.['sec-ch-ua'] && !userAgent.toLowerCase().includes('android'));
+=======
+        );
+>>>>>>> parent of 2b1e140 (updates)
         
 =======
 >>>>>>> parent of da729fe (experimental stream fixes)
