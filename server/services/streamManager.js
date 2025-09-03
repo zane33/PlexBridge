@@ -1652,6 +1652,7 @@ class StreamManager {
       });
       
 <<<<<<< HEAD
+<<<<<<< HEAD
       // Detect web browser clients that need copy codecs instead of hardware transcoding
       // Use same logic as streams.js for consistency
       const isWebBrowser = (userAgent && (
@@ -1669,6 +1670,8 @@ class StreamManager {
       userAgent.toLowerCase().includes('gecko') ||
       (req?.headers?.['sec-ch-ua'] && !userAgent.toLowerCase().includes('android'));
       
+=======
+>>>>>>> parent of da729fe (experimental stream fixes)
 =======
 >>>>>>> parent of da729fe (experimental stream fixes)
       // Get configurable FFmpeg command line - use transcoding if forceTranscode is enabled
@@ -1735,6 +1738,7 @@ class StreamManager {
       // Enhanced encoding integration for unreliable streams
       try {
 <<<<<<< HEAD
+<<<<<<< HEAD
         // Detect web browser clients that need enhanced encoding copy codecs
         // Use same comprehensive detection logic as forceTranscode path
         const isWebBrowser = (userAgent && (
@@ -1752,6 +1756,8 @@ class StreamManager {
         userAgent.toLowerCase().includes('gecko') ||
         (req?.headers?.['sec-ch-ua'] && !userAgent.toLowerCase().includes('android'));
         
+=======
+>>>>>>> parent of da729fe (experimental stream fixes)
 =======
 >>>>>>> parent of da729fe (experimental stream fixes)
         // Only apply enhanced encoding if stream object exists and has properties
