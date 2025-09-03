@@ -114,7 +114,7 @@ function enhanceLineupForStreamingDecisions(channels, baseURL, currentPrograms =
       // Explicit metadata type for Android TV (fixes "Unknown metadata type" errors)
       type: 'episode', // Plex Android TV expects episode type for live TV
       metadata_type: 'episode', // Backup metadata type identifier
-      contentType: 5, // Live TV content type
+      contentType: 4, // Episode content type - NOT type 5 (trailer)
       mediaType: 'episode', // Media type for Plex decision making
       
       // Episode metadata structure for Android TV compatibility

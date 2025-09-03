@@ -89,7 +89,7 @@ class ChannelMetadataCache {
       },
       
       // Metadata type info for Plex
-      content_type: 5,
+      content_type: 4, // Type 4 (episode) NOT type 5 (trailer)
       metadata_type: 'live_tv',
       has_metadata: true,
       cached_at: now.toISOString()
@@ -116,7 +116,7 @@ class ChannelMetadataCache {
         end_time: new Date(now.getTime() + 3600000).toISOString(),
         category: 'Live TV'
       },
-      content_type: 5,
+      content_type: 4, // Type 4 (episode) NOT type 5 (trailer)
       metadata_type: 'live_tv',
       has_metadata: true,
       is_fallback: true,
@@ -182,9 +182,9 @@ function generateImmediateEPGResponse(channelId, forAndroidTV = false) {
       // Critical metadata for Android TV (fixes "Unknown metadata type" errors)
       type: 'episode', // Plex Android TV expects episode type for live TV
       metadata_type: 'episode', // Backup metadata type identifier  
-      content_type: 5, // Live TV content type
+      content_type: 4, // Episode content type - NOT type 5 (trailer)
       mediaType: 'episode', // Media type for Plex decision making
-      contentType: 5, // Alternative content type field
+      contentType: 4, // Alternative content type field - NOT type 5
       
       // Episode metadata structure for Android TV compatibility
       grandparentTitle: metadata.name, // Channel name as show title
@@ -273,9 +273,9 @@ async function getCurrentProgramFast(channelId, isAndroidTV = false) {
       // Proper metadata types for Android TV (fixes "Unknown metadata type" errors)
       type: 'episode', // Plex Android TV expects episode type for live TV
       metadata_type: 'episode', // Backup metadata type identifier  
-      content_type: 5, // Live TV content type
+      content_type: 4, // Episode content type - NOT type 5 (trailer)
       mediaType: 'episode', // Media type for Plex decision making
-      contentType: 5, // Alternative content type field
+      contentType: 4, // Alternative content type field - NOT type 5
       
       // Episode metadata structure for Android TV compatibility
       grandparentTitle: 'Live TV', // Show title
