@@ -1119,6 +1119,78 @@ router.post('/Live/:sessionId', async (req, res) => {
   }
 });
 
+// CRITICAL: /livetv/sessions/ endpoint - Plex Universal Transcode requests
+router.get('/livetv/sessions/:sessionId', async (req, res) => {
+  try {
+    const { sessionId } = req.params;
+    
+    logger.info('Plex /livetv/sessions/ request - CRITICAL for Universal Transcode', {
+      sessionId,
+      query: req.query,
+      userAgent: req.get('User-Agent'),
+      url: req.originalUrl
+    });
+    
+    // Update session activity
+    const sessionManager = getSessionManager();
+    if (sessionId && sessionManager) {
+      sessionManager.updateSessionActivity(sessionId);
+      
+      const sessionStatus = sessionManager.getSessionStatus(sessionId);
+      if (!sessionStatus.exists) {
+        sessionManager.createSession('livetv', sessionId, '', {
+          userAgent: req.get('User-Agent'),
+          isLiveTVSession: true,
+          isUniversalTranscode: true
+        });
+      }
+    }
+    
+    // Return MediaContainer XML format that Plex expects
+    res.set({
+      'Content-Type': 'application/xml; charset=utf-8',
+      'Cache-Control': 'no-cache'
+    });
+    
+    const mediaContainer = `<?xml version="1.0" encoding="UTF-8"?>
+<MediaContainer size="1" allowSync="0" identifier="com.plexapp.plugins.library" mediaTagPrefix="/system/bundle/media/flags/" mediaTagVersion="1640111100" title1="Live TV">
+  <Video addedAt="1640111100" art="/:/resources/show-fanart.jpg" chapterSource="media" contentRating="TV-MA" duration="86400000" grandparentArt="/:/resources/show-fanart.jpg" grandparentKey="/library/metadata/19120" grandparentRatingKey="19120" grandparentThumb="/:/resources/show.png" grandparentTitle="Live TV" guid="plex://episode/5d9c086c46115600200aa7d6" index="1" key="/library/metadata/19120" lastViewedAt="1640111100" librarySectionID="7" librarySectionTitle="Live TV" librarySectionUUID="12345678-1234-1234-1234-123456789012" originalTitle="Live Stream" parentIndex="1" parentKey="/library/metadata/19119" parentRatingKey="19119" parentTitle="Live TV" rating="8.5" ratingKey="19120" sessionKey="${sessionId}" summary="Live TV Stream" thumb="/:/resources/show.png" title="Live Stream" type="episode" updatedAt="1640111100" viewOffset="0" year="2025">
+    <Media aspectRatio="1.78" audioChannels="2" audioCodec="aac" bitrate="8000" container="mpegts" duration="86400000" height="720" id="38642" videoCodec="h264" videoFrameRate="25" videoResolution="720" width="1280">
+      <Part container="mpegts" duration="86400000" file="livetv://session-${sessionId}" id="38642" key="/livetv/sessions/${sessionId}/stream" size="999999999" />
+    </Media>
+  </Video>
+</MediaContainer>`;
+    
+    res.send(mediaContainer);
+    
+  } catch (error) {
+    logger.error('/livetv/sessions/ error:', error);
+    res.status(200).send('<?xml version="1.0" encoding="UTF-8"?><MediaContainer />');
+  }
+});
+
+// Handle POST to /livetv/sessions/
+router.post('/livetv/sessions/:sessionId', async (req, res) => {
+  try {
+    const { sessionId } = req.params;
+    
+    logger.info('POST /livetv/sessions/ request', {
+      sessionId,
+      body: req.body,
+      userAgent: req.get('User-Agent')
+    });
+    
+    res.json({
+      success: true,
+      sessionId: sessionId,
+      status: 'active'
+    });
+  } catch (error) {
+    logger.error('POST /livetv/sessions/ error:', error);
+    res.status(200).json({ success: true });
+  }
+});
+
 // Catch-all for any /Live/* requests not handled above
 router.all('/Live/*', async (req, res) => {
   const path = req.path;

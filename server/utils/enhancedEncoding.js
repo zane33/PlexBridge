@@ -186,6 +186,38 @@ const ENHANCED_ENCODING_PROFILES = {
     retry_attempts: 1, // Single attempt for quick recovery
     enable_monitoring: true,
     h264_recovery: true // Flag for H.264 error recovery
+  },
+
+  // EMERGENCY: Ultra-safe mode for severely corrupted H.264 streams
+  'emergency-safe': {
+    name: 'Emergency Safe Mode',
+    description: 'Ultra-conservative profile that avoids ALL potential H.264 corruption sources',
+    ffmpeg_options: [
+      // ABSOLUTE MINIMAL processing
+      '-err_detect', 'ignore_err',
+      '-fflags', '+discardcorrupt',
+      
+      // NO analysis - just copy immediately  
+      '-probesize', '32',         // Absolute minimum (32 bytes)
+      '-analyzeduration', '0',    // No analysis at all
+      
+      // Direct timestamp passthrough
+      '-avoid_negative_ts', 'disabled', // Don't touch timestamps
+      
+      // Pure copy with no processing
+      '-c:v', 'copy',
+      '-c:a', 'copy',
+      
+      // Simplest possible output
+      '-f', 'mpegts'
+      
+      // NO other parameters that could cause corruption
+    ],
+    priority: 200, // Highest priority
+    timeout_ms: 5000,
+    retry_attempts: 1,
+    enable_monitoring: false, // Don't even monitor to avoid interference
+    emergency_mode: true
   }
 };
 
@@ -203,23 +235,43 @@ function selectEncodingProfile(streamInfo, channelNumber = null, errorHistory = 
   
   // PRIORITY 0: Check for H.264 PPS/decode errors in error history
   if (errorHistory && Array.isArray(errorHistory)) {
-    const hasH264Errors = errorHistory.some(error => {
+    const h264ErrorTypes = errorHistory.filter(error => {
       const errorMsg = error.toLowerCase();
       return errorMsg.includes('pps') || 
              errorMsg.includes('decode_slice_header') || 
              errorMsg.includes('no frame!') ||
              errorMsg.includes('non-existing pps') ||
+             errorMsg.includes('mmco: unref short failure') ||
              errorMsg.includes('h264');
     });
     
-    if (hasH264Errors) {
-      logger.warn('Detected H.264 PPS/decode errors, using h264-recovery profile', {
-        channelNumber,
-        streamName: streamInfo.name,
-        profile: 'h264-recovery',
-        errorSample: errorHistory.slice(0, 3)
-      });
-      return 'h264-recovery';
+    if (h264ErrorTypes.length > 0) {
+      // If we have many H.264 errors or severe ones, use emergency mode
+      const hasSevereErrors = h264ErrorTypes.length > 5 || 
+                             h264ErrorTypes.some(error => 
+                               error.includes('mmco') || 
+                               error.includes('decode_slice_header')
+                             );
+      
+      if (hasSevereErrors) {
+        logger.error('SEVERE H.264 errors detected - using EMERGENCY SAFE MODE', {
+          channelNumber,
+          streamName: streamInfo.name,
+          profile: 'emergency-safe',
+          errorCount: h264ErrorTypes.length,
+          errorSample: h264ErrorTypes.slice(0, 3)
+        });
+        return 'emergency-safe';
+      } else {
+        logger.warn('Detected H.264 PPS/decode errors, using h264-recovery profile', {
+          channelNumber,
+          streamName: streamInfo.name,
+          profile: 'h264-recovery',
+          errorCount: h264ErrorTypes.length,
+          errorSample: h264ErrorTypes.slice(0, 3)
+        });
+        return 'h264-recovery';
+      }
     }
   }
   
@@ -278,13 +330,16 @@ function selectEncodingProfile(streamInfo, channelNumber = null, errorHistory = 
     return 'high-reliability';
   }
   
-  // Check for specific enhanced encoding flag
+  // EMERGENCY OVERRIDE: Force ALL enhanced encoding to use emergency-safe mode
+  // This prevents ALL H.264 PPS corruption until we can properly debug
   if (streamInfo.enhanced_encoding) {
-    logger.info('Using enhanced encoding per stream configuration', {
+    logger.error('EMERGENCY OVERRIDE: Enhanced encoding forced to emergency-safe mode', {
       streamName: streamInfo.name,
-      profile: streamInfo.enhanced_encoding_profile || 'high-reliability'
+      originalProfile: streamInfo.enhanced_encoding_profile || 'high-reliability',
+      forcedProfile: 'emergency-safe',
+      reason: 'Preventing H.264 PPS corruption'
     });
-    return streamInfo.enhanced_encoding_profile || 'high-reliability';
+    return 'emergency-safe'; // FORCE emergency mode for ALL enhanced encoding
   }
   
   // Default to standard reliability
