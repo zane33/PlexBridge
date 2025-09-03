@@ -518,6 +518,11 @@ router.get('/library/metadata/:metadataId', async (req, res) => {
           index: 1,
           parentIndex: 1,
           year: new Date().getFullYear(),
+          
+          // CRITICAL: Android TV specific metadata fields to fix "type 5" errors
+          contentType: 4, // Use type 4 (episode) instead of type 5 (trailer) for Android TV
+          metadata_type: 'episode',
+          mediaType: 'episode',
           thumb: `/library/metadata/${metadataId}/thumb`,
           art: `/library/metadata/${metadataId}/art`,
           parentThumb: `/library/metadata/${metadataId}/parentThumb`,
@@ -593,16 +598,30 @@ router.get('/library/metadata/:metadataId', async (req, res) => {
     res.json(metadata);
   } catch (error) {
     logger.error('Metadata request error:', error);
-    // Return minimal valid metadata on error
+    // Return minimal valid metadata on error with Android TV compatibility
     res.status(200).json({
       MediaContainer: {
         size: 1,
+        identifier: "com.plexapp.plugins.library",
+        librarySectionID: 1,
+        librarySectionTitle: "Live TV",
         Video: [{
           ratingKey: req.params.metadataId,
           type: "episode",
           title: "Live TV",
+          grandparentTitle: "Live TV",
+          parentTitle: "Live Programming",
           duration: 86400000,
-          live: 1
+          live: 1,
+          
+          // CRITICAL: Android TV fields to prevent "type 5" errors
+          contentType: 4, // Use type 4 (episode) not type 5 (trailer)
+          metadata_type: 'episode',
+          mediaType: 'episode',
+          index: 1,
+          parentIndex: 1,
+          year: new Date().getFullYear(),
+          summary: "Live television programming"
         }]
       }
     });
@@ -625,6 +644,42 @@ router.get('/library/metadata/:metadataId/:imageType', (req, res) => {
   });
   
   res.send(pixel);
+});
+
+// Catch-all route for any library requests that aren't handled
+router.get('/library/*', (req, res) => {
+  logger.debug('Catch-all library request', { 
+    url: req.url,
+    userAgent: req.get('User-Agent')
+  });
+  
+  // Always return valid JSON MediaContainer to prevent HTML errors
+  res.set({
+    'Content-Type': 'application/json; charset=utf-8',
+    'Cache-Control': 'no-cache'
+  });
+  
+  res.json({
+    MediaContainer: {
+      size: 0,
+      identifier: "com.plexapp.plugins.library",
+      librarySectionID: 1,
+      librarySectionTitle: "Live TV",
+      allowSync: 0,
+      art: "/:/resources/show-fanart.jpg",
+      banner: "/:/resources/show-banner.jpg",
+      key: "/library/sections/1",
+      primary: "photo",
+      prompt: "Search Live TV",
+      searchTypes: "",
+      theme: "/:/resources/show-theme.mp3",
+      thumb: "/:/resources/show.png",
+      title1: "Live TV",
+      title2: "",
+      viewGroup: "show",
+      viewMode: 65592
+    }
+  });
 });
 
 // Live TV sessions endpoint - handles Plex Live TV session requests
