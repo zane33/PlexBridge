@@ -1651,6 +1651,7 @@ class StreamManager {
         secChUa: req?.headers?.['sec-ch-ua']
       });
       
+<<<<<<< HEAD
       // Detect web browser clients that need copy codecs instead of hardware transcoding
       // Use same logic as streams.js for consistency
       const isWebBrowser = (userAgent && (
@@ -1668,22 +1669,13 @@ class StreamManager {
       userAgent.toLowerCase().includes('gecko') ||
       (req?.headers?.['sec-ch-ua'] && !userAgent.toLowerCase().includes('android'));
       
+=======
+>>>>>>> parent of da729fe (experimental stream fixes)
       // Get configurable FFmpeg command line - use transcoding if forceTranscode is enabled
       let ffmpegCommand;
       if (forceTranscode) {
-        // CRITICAL: Web browsers crash with hardware transcoding - force copy codecs
-        if (isWebBrowser) {
-          logger.info('Web browser detected with forceTranscode - overriding to copy codecs for stability', {
-            channelId: channel.id,
-            streamId: stream?.id,
-            streamName: stream?.name,
-            userAgent: userAgent,
-            originalForceTranscode: true
-          });
-          
-          // Force copy codecs for web browsers to prevent crashes
-          ffmpegCommand = '-hide_banner -loglevel error -fflags +genpts+igndts+flush_packets -avoid_negative_ts make_zero -reconnect 1 -reconnect_at_eof 1 -reconnect_delay_max 4 -timeout 10000000 -i [URL] -c:v copy -c:a copy -f mpegts -muxdelay 0 -flush_packets 1 pipe:1';
-        } else if (isAndroidTV) {
+        // Use transcoding for streams that require it
+        if (isAndroidTV) {
           // Android TV specific transcoding to prevent buffering
           ffmpegCommand = settings?.plexlive?.transcoding?.androidtv?.transcodingArgs ||
                          settings?.plexlive?.transcoding?.mpegts?.transcodingArgs || 
@@ -1742,6 +1734,7 @@ class StreamManager {
       
       // Enhanced encoding integration for unreliable streams
       try {
+<<<<<<< HEAD
         // Detect web browser clients that need enhanced encoding copy codecs
         // Use same comprehensive detection logic as forceTranscode path
         const isWebBrowser = (userAgent && (
@@ -1759,6 +1752,8 @@ class StreamManager {
         userAgent.toLowerCase().includes('gecko') ||
         (req?.headers?.['sec-ch-ua'] && !userAgent.toLowerCase().includes('android'));
         
+=======
+>>>>>>> parent of da729fe (experimental stream fixes)
         // Only apply enhanced encoding if stream object exists and has properties
         if (stream && (stream.enhanced_encoding || channel?.number === 505)) {
           const { getStreamConfiguration } = require('../utils/enhancedEncoding');
@@ -1766,44 +1761,14 @@ class StreamManager {
           
           // Check if enhanced encoding should be applied
           if (streamConfig.encoding_profile !== 'standard-reliability') {
-            // CRITICAL: Web browsers crash with hardware transcoding, force copy codecs
-            if (isWebBrowser && streamConfig.ffmpeg_options.some(arg => arg.includes('libx264') || arg.includes('nvenc') || arg.includes('vaapi'))) {
-              logger.info('Web browser detected - forcing copy codecs for enhanced encoding stability', {
-                channelId: channel.id,
-                channelNumber: channel.number,
-                channelName: channel.name,
-                originalProfile: streamConfig.encoding_profile,
-                userAgent: userAgent
-              });
-              
-              // Force copy codecs for web browsers to prevent hardware transcoding crashes
-              args = [
-                '-hide_banner',
-                '-loglevel', 'error',
-                '-fflags', '+genpts+igndts+flush_packets',
-                '-avoid_negative_ts', 'make_zero',
-                '-reconnect', '1',
-                '-reconnect_at_eof', '1',
-                '-reconnect_delay_max', '4',
-                '-timeout', '10000000',
-                '-i', finalStreamUrl,
-                '-c:v', 'copy',  // Force copy video codec
-                '-c:a', 'copy',  // Force copy audio codec
-                '-f', 'mpegts',
-                '-muxdelay', '0',
-                '-flush_packets', '1',
-                'pipe:1'
-              ];
-            } else {
-              logger.info('Applying enhanced encoding for unreliable stream', {
-                channelId: channel.id,
-                channelNumber: channel.number,
-                channelName: channel.name,
-                profile: streamConfig.encoding_profile,
-                description: streamConfig.profile_description,
-                antiLoop: streamConfig.encoding_profile === 'anti-loop',
-                isWebBrowser: isWebBrowser
-              });
+            logger.info('Applying enhanced encoding for unreliable stream', {
+              channelId: channel.id,
+              channelNumber: channel.number,
+              channelName: channel.name,
+              profile: streamConfig.encoding_profile,
+              description: streamConfig.profile_description,
+              antiLoop: streamConfig.encoding_profile === 'anti-loop'
+            });
             
             // For anti-loop profile, completely replace args to prevent conflicts
             if (streamConfig.encoding_profile === 'anti-loop') {
@@ -1822,7 +1787,6 @@ class StreamManager {
                 profile: streamConfig.encoding_profile,
                 argCount: args.length
               });
-            }
             }
           }
         }
