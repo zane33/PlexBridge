@@ -1638,59 +1638,13 @@ class StreamManager {
         streamId: stream?.id,
         streamName: stream?.name,
         forceTranscode,
-<<<<<<< HEAD
-        transcodeMode: forceTranscode ? 'H.264/AAC' : 'codec_copy',
-        userAgent: userAgent,
-        isWebBrowser: isWebBrowser,
-        isAndroidTV: isAndroidTV,
-<<<<<<< HEAD
-        referer: req?.headers?.referer,
-        plexProduct: req?.headers?.['x-plex-product'],
-        secChUa: req?.headers?.['sec-ch-ua']
-=======
         transcodeMode: forceTranscode ? 'H.264/AAC' : 'codec_copy'
->>>>>>> parent of 2b1e140 (updates)
-=======
-        referer: req.headers.referer,
-        plexProduct: req.headers['x-plex-product'],
-        secChUa: req.headers['sec-ch-ua']
->>>>>>> parent of d672a0f (updates)
       });
 
       // Check if request is from Android TV for specific optimizations
       const userAgent = req.get('User-Agent') || '';
       const isAndroidTV = userAgent.toLowerCase().includes('android') || userAgent.toLowerCase().includes('shield');
       
-<<<<<<< HEAD
-<<<<<<< HEAD
-      // Detect web browser clients that need copy codecs instead of hardware transcoding
-      const isWebBrowser = userAgent && (
-        userAgent.toLowerCase().includes('mozilla') ||
-        userAgent.toLowerCase().includes('chrome') ||
-        userAgent.toLowerCase().includes('firefox') ||
-        userAgent.toLowerCase().includes('safari')
-<<<<<<< HEAD
-      )) || 
-      // Also detect Plex web app specifically
-      (req.headers.referer?.includes('plex') && !userAgent.toLowerCase().includes('android')) ||
-      req.headers['x-plex-product'] === 'Plex Web' ||
-      req.query.format === 'mpegts' ||
-      // Additional web detection patterns
-      userAgent.toLowerCase().includes('webkit') ||
-      userAgent.toLowerCase().includes('gecko') ||
-<<<<<<< HEAD
-      (req?.headers?.['sec-ch-ua'] && !userAgent.toLowerCase().includes('android'));
-=======
-      );
->>>>>>> parent of 2b1e140 (updates)
-=======
-      (req.headers['sec-ch-ua'] && !userAgent.toLowerCase().includes('android'));
->>>>>>> parent of d672a0f (updates)
-      
-=======
->>>>>>> parent of da729fe (experimental stream fixes)
-=======
->>>>>>> parent of da729fe (experimental stream fixes)
       // Get configurable FFmpeg command line - use transcoding if forceTranscode is enabled
       let ffmpegCommand;
       if (forceTranscode) {
@@ -1754,36 +1708,6 @@ class StreamManager {
       
       // Enhanced encoding integration for unreliable streams
       try {
-<<<<<<< HEAD
-<<<<<<< HEAD
-        // Detect web browser clients that need enhanced encoding copy codecs
-        const isWebBrowser = userAgent && (
-          userAgent.toLowerCase().includes('mozilla') ||
-          userAgent.toLowerCase().includes('chrome') ||
-          userAgent.toLowerCase().includes('firefox') ||
-          userAgent.toLowerCase().includes('safari')
-<<<<<<< HEAD
-        )) || 
-        // Also detect Plex web app specifically
-        (req.headers.referer?.includes('plex') && !userAgent.toLowerCase().includes('android')) ||
-        req.headers['x-plex-product'] === 'Plex Web' ||
-        req.query.format === 'mpegts' ||
-        // Additional web detection patterns
-        userAgent.toLowerCase().includes('webkit') ||
-        userAgent.toLowerCase().includes('gecko') ||
-<<<<<<< HEAD
-        (req?.headers?.['sec-ch-ua'] && !userAgent.toLowerCase().includes('android'));
-=======
-        );
->>>>>>> parent of 2b1e140 (updates)
-=======
-        (req.headers['sec-ch-ua'] && !userAgent.toLowerCase().includes('android'));
->>>>>>> parent of d672a0f (updates)
-        
-=======
->>>>>>> parent of da729fe (experimental stream fixes)
-=======
->>>>>>> parent of da729fe (experimental stream fixes)
         // Only apply enhanced encoding if stream object exists and has properties
         if (stream && (stream.enhanced_encoding || channel?.number === 505)) {
           const { getStreamConfiguration } = require('../utils/enhancedEncoding');
