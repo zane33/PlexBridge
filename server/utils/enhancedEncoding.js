@@ -9,10 +9,10 @@ const logger = require('./logger');
  * Enhanced encoding configuration for unreliable streams
  */
 const ENHANCED_ENCODING_PROFILES = {
-  // High reliability profile for problematic streams like  Sports 505 AU with anti-loop protection
+  // High reliability profile for problematic streams - FIXED for PPS errors
   'high-reliability': {
-    name: 'High Reliability',
-    description: 'Enhanced encoding for unreliable upstream sources with anti-loop protection',
+    name: 'High Reliability (PPS Error Fixed)',
+    description: 'Enhanced encoding for unreliable upstream sources with H.264 error recovery',
     ffmpeg_options: [
       // Input optimization for unreliable streams
       '-reconnect', '1',
@@ -22,49 +22,49 @@ const ENHANCED_ENCODING_PROFILES = {
       '-timeout', '10000000', // 10 second timeout
       '-user_agent', 'PlexBridge/1.0',
       
-      // CRITICAL: Stream reliability settings
+      // CRITICAL: H.264 error recovery settings to fix PPS issues
+      '-err_detect', 'ignore_err', // Ignore minor H.264 errors
+      '-fflags', '+genpts+igndts+discardcorrupt', // Discard corrupt packets that cause PPS errors
+      '-skip_frame', 'noref', // Skip non-reference frames if corrupted
+      
+      // Stream reliability settings
       '-seekable', '0',  // Disable seeking to prevent loop-back
-      '-thread_queue_size', '1024', // Thread queue for stability
+      '-thread_queue_size', '512', // Reduced for stability
       
-      // Advanced buffer management for Plex compatibility
-      '-fflags', '+genpts+igndts+flush_packets',  // Generate PTS, ignore DTS, flush packets
+      // Conservative buffer management to avoid PPS corruption
       '-avoid_negative_ts', 'make_zero',
-      '-max_delay', '5000000', // 5 second max delay for better stability
-      '-rtbufsize', '2048k',    // Increased buffer for consumer session stability
-      '-probesize', '5000000', // Larger probe size for better stream analysis
-      '-analyzeduration', '5000000', // Longer analysis for stability
-      '-err_detect', 'ignore_err', // Ignore minor errors that could crash stream
+      '-max_delay', '2000000', // Reduced to 2 seconds to prevent buffer corruption
+      '-rtbufsize', '1024k',   // Reduced buffer size for faster recovery
+      '-probesize', '2000000', // Smaller probe to avoid corrupt header analysis
+      '-analyzeduration', '2000000', // Shorter analysis to prevent PPS corruption
       
-      // Timestamp handling for HLS loop prevention
-      '-copyts',              // Copy original timestamps
-      '-start_at_zero',       // Start timestamps at zero
-      // Removed wallclock timestamps as it causes session sync issues
-      // '-use_wallclock_as_timestamps', '1', // Causes consumer session loss
-      // '-timestamp_monotonic', '1', // Not needed without wallclock
+      // CRITICAL: Disable problematic timestamp handling that corrupts PPS
+      // DO NOT use -copyts with problematic H.264 streams
+      '-start_at_zero',       // Start timestamps at zero only
       
-      // Video handling (copy to avoid encoding errors that cause crashes)
-      '-c:v', 'copy',          // Copy video stream to avoid H.264 encoding issues
+      // Video handling - use MINIMAL processing to avoid PPS corruption
+      '-c:v', 'copy',          // Copy video stream exactly
       
-      // Audio handling (copy to avoid encoding issues)
-      '-c:a', 'copy',          // Copy audio stream to avoid encoding issues
+      // Audio handling 
+      '-c:a', 'copy',          // Copy audio stream exactly
       
-      // Output format optimization for Plex compatibility
+      // Output format - MINIMAL MPEG-TS options to avoid header corruption
       '-f', 'mpegts',
-      '-mpegts_m2ts_mode', '1',
-      '-mpegts_copyts', '1',
-      '-mpegts_flags', '+resend_headers', // Ensure headers are sent regularly
       '-muxdelay', '0',        // No mux delay
-      '-muxpreload', '0',      // No mux preload
       '-flush_packets', '1',   // Flush packets immediately
-      '-max_muxing_queue_size', '2048', // Larger queue for stability
+      '-max_muxing_queue_size', '1024', // Smaller queue for faster recovery
       
-      // Stream reliability flags
-      '-bsf:v', 'h264_mp4toannexb', // Convert to Annex B format for MPEG-TS (if H.264)
+      // REMOVED: Problematic bitstream filters that cause PPS errors
+      // '-bsf:v', 'h264_mp4toannexb', // This was causing PPS corruption
+      // '-mpegts_m2ts_mode', '1',     // This can corrupt headers
+      // '-mpegts_copyts', '1',        // This can cause timestamp PPS issues
+      // '-mpegts_flags', '+resend_headers', // This can duplicate corrupted headers
     ],
     priority: 100,
     timeout_ms: 15000,
     retry_attempts: 3,
-    enable_monitoring: true
+    enable_monitoring: true,
+    h264_safe: true // Flag to indicate this profile is safe for H.264 streams
   },
   
   // Standard reliability profile  
@@ -151,13 +151,48 @@ const ENHANCED_ENCODING_PROFILES = {
     timeout_ms: 5000,
     retry_attempts: 1,
     enable_monitoring: false
+  },
+
+  // H.264 error recovery profile - for streams with PPS corruption issues
+  'h264-recovery': {
+    name: 'H.264 Error Recovery',
+    description: 'Specialized profile for H.264 streams with PPS/decode errors',
+    ffmpeg_options: [
+      // Minimal input processing to avoid corruption
+      '-err_detect', 'ignore_err',
+      '-fflags', '+genpts+discardcorrupt+nobuffer',
+      '-skip_frame', 'noref',
+      
+      // Very conservative analysis to avoid corrupt headers
+      '-probesize', '500000',     // Very small probe (0.5MB)
+      '-analyzeduration', '500000', // Very short analysis (0.5s)
+      '-max_delay', '0',          // No delay buffering
+      
+      // Timestamp regeneration to fix PPS timing issues
+      '-avoid_negative_ts', 'make_zero',
+      '-start_at_zero',
+      
+      // Minimal codec handling
+      '-c:v', 'copy',
+      '-c:a', 'copy',
+      
+      // Minimal MPEG-TS muxing
+      '-f', 'mpegts',
+      '-flush_packets', '1',
+      '-max_muxing_queue_size', '256' // Very small queue
+    ],
+    priority: 150, // Higher priority than high-reliability
+    timeout_ms: 8000,
+    retry_attempts: 1, // Single attempt for quick recovery
+    enable_monitoring: true,
+    h264_recovery: true // Flag for H.264 error recovery
   }
 };
 
 /**
  * Determines the best encoding profile based on stream characteristics and history
  */
-function selectEncodingProfile(streamInfo, channelNumber = null) {
+function selectEncodingProfile(streamInfo, channelNumber = null, errorHistory = null) {
   // Check for specific anti-loop needs based on channel behavior
   const loopingChannels = [505]; //  Sports 505 AU specifically exhibits looping
   const problematicChannels = [505, 506, 507]; // Add more channel numbers as needed
@@ -165,6 +200,28 @@ function selectEncodingProfile(streamInfo, channelNumber = null) {
   
   const streamName = (streamInfo.name || '').toLowerCase();
   const streamUrl = (streamInfo.url || '').toLowerCase();
+  
+  // PRIORITY 0: Check for H.264 PPS/decode errors in error history
+  if (errorHistory && Array.isArray(errorHistory)) {
+    const hasH264Errors = errorHistory.some(error => {
+      const errorMsg = error.toLowerCase();
+      return errorMsg.includes('pps') || 
+             errorMsg.includes('decode_slice_header') || 
+             errorMsg.includes('no frame!') ||
+             errorMsg.includes('non-existing pps') ||
+             errorMsg.includes('h264');
+    });
+    
+    if (hasH264Errors) {
+      logger.warn('Detected H.264 PPS/decode errors, using h264-recovery profile', {
+        channelNumber,
+        streamName: streamInfo.name,
+        profile: 'h264-recovery',
+        errorSample: errorHistory.slice(0, 3)
+      });
+      return 'h264-recovery';
+    }
+  }
   
   // PRIORITY 1: Check for known looping channels first
   if (channelNumber && loopingChannels.includes(channelNumber)) {

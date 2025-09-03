@@ -18,22 +18,31 @@ echo ""
 
 # Test 1: Check health endpoint
 echo "1. Testing health endpoint..."
-curl -s "$BASE_URL/health" | jq '.status' 2>/dev/null || echo "Health check failed"
+HEALTH_RESPONSE=$(curl -s "$BASE_URL/health")
+if echo "$HEALTH_RESPONSE" | grep -q '"status"'; then
+    echo "✓ Health endpoint is working!"
+else
+    echo "✗ Health check failed"
+fi
 echo ""
 
 # Test 2: Test /consumer/ endpoint (existing)
 echo "2. Testing /consumer/ endpoint..."
-curl -s "$BASE_URL/consumer/$TEST_SESSION_ID" | jq '.consumer.available' 2>/dev/null || echo "Consumer endpoint not available"
+CONSUMER_RESPONSE=$(curl -s "$BASE_URL/consumer/$TEST_SESSION_ID")
+if echo "$CONSUMER_RESPONSE" | grep -q '"success":true'; then
+    echo "✓ /consumer/ endpoint is working!"
+else
+    echo "✗ Consumer endpoint not available"
+fi
 echo ""
 
 # Test 3: Test new /Live/ endpoint (capital L)
 echo "3. Testing /Live/ endpoint (capital L - NEW)..."
-RESPONSE=$(curl -s "$BASE_URL/Live/$TEST_SESSION_ID")
-if echo "$RESPONSE" | jq '.consumer.available' 2>/dev/null; then
+LIVE_RESPONSE=$(curl -s "$BASE_URL/Live/$TEST_SESSION_ID")
+if echo "$LIVE_RESPONSE" | grep -q '"success":true'; then
     echo "✓ /Live/ endpoint is working!"
 else
     echo "✗ /Live/ endpoint failed or not found"
-    echo "Response: $RESPONSE"
 fi
 echo ""
 
