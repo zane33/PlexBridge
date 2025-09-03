@@ -1646,9 +1646,9 @@ class StreamManager {
         userAgent: userAgent,
         isWebBrowser: isWebBrowser,
         isAndroidTV: isAndroidTV,
-        referer: req.headers.referer,
-        plexProduct: req.headers['x-plex-product'],
-        secChUa: req.headers['sec-ch-ua']
+        referer: req?.headers?.referer,
+        plexProduct: req?.headers?.['x-plex-product'],
+        secChUa: req?.headers?.['sec-ch-ua']
       });
       
       // Detect web browser clients that need copy codecs instead of hardware transcoding
@@ -1659,14 +1659,14 @@ class StreamManager {
         userAgent.toLowerCase().includes('firefox') ||
         userAgent.toLowerCase().includes('safari')
       )) || 
-      // Also detect Plex web app specifically
-      (req.headers.referer?.includes('plex') && !userAgent.toLowerCase().includes('android')) ||
-      req.headers['x-plex-product'] === 'Plex Web' ||
-      req.query.format === 'mpegts' ||
+      // Also detect Plex web app specifically (with safe null checks)
+      (req?.headers?.referer?.includes('plex') && !userAgent.toLowerCase().includes('android')) ||
+      req?.headers?.['x-plex-product'] === 'Plex Web' ||
+      req?.query?.format === 'mpegts' ||
       // Additional web detection patterns
       userAgent.toLowerCase().includes('webkit') ||
       userAgent.toLowerCase().includes('gecko') ||
-      (req.headers['sec-ch-ua'] && !userAgent.toLowerCase().includes('android'));
+      (req?.headers?.['sec-ch-ua'] && !userAgent.toLowerCase().includes('android'));
       
       // Get configurable FFmpeg command line - use transcoding if forceTranscode is enabled
       let ffmpegCommand;
@@ -1750,14 +1750,14 @@ class StreamManager {
           userAgent.toLowerCase().includes('firefox') ||
           userAgent.toLowerCase().includes('safari')
         )) || 
-        // Also detect Plex web app specifically
-        (req.headers.referer?.includes('plex') && !userAgent.toLowerCase().includes('android')) ||
-        req.headers['x-plex-product'] === 'Plex Web' ||
-        req.query.format === 'mpegts' ||
+        // Also detect Plex web app specifically (with safe null checks)
+        (req?.headers?.referer?.includes('plex') && !userAgent.toLowerCase().includes('android')) ||
+        req?.headers?.['x-plex-product'] === 'Plex Web' ||
+        req?.query?.format === 'mpegts' ||
         // Additional web detection patterns
         userAgent.toLowerCase().includes('webkit') ||
         userAgent.toLowerCase().includes('gecko') ||
-        (req.headers['sec-ch-ua'] && !userAgent.toLowerCase().includes('android'));
+        (req?.headers?.['sec-ch-ua'] && !userAgent.toLowerCase().includes('android'));
         
         // Only apply enhanced encoding if stream object exists and has properties
         if (stream && (stream.enhanced_encoding || channel?.number === 505)) {
