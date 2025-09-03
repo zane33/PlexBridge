@@ -46,8 +46,7 @@ function ensureAndroidTVCompatibility(program, channel) {
   // Add proper metadata type for Android TV (must be exactly what Plex expects)
   program.type = 'episode'; // Plex Android TV expects 'episode' for live TV programs
   program.metadata_type = 'episode';
-  program.mediaType = 'episode'; // Additional type field for compatibility
-  program.content_type = 'episode'; // Use episode type consistently
+  program.content_type = 5; // Type 5 is Live TV in Plex
   
   // Add required episode metadata for Android TV
   program.grandparentTitle = channel?.name || 'Live TV';
@@ -64,7 +63,7 @@ function ensureAndroidTVCompatibility(program, channel) {
   program.originalTitle = program.originalTitle || program.title;
   program.summary = program.description;
   program.year = program.year || new Date().getFullYear();
-  program.duration = program.duration || 86400000; // 24 hours in milliseconds for Live TV
+  program.duration = program.duration || 3600000; // 1 hour in milliseconds
   
   // Add live TV specific fields
   program.live = 1;
@@ -93,7 +92,7 @@ function generateFallbackProgram(channel, startTime = new Date(), durationHours 
     end_time: endTime.toISOString(),
     category: 'Live TV',
     metadata_type: 'live_tv',
-    content_type: 4,
+    content_type: 5,
     is_fallback: true
   };
 }
@@ -114,7 +113,7 @@ function enhanceLineupForAndroidTV(lineup) {
       
       // Android TV specific enhancements
       MediaType: 'LiveTV',
-      ContentType: 4,
+      ContentType: 5,
       HasTitle: true,
       HasDescription: true,
       

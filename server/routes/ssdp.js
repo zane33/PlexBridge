@@ -7,6 +7,8 @@ const logger = require('../utils/logger');
 const { cacheMiddleware, responseTimeMonitor, generateLightweightEPG } = require('../utils/performanceOptimizer');
 const cacheService = require('../services/cacheService');
 const { getSessionManager } = require('../utils/sessionPersistenceFix');
+const { enhanceLineupForStreamingDecisions, validateStreamingMetadata, generateDeviceXMLWithStreamingInfo } = require('../utils/streamingDecisionFix');
+const { channelSwitchingMiddleware, optimizeLineupForChannelSwitching } = require('../utils/channelSwitchingFix');
 
 // HDHomeRun discovery endpoint with caching
 router.get('/discover.json', cacheMiddleware('discover'), responseTimeMonitor(100), async (req, res) => {
@@ -223,14 +225,32 @@ router.get('/lineup.json', async (req, res) => {
     
     const baseURL = baseHost.startsWith('http') ? baseHost : `http://${baseHost}`;
     
-    // Create simple, working lineup for Plex
-    const lineup = channels.map(channel => ({
+    // Create enhanced lineup for Android TV compatibility
+    let lineup = channels.map(channel => ({
       GuideNumber: channel.number.toString(),
       GuideName: channel.name,
-      VideoCodec: 'MPEG2', // Simple codec for Plex compatibility
-      AudioCodec: 'AC3',
-      URL: `${baseURL}/stream/${channel.id}`
+      VideoCodec: 'H264', // H264 for better Android TV support
+      AudioCodec: 'AAC',
+      Container: 'MPEGTS',
+      URL: `${baseURL}/stream/${channel.id}`,
+      // Android TV compatibility fields
+      MediaType: 'LiveTV',
+      ContentType: 5,
+      Live: true
     }));
+    
+    // Detect Android TV clients and optimize lineup
+    const userAgent = req.get('User-Agent') || '';
+    const isAndroidTV = userAgent.toLowerCase().includes('androidtv') || 
+                       userAgent.toLowerCase().includes('android tv') ||
+                       userAgent.toLowerCase().includes('nexusplayer') ||
+                       userAgent.toLowerCase().includes('mibox') ||
+                       userAgent.toLowerCase().includes('shield');
+    
+    if (isAndroidTV) {
+      lineup = optimizeLineupForChannelSwitching(lineup, true);
+      lineup = enhanceLineupForStreamingDecisions(lineup, true);
+    }
 
     logger.debug('Channel lineup request', { 
       channelCount: lineup.length,
@@ -306,7 +326,14 @@ router.get('/consumer/:sessionId/:action?', async (req, res) => {
     // Get session status for better consumer response
     const sessionStatus = sessionManager ? sessionManager.getSessionStatus(sessionId) : null;
     
-    res.json({
+    // Detect Android TV for enhanced consumer response
+    const isAndroidTV = userAgent.toLowerCase().includes('androidtv') || 
+                       userAgent.toLowerCase().includes('android tv') ||
+                       userAgent.toLowerCase().includes('nexusplayer') ||
+                       userAgent.toLowerCase().includes('mibox') ||
+                       userAgent.toLowerCase().includes('shield');
+    
+    const consumerResponse = {
       success: true,
       sessionId: sessionId,
       status: sessionStatus?.exists ? 'active' : 'available',
@@ -318,7 +345,17 @@ router.get('/consumer/:sessionId/:action?', async (req, res) => {
         lastActivity: Date.now(),
         status: 'connected',
         instanceAvailable: sessionStatus?.instanceAvailable || true,
-        hasConsumer: sessionStatus?.hasConsumer || true
+        hasConsumer: sessionStatus?.hasConsumer || true,
+        
+        // Android TV specific consumer fields
+        ...(isAndroidTV && {
+          ready: true,
+          buffering: false,
+          clientType: 'AndroidTV',
+          metadata_type: 'episode',
+          contentType: 4,
+          live: 1
+        })
       },
       session: sessionStatus ? {
         exists: sessionStatus.exists,
@@ -326,7 +363,9 @@ router.get('/consumer/:sessionId/:action?', async (req, res) => {
         isMapped: sessionStatus.isMapped
       } : null,
       timestamp: new Date().toISOString()
-    });
+    };
+    
+    res.json(consumerResponse);
   } catch (error) {
     logger.error('Consumer tracking error:', error);
     // Always succeed to prevent crashes but include consumer object
@@ -363,7 +402,7 @@ router.get('/timeline/:itemId?', async (req, res) => {
         Timeline: [{
           state: "playing",
           type: "video",
-          itemType: "episode",
+          itemType: "episode", // Android TV expects episode type for live TV
           ratingKey: itemId || "18961",
           key: `/library/metadata/${itemId || "18961"}`,
           playQueueItemID: parseInt(itemId) || 18961,
@@ -388,7 +427,22 @@ router.get('/timeline/:itemId?', async (req, res) => {
           protocol: "http",
           address: req.get('host'),
           port: process.env.PORT || 3000,
-          machineIdentifier: process.env.DEVICE_UUID || 'plextv-001'
+          machineIdentifier: process.env.DEVICE_UUID || 'plextv-001',
+          
+          // Android TV specific metadata fields to fix "type 5" errors
+          contentType: 4, // Use type 4 (episode) instead of type 5 (trailer) for Android TV
+          metadata_type: 'episode',
+          mediaType: 'episode',
+          live: 1,
+          grandparentTitle: 'Live TV',
+          parentTitle: 'Live Programming',
+          title: 'Live Stream',
+          originalTitle: 'Live Stream',
+          summary: 'Live television programming',
+          index: 1,
+          parentIndex: 1,
+          year: new Date().getFullYear(),
+          guid: `plexbridge://timeline/${itemId || Date.now()}`
         }]
       }
     };

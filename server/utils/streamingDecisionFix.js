@@ -86,7 +86,7 @@ function enhanceLineupForStreamingDecisions(channels, baseURL, currentPrograms =
       // Live TV metadata
       Live: true,
       MediaType: 'LiveTV',
-      ContentType: '4', // Episode content type for Live TV
+      ContentType: '5', // Live TV content type
       StreamType: 'live',
       
       // Transcoding hints for Android TV
@@ -114,7 +114,7 @@ function enhanceLineupForStreamingDecisions(channels, baseURL, currentPrograms =
       // Explicit metadata type for Android TV (fixes "Unknown metadata type" errors)
       type: 'episode', // Plex Android TV expects episode type for live TV
       metadata_type: 'episode', // Backup metadata type identifier
-      contentType: 4, // Episode content type (NOT 5 which is for trailers)
+      contentType: 5, // Live TV content type
       mediaType: 'episode', // Media type for Plex decision making
       
       // Episode metadata structure for Android TV compatibility
@@ -218,7 +218,7 @@ function validateStreamingMetadata(lineup) {
           case 'VideoCodec': channel[field] = 'h264'; break;
           case 'AudioCodec': channel[field] = 'aac'; break;
           case 'MediaType': channel[field] = 'LiveTV'; break;
-          case 'ContentType': channel[field] = '4'; break;
+          case 'ContentType': channel[field] = '5'; break;
           case 'GuideNumber': channel[field] = '0'; break;
           case 'GuideName': channel[field] = 'Unknown'; break;
           case 'URL': channel[field] = '#'; break;
