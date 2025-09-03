@@ -1069,6 +1069,168 @@ router.get('/Live/:sessionId/:action', async (req, res) => {
   }
 });
 
+// POST handlers for /Live/ endpoints (some Plex versions use POST)
+router.post('/Live/:sessionId', async (req, res) => {
+  try {
+    const { sessionId } = req.params;
+    
+    logger.info('Plex /Live/ POST request', {
+      sessionId,
+      body: req.body,
+      userAgent: req.get('User-Agent')
+    });
+    
+    // Update or create session
+    const sessionManager = getSessionManager();
+    if (sessionId && sessionManager) {
+      sessionManager.updateSessionActivity(sessionId);
+      
+      const sessionStatus = sessionManager.getSessionStatus(sessionId);
+      if (!sessionStatus.exists) {
+        sessionManager.createSession('live', sessionId, '', {
+          userAgent: req.get('User-Agent'),
+          isConsumerEndpoint: true,
+          method: 'POST'
+        });
+      }
+    }
+    
+    res.set({
+      'Content-Type': 'application/json; charset=utf-8',
+      'Cache-Control': 'no-cache'
+    });
+    
+    res.json({
+      success: true,
+      sessionId: sessionId,
+      consumer: {
+        id: sessionId,
+        available: true,
+        active: true,
+        state: 'streaming'
+      }
+    });
+  } catch (error) {
+    logger.error('/Live/ POST error:', error);
+    res.status(200).json({
+      success: true,
+      consumer: { available: true }
+    });
+  }
+});
+
+// Catch-all for any /Live/* requests not handled above
+router.all('/Live/*', async (req, res) => {
+  const path = req.path;
+  const sessionId = path.split('/')[2]; // Extract session ID from path
+  
+  logger.warn('Unhandled /Live/ request', {
+    method: req.method,
+    path: req.path,
+    sessionId,
+    userAgent: req.get('User-Agent')
+  });
+  
+  // Always return success to prevent crashes
+  res.set({
+    'Content-Type': 'application/json; charset=utf-8',
+    'Cache-Control': 'no-cache'
+  });
+  
+  res.json({
+    success: true,
+    consumer: {
+      available: true,
+      active: true,
+      state: 'streaming'
+    }
+  });
+});
+
+// Transcode endpoints - handle Plex transcoding session requests
+router.get('/Transcode/:sessionId', async (req, res) => {
+  try {
+    const { sessionId } = req.params;
+    
+    logger.info('Plex Transcode session request', {
+      sessionId,
+      query: req.query,
+      userAgent: req.get('User-Agent')
+    });
+    
+    // Return transcoding session info
+    res.set({
+      'Content-Type': 'application/json; charset=utf-8',
+      'Cache-Control': 'no-cache'
+    });
+    
+    res.json({
+      sessionId: sessionId,
+      status: 'running',
+      progress: -1, // Live stream, no fixed progress
+      duration: 86400000, // 24 hours for live
+      speed: 1.0,
+      throttled: false,
+      complete: false,
+      context: 'streaming',
+      videoDecision: 'directplay',
+      audioDecision: 'directplay',
+      protocol: 'http',
+      container: 'mpegts',
+      videoCodec: 'h264',
+      audioCodec: 'aac',
+      transcodeHwRequested: false,
+      transcodeHwFullPipeline: false
+    });
+  } catch (error) {
+    logger.error('Transcode session error:', error);
+    res.status(200).json({
+      sessionId: req.params.sessionId,
+      status: 'running'
+    });
+  }
+});
+
+// Transcode runner status endpoint
+router.get('/Transcode/:sessionId/status', async (req, res) => {
+  try {
+    const { sessionId } = req.params;
+    
+    logger.debug('Transcode status check', { sessionId });
+    
+    res.json({
+      sessionId: sessionId,
+      alive: true,
+      status: 'running',
+      lastActivity: Date.now()
+    });
+  } catch (error) {
+    logger.error('Transcode status error:', error);
+    res.status(200).json({ alive: true });
+  }
+});
+
+// Handle POST to Transcode endpoints
+router.post('/Transcode/:sessionId', async (req, res) => {
+  try {
+    const { sessionId } = req.params;
+    
+    logger.info('Transcode POST request', {
+      sessionId,
+      body: req.body
+    });
+    
+    res.json({
+      success: true,
+      sessionId: sessionId,
+      status: 'running'
+    });
+  } catch (error) {
+    logger.error('Transcode POST error:', error);
+    res.status(200).json({ success: true });
+  }
+});
+
 // Tuner status endpoint
 router.get('/tuner.json', (req, res) => {
   try {

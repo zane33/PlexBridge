@@ -57,6 +57,16 @@ else
 fi
 echo ""
 
+# Test 7: Test Transcode endpoints
+echo "7. Testing Transcode endpoints..."
+curl -s "$BASE_URL/Transcode/$TEST_SESSION_ID" | jq '.status' 2>/dev/null || echo "Transcode endpoint not available"
+echo ""
+
+# Test 8: Test POST to /Live/ endpoint
+echo "8. Testing POST to /Live/ endpoint..."
+curl -s -X POST "$BASE_URL/Live/$TEST_SESSION_ID" -H "Content-Type: application/json" -d '{}' | jq '.success' 2>/dev/null || echo "POST /Live/ not available"
+echo ""
+
 echo "================================"
 echo "Test Summary:"
 echo "================================"

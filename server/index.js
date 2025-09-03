@@ -84,6 +84,10 @@ app.use(morgan('combined', { stream: { write: message => logger.info(message.tri
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 
+// Add Plex request logging middleware
+const { plexRequestLogger, malformedRequestHandler } = require('./middleware/plexRequestLogger');
+app.use(plexRequestLogger());
+
 // Make io accessible to routes
 app.set('io', io);
 
@@ -503,6 +507,9 @@ const initializeApp = async () => {
       // Add Android TV error handler after all routes
       const { androidTVErrorHandler } = require('./middleware/androidTVErrorHandler');
       app.use(androidTVErrorHandler());
+      
+      // Add malformed request error handler
+      app.use(malformedRequestHandler());
       
       logger.info('✅ API routes registered successfully with Android TV optimization');
     } catch (routeError) {
