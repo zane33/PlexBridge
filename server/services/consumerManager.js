@@ -275,8 +275,8 @@ class ConsumerManager {
     
     if (!consumer) return false;
     
-    // Check if consumer is stale (no activity for 5 minutes)
-    const staleThreshold = 5 * 60 * 1000;
+    // Check if consumer is stale (no activity for 30 minutes for live streaming)
+    const staleThreshold = 30 * 60 * 1000;
     const isStale = (Date.now() - consumer.lastActivity) > staleThreshold;
     
     return !isStale && ['streaming', 'buffering', 'paused'].includes(consumer.state);
@@ -306,7 +306,7 @@ class ConsumerManager {
    */
   cleanupStaleConsumers() {
     try {
-      const staleThreshold = 10 * 60; // 10 minutes in seconds
+      const staleThreshold = 60 * 60; // 1 hour in seconds for live streaming sessions
       
       // Remove from database
       const db = getDatabase();
@@ -342,7 +342,7 @@ class ConsumerManager {
   getActiveConsumers() {
     const activeConsumers = [];
     const now = Date.now();
-    const activeThreshold = 5 * 60 * 1000; // 5 minutes
+    const activeThreshold = 30 * 60 * 1000; // 30 minutes for live streaming
     
     for (const consumer of this.consumers.values()) {
       if ((now - consumer.lastActivity) <= activeThreshold &&

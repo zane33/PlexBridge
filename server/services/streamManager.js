@@ -2998,7 +2998,7 @@ const streamManager = new StreamManager();
 // Periodic cleanup of stale sessions (every 5 minutes)
 setInterval(() => {
   const now = Date.now();
-  const maxSessionAge = 60 * 60 * 1000; // 1 hour
+  const maxSessionAge = 4 * 60 * 60 * 1000; // 4 hours for live streaming sessions
   
   for (const [sessionId, stream] of streamManager.activeStreams) {
     if (now - stream.startTime > maxSessionAge) {

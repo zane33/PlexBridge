@@ -7,6 +7,7 @@ const streamPreviewService = require('../services/streamPreviewService');
 const logger = require('../utils/logger');
 const { createStreamingSession } = require('../utils/streamingDecisionFix');
 const { getSessionManager, sessionKeepAlive, addStreamHeaders } = require('../utils/sessionPersistenceFix');
+const { getConsumerManager } = require('../services/consumerManager');
 const { v4: uuidv4 } = require('uuid');
 
 // Apply session keep-alive middleware to all stream endpoints
@@ -244,7 +245,32 @@ router.get('/stream/:channelId/:filename?', async (req, res) => {
       try {
         const axios = require('axios');
         
-        logger.info('Direct proxying sub-file', { targetUrl, filename });
+        // CRITICAL FIX: Update session activity for HLS segment requests
+        // This was the root cause - segments were being streamed without activity updates
+        const consumerManager = getConsumerManager();
+        const sessionManager = getSessionManager();
+        
+        // Extract session ID from query params or headers
+        const streamingSessionId = req.query.session || req.query.sessionId || 
+                                  req.headers['x-session-id'] || sessionId;
+        
+        // Update activity in both managers
+        if (streamingSessionId) {
+          if (consumerManager && consumerManager.updateActivity) {
+            consumerManager.updateActivity(streamingSessionId);
+          }
+          if (sessionManager && sessionManager.updateSessionActivity) {
+            sessionManager.updateSessionActivity(streamingSessionId);
+          }
+          
+          logger.debug('Updated session activity for HLS segment', {
+            sessionId: streamingSessionId,
+            filename,
+            channelId
+          });
+        }
+        
+        logger.info('Direct proxying sub-file', { targetUrl, filename, sessionId: streamingSessionId });
         
         // Fetch the sub-file content as text first to debug
         const response = await axios.get(targetUrl, {

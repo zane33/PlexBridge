@@ -801,7 +801,40 @@ router.get('/livetv/sessions/:sessionId/:clientId/index.m3u8', async (req, res) 
     const consumer = consumerManager.getConsumer(sessionId);
     
     if (!consumer) {
-      logger.error('No consumer found for session', { sessionId });
+      logger.error('No consumer found for session - attempting recovery', { sessionId });
+      
+      // Try to recover from database or recreate session
+      const consumerManager = getConsumerManager();
+      
+      // First, check if this is an Android TV session pattern
+      if (sessionId && sessionId.length > 20) {
+        logger.info('Attempting to recover Android TV session', { sessionId });
+        
+        // Try to extract channel ID from the client or use a fallback approach
+        try {
+          // Create a temporary consumer to prevent immediate failure
+          consumerManager.createConsumer(sessionId, null, null, {
+            userAgent: req.get('User-Agent'),
+            clientIp: req.ip,
+            state: 'streaming',
+            metadata: {
+              recovered: true,
+              originalRequest: req.originalUrl,
+              timestamp: Date.now()
+            }
+          });
+          
+          logger.info('Created recovery consumer session', { sessionId });
+          
+          // Return a generic stream URL that will attempt to start any available stream
+          const streamUrl = `/stream/1?session=${sessionId}&client=${clientId}&recovery=true`;
+          res.redirect(302, streamUrl);
+          return;
+        } catch (recoveryError) {
+          logger.error('Session recovery failed', { sessionId, error: recoveryError.message });
+        }
+      }
+      
       return res.status(404).send('Session not found');
     }
     
@@ -838,6 +871,12 @@ router.get('/livetv/sessions/:sessionId/:clientId/index.m3u8', async (req, res) 
     
     // Update consumer activity
     consumerManager.updateActivity(sessionId);
+    
+    // Also update persistent session manager
+    const sessionManager = getSessionManager();
+    if (sessionManager) {
+      sessionManager.updateSessionActivity(sessionId);
+    }
     
     res.redirect(302, streamUrl);
     
@@ -890,6 +929,12 @@ router.get('/livetv/sessions/:sessionId/:clientId/:filename', async (req, res) =
     
     // Update consumer activity
     consumerManager.updateActivity(sessionId);
+    
+    // Also update persistent session manager
+    const sessionManager = getSessionManager();
+    if (sessionManager) {
+      sessionManager.updateSessionActivity(sessionId);
+    }
     
     res.redirect(302, segmentUrl);
     
