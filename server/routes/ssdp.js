@@ -10,6 +10,7 @@ const { getSessionManager } = require('../utils/sessionPersistenceFix');
 const { enhanceLineupForStreamingDecisions, validateStreamingMetadata, generateDeviceXMLWithStreamingInfo } = require('../utils/streamingDecisionFix');
 const { channelSwitchingMiddleware, optimizeLineupForChannelSwitching } = require('../utils/channelSwitchingFix');
 const { getConsumerManager } = require('../services/consumerManager');
+const { v4: uuidv4 } = require('uuid');
 
 // HDHomeRun discovery endpoint with caching
 router.get('/discover.json', cacheMiddleware('discover'), responseTimeMonitor(100), async (req, res) => {
@@ -779,6 +780,242 @@ router.post('/livetv/sessions/:sessionId', async (req, res) => {
     logger.error('Live TV session POST error:', error);
     res.status(200).json({
       MediaContainer: { size: 0 }
+    });
+  }
+});
+
+// Session-based HLS streaming endpoints for Android TV
+router.get('/livetv/sessions/:sessionId/:clientId/index.m3u8', async (req, res) => {
+  try {
+    const { sessionId, clientId } = req.params;
+    
+    logger.info('Android TV HLS index request', { 
+      sessionId, 
+      clientId,
+      query: req.query,
+      userAgent: req.get('User-Agent')
+    });
+    
+    // Get session info to determine channel
+    const consumerManager = getConsumerManager();
+    const consumer = consumerManager.getConsumer(sessionId);
+    
+    if (!consumer) {
+      logger.error('No consumer found for session', { sessionId });
+      return res.status(404).send('Session not found');
+    }
+    
+    // Validate session IP for security
+    if (consumer.clientIp && consumer.clientIp !== req.ip) {
+      logger.warn('Session IP validation failed for HLS request', { 
+        sessionId, 
+        expectedIp: consumer.clientIp,
+        requestIp: req.ip 
+      });
+      return res.status(403).send('Session access denied');
+    }
+    
+    // Get channel from consumer
+    const channel = await database.get('SELECT * FROM channels WHERE id = ?', [consumer.channelId]);
+    
+    if (!channel) {
+      logger.error('No channel found for consumer', { 
+        sessionId, 
+        channelId: consumer.channelId 
+      });
+      return res.status(404).send('Channel not found');
+    }
+    
+    // Redirect to actual stream with session tracking
+    const streamUrl = `/stream/${channel.id}?session=${sessionId}&client=${clientId}`;
+    
+    logger.info('Redirecting Android TV HLS request', {
+      sessionId,
+      clientId,
+      channelId: channel.id,
+      streamUrl
+    });
+    
+    // Update consumer activity
+    consumerManager.updateActivity(sessionId);
+    
+    res.redirect(302, streamUrl);
+    
+  } catch (error) {
+    logger.error('Session HLS index error:', error);
+    res.status(500).send('Stream unavailable');
+  }
+});
+
+// Session-based HLS segment endpoints for Android TV  
+router.get('/livetv/sessions/:sessionId/:clientId/:filename', async (req, res) => {
+  try {
+    const { sessionId, clientId, filename } = req.params;
+    
+    logger.debug('Android TV HLS segment request', { 
+      sessionId, 
+      clientId, 
+      filename,
+      query: req.query
+    });
+    
+    // Get session info
+    const consumerManager = getConsumerManager();
+    const consumer = consumerManager.getConsumer(sessionId);
+    
+    if (!consumer) {
+      return res.status(404).send('Session not found');
+    }
+    
+    // Validate session IP for security
+    if (consumer.clientIp && consumer.clientIp !== req.ip) {
+      logger.warn('Session IP validation failed for segment request', { 
+        sessionId, 
+        filename,
+        expectedIp: consumer.clientIp,
+        requestIp: req.ip 
+      });
+      return res.status(403).send('Session access denied');
+    }
+    
+    // Get channel from consumer
+    const channel = await database.get('SELECT * FROM channels WHERE id = ?', [consumer.channelId]);
+    
+    if (!channel) {
+      return res.status(404).send('Channel not found');
+    }
+    
+    // Redirect to actual stream segment
+    const segmentUrl = `/stream/${channel.id}/${filename}?session=${sessionId}&client=${clientId}`;
+    
+    // Update consumer activity
+    consumerManager.updateActivity(sessionId);
+    
+    res.redirect(302, segmentUrl);
+    
+  } catch (error) {
+    logger.error('Session HLS segment error:', error);
+    res.status(404).send('Segment unavailable');
+  }
+});
+
+// Channel tuning endpoint for Android TV
+router.post('/livetv/dvrs/:dvrId/channels/:channelNumber/tune', async (req, res) => {
+  try {
+    const { dvrId, channelNumber } = req.params;
+    const { autoPreview } = req.query;
+    
+    logger.info('Android TV channel tune request', {
+      dvrId,
+      channelNumber, 
+      autoPreview,
+      query: req.query,
+      body: req.body,
+      userAgent: req.get('User-Agent')
+    });
+    
+    // Find channel by number
+    const channel = await database.get('SELECT * FROM channels WHERE number = ?', [channelNumber]);
+    
+    if (!channel) {
+      logger.error('Channel not found for tuning', { channelNumber });
+      return res.status(404).json({
+        error: 'Channel not found',
+        channelNumber
+      });
+    }
+    
+    // Create session for this tuning request
+    const sessionId = uuidv4();
+    const clientId = req.headers['x-plex-client-identifier'] || 'android-tv-client';
+    
+    // Create consumer session with channel association
+    const consumerManager = getConsumerManager();
+    
+    // Check for existing session to prevent conflicts
+    const existingSession = consumerManager.getConsumer(sessionId);
+    if (existingSession && existingSession.clientIp !== req.ip) {
+      logger.warn('Session IP mismatch detected', { 
+        sessionId, 
+        existingIp: existingSession.clientIp,
+        requestIp: req.ip 
+      });
+      return res.status(403).json({ 
+        error: 'Session access denied',
+        code: 'SESSION_IP_MISMATCH'
+      });
+    }
+    
+    const consumer = consumerManager.createConsumer(sessionId, channel.id, null, {
+      userAgent: req.get('User-Agent'),
+      clientIp: req.ip,
+      state: 'streaming',
+      metadata: {
+        channelNumber: channel.number,
+        channelName: channel.name,
+        dvrId: dvrId,
+        clientId: clientId
+      }
+    });
+    
+    // Return session info in format Plex expects
+    const sessionResponse = {
+      MediaContainer: {
+        size: 1,
+        identifier: "com.plexapp.plugins.library",
+        Session: [{
+          id: sessionId,
+          key: `/livetv/sessions/${sessionId}`,
+          ratingKey: `live-${channel.id}`,
+          sessionKey: sessionId,
+          type: "clip",
+          title: channel.name,
+          summary: `Live TV on ${channel.name}`,
+          duration: 86400000,
+          viewOffset: 0,
+          live: 1,
+          addedAt: Math.floor(Date.now() / 1000),
+          updatedAt: Math.floor(Date.now() / 1000),
+          Media: [{
+            id: 1,
+            duration: 86400000,
+            bitrate: 5000,
+            width: 1920,
+            height: 1080,
+            aspectRatio: 1.78,
+            audioChannels: 2,
+            audioCodec: "aac",
+            videoCodec: "h264", 
+            videoResolution: "1080",
+            container: "mpegts",
+            videoFrameRate: "25p",
+            Part: [{
+              id: 1,
+              key: `/livetv/sessions/${sessionId}/${clientId}/index.m3u8`,
+              file: `/stream/${channel.id}`,
+              size: 999999999,
+              duration: 86400000,
+              container: "mpegts"
+            }]
+          }]
+        }]
+      }
+    };
+    
+    logger.info('Created tuning session', {
+      sessionId,
+      channelId: channel.id,
+      channelNumber: channel.number,
+      channelName: channel.name
+    });
+    
+    res.json(sessionResponse);
+    
+  } catch (error) {
+    logger.error('Channel tune error:', error);
+    res.status(500).json({
+      error: 'Tuning failed',
+      message: error.message
     });
   }
 });
