@@ -37,7 +37,23 @@
       "enabled": true,
       "hardwareAcceleration": true,
       "preset": "fast",
-      "defaultProfile": "high"
+      "defaultProfile": "high",
+      "mpegts": {
+        "enabled": true,
+        "ffmpegArgs": "-hide_banner -loglevel error -reconnect 1 -reconnect_at_eof 1 -reconnect_streamed 1 -reconnect_delay_max 2 -i [URL] -c:v copy -c:a copy -bsf:v dump_extra -f mpegts -mpegts_copyts 1 -avoid_negative_ts make_zero -fflags +genpts+igndts+discardcorrupt -copyts -muxdelay 0 -muxpreload 0 -flush_packets 1 -max_delay 0 -max_muxing_queue_size 9999 pipe:1",
+        "hlsProtocolArgs": "-allowed_extensions ALL -protocol_whitelist file,http,https,tcp,tls,pipe,crypto -user_agent PlexBridge/1.0 -live_start_index 0 -http_persistent 1",
+        "androidtv": {
+          "enabled": true,
+          "ffmpegArgs": "-hide_banner -loglevel error -analyzeduration 10000000 -probesize 10000000 -reconnect 1 -reconnect_at_eof 1 -reconnect_streamed 1 -reconnect_delay_max 2 -i [URL] -c:v copy -c:a copy -bsf:v dump_extra -f segment -segment_time 30 -segment_format mpegts -segment_list_type flat -segment_list /dev/null -reset_timestamps 1 -avoid_negative_ts make_zero -fflags +genpts+igndts+discardcorrupt+nobuffer -flags +low_delay -copyts -muxdelay 0 -muxpreload 0 -flush_packets 1 -max_delay 0 -max_muxing_queue_size 4096 -rtbufsize 256k pipe:1",
+          "segmentDuration": 30,
+          "resetInterval": 1200,
+          "audioCodecDetection": {
+            "analyzeduration": 10000000,
+            "probesize": 10000000,
+            "maxAnalyzeAttempts": 3
+          }
+        }
+      }
     },
     "caching": {
       "enabled": true,
