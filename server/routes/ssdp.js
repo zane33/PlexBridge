@@ -352,7 +352,7 @@ router.get('/consumer/:sessionId/:action?', async (req, res) => {
           ready: true,
           buffering: false,
           clientType: 'AndroidTV',
-          metadata_type: 'episode',
+          metadata_type: 'clip',
           contentType: 4,
           live: 1
         })
@@ -430,9 +430,9 @@ router.get('/timeline/:itemId?', async (req, res) => {
           machineIdentifier: process.env.DEVICE_UUID || 'plextv-001',
           
           // Android TV specific metadata fields to fix "type 5" errors
-          contentType: 4, // Use type 4 (episode) instead of type 5 (trailer) for Android TV
-          metadata_type: 'episode',
-          mediaType: 'episode',
+          contentType: 4, // Type 4 is "clip" for Live TV (not episode)
+          metadata_type: 'clip',
+          mediaType: 'clip',
           live: 1,
           grandparentTitle: 'Live TV',
           parentTitle: 'Live Programming',
@@ -508,8 +508,8 @@ router.get('/library/metadata/:metadataId', async (req, res) => {
           key: `/library/metadata/${metadataId}`,
           parentRatingKey: `show_${channelId}`,
           grandparentRatingKey: `series_${channelId}`,
-          guid: `plex://episode/${metadataId}`,
-          type: "episode",
+          guid: `plex://clip/${metadataId}`,
+          type: "clip",
           title: channel?.name || `Channel ${channelId}`,
           grandparentTitle: channel?.name || `Channel ${channelId}`,
           parentTitle: "Live Programming",
@@ -519,10 +519,10 @@ router.get('/library/metadata/:metadataId', async (req, res) => {
           parentIndex: 1,
           year: new Date().getFullYear(),
           
-          // CRITICAL: Android TV specific metadata fields to fix "type 5" errors
-          contentType: 4, // Use type 4 (episode) instead of type 5 (trailer) for Android TV
-          metadata_type: 'episode',
-          mediaType: 'episode',
+          // CRITICAL: Android TV requires type="clip" for Live TV streams
+          contentType: 4, // Type 4 is "clip" for Live TV
+          metadata_type: 'clip',
+          mediaType: 'clip',
           thumb: `/library/metadata/${metadataId}/thumb`,
           art: `/library/metadata/${metadataId}/art`,
           parentThumb: `/library/metadata/${metadataId}/parentThumb`,
@@ -607,17 +607,17 @@ router.get('/library/metadata/:metadataId', async (req, res) => {
         librarySectionTitle: "Live TV",
         Video: [{
           ratingKey: req.params.metadataId,
-          type: "episode",
+          type: "clip",
           title: "Live TV",
           grandparentTitle: "Live TV",
           parentTitle: "Live Programming",
           duration: 86400000,
           live: 1,
           
-          // CRITICAL: Android TV fields to prevent "type 5" errors
-          contentType: 4, // Use type 4 (episode) not type 5 (trailer)
-          metadata_type: 'episode',
-          mediaType: 'episode',
+          // CRITICAL: Android TV requires type="clip" for Live TV
+          contentType: 4, // Type 4 is "clip" for Live TV
+          metadata_type: 'clip',
+          mediaType: 'clip',
           index: 1,
           parentIndex: 1,
           year: new Date().getFullYear(),
@@ -726,10 +726,10 @@ router.get('/livetv/sessions/:sessionId', async (req, res) => {
     }
 
     // Generate proper XML response for Plex Universal Transcode
-    // CRITICAL: Do NOT use type="episode" for Live TV - causes "type 5" errors
+    // CRITICAL: Use type="clip" (type 4) for Live TV - Android TV requires this
     const mediaContainerXML = `<?xml version="1.0" encoding="UTF-8"?>
 <MediaContainer size="1" identifier="com.plexapp.plugins.library" mediaTagPrefix="/system/bundle/media/flags/" mediaTagVersion="${Math.floor(Date.now() / 1000)}">
-  <Video sessionKey="${sessionId}" key="/library/metadata/live-${sessionId}" ratingKey="live-${sessionId}" title="Live TV Stream" duration="86400000" viewOffset="${offset || 0}" live="1" addedAt="${Math.floor(Date.now() / 1000)}" updatedAt="${Math.floor(Date.now() / 1000)}">
+  <Video sessionKey="${sessionId}" key="/library/metadata/live-${sessionId}" ratingKey="live-${sessionId}" type="clip" title="Live TV Stream" duration="86400000" viewOffset="${offset || 0}" live="1" addedAt="${Math.floor(Date.now() / 1000)}" updatedAt="${Math.floor(Date.now() / 1000)}">
     <Media duration="86400000" container="mpegts" videoCodec="h264" audioCodec="aac" width="1920" height="1080" aspectRatio="1.78" bitrate="5000" audioChannels="2" videoFrameRate="25">
       <Part key="/stream/${sessionId}" file="/stream/${sessionId}" container="mpegts" duration="86400000" size="999999999" />
     </Media>
