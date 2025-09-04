@@ -1724,12 +1724,15 @@ class StreamManager {
               antiLoop: streamConfig.encoding_profile === 'anti-loop'
             });
             
-            // For anti-loop profile, completely replace args to prevent conflicts
-            if (streamConfig.encoding_profile === 'anti-loop') {
+            // For anti-loop or emergency profiles, completely replace args to prevent conflicts
+            if (streamConfig.encoding_profile === 'anti-loop' || 
+                streamConfig.encoding_profile === 'emergency-safe' || 
+                streamConfig.encoding_profile === 'ultra-minimal') {
               args = streamConfig.ffmpeg_options.concat(['-i', finalStreamUrl, 'pipe:1']);
-              logger.info('Applied anti-loop FFmpeg configuration', {
+              logger.error('Applied EMERGENCY FFmpeg configuration for H.264 safety', {
                 channelId: channel.id,
                 channelNumber: channel.number,
+                profile: streamConfig.encoding_profile,
                 argCount: args.length
               });
             } else {
