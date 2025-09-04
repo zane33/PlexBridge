@@ -726,9 +726,10 @@ router.get('/livetv/sessions/:sessionId', async (req, res) => {
     }
 
     // Generate proper XML response for Plex Universal Transcode
+    // CRITICAL: Do NOT use type="episode" for Live TV - causes "type 5" errors
     const mediaContainerXML = `<?xml version="1.0" encoding="UTF-8"?>
 <MediaContainer size="1" identifier="com.plexapp.plugins.library" mediaTagPrefix="/system/bundle/media/flags/" mediaTagVersion="${Math.floor(Date.now() / 1000)}">
-  <Video sessionKey="${sessionId}" key="/library/metadata/live-${sessionId}" ratingKey="live-${sessionId}" type="episode" title="Live TV Stream" duration="86400000" viewOffset="${offset || 0}" live="1" addedAt="${Math.floor(Date.now() / 1000)}" updatedAt="${Math.floor(Date.now() / 1000)}">
+  <Video sessionKey="${sessionId}" key="/library/metadata/live-${sessionId}" ratingKey="live-${sessionId}" title="Live TV Stream" duration="86400000" viewOffset="${offset || 0}" live="1" addedAt="${Math.floor(Date.now() / 1000)}" updatedAt="${Math.floor(Date.now() / 1000)}">
     <Media duration="86400000" container="mpegts" videoCodec="h264" audioCodec="aac" width="1920" height="1080" aspectRatio="1.78" bitrate="5000" audioChannels="2" videoFrameRate="25">
       <Part key="/stream/${sessionId}" file="/stream/${sessionId}" container="mpegts" duration="86400000" size="999999999" />
     </Media>
