@@ -180,8 +180,8 @@ function generateImmediateEPGResponse(channelId, forAndroidTV = false) {
       channel_number: metadata.number,
       
       // Critical metadata for Android TV (fixes "Unknown metadata type" errors)
-      type: 'episode', // Plex Android TV expects episode type for live TV
-      metadata_type: 'episode', // Backup metadata type identifier  
+      type: 'clip', // Plex Android TV expects clip type for live TV
+      metadata_type: 'clip', // Backup metadata type identifier  
       content_type: 4, // Episode content type - NOT type 5 (trailer)
       mediaType: 'episode', // Media type for Plex decision making
       contentType: 4, // Alternative content type field - NOT type 5
@@ -271,8 +271,8 @@ async function getCurrentProgramFast(channelId, isAndroidTV = false) {
       is_fallback: true,
       
       // Proper metadata types for Android TV (fixes "Unknown metadata type" errors)
-      type: 'episode', // Plex Android TV expects episode type for live TV
-      metadata_type: 'episode', // Backup metadata type identifier  
+      type: 'clip', // Plex Android TV expects clip type for live TV
+      metadata_type: 'clip', // Backup metadata type identifier  
       content_type: 4, // Episode content type - NOT type 5 (trailer)
       mediaType: 'episode', // Media type for Plex decision making
       contentType: 4, // Alternative content type field - NOT type 5

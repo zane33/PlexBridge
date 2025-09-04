@@ -44,8 +44,8 @@ function ensureAndroidTVCompatibility(program, channel) {
   }
 
   // Add proper metadata type for Android TV (must be exactly what Plex expects)
-  program.type = 'episode'; // Plex Android TV expects 'episode' for live TV programs
-  program.metadata_type = 'episode';
+  program.type = 'clip'; // Plex Android TV expects 'clip' for live TV programs
+  program.metadata_type = 'clip';
   program.content_type = 4; // Type 4 is episode - NOT type 5 (trailer) which causes Android TV errors
   
   // Add required episode metadata for Android TV
@@ -113,7 +113,7 @@ function enhanceLineupForAndroidTV(lineup) {
       
       // Android TV specific enhancements
       MediaType: 'LiveTV',
-      ContentType: 5,
+      ContentType: 4,
       HasTitle: true,
       HasDescription: true,
       

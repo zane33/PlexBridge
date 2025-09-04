@@ -33,9 +33,9 @@ function fixProgramMetadata(program, channel) {
     
     // Metadata type identification (critical for Android TV)
     content_type: 'live_tv',
-    metadata_type: 'episode', // Android TV expects 'episode' for live TV
-    type: 'episode', // Primary type field
-    mediaType: 'episode', // Alternative type field
+    metadata_type: 'clip', // Android TV expects 'clip' for live TV
+    type: 'clip', // Primary type field
+    mediaType: 'clip', // Alternative type field
     grandparentTitle: channel?.name || 'Live TV', // Show name for Android TV
     is_live: true,
     has_video: true,

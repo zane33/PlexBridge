@@ -92,7 +92,7 @@ function androidTVErrorHandler() {
           'Content-Type': 'application/json; charset=utf-8',
           'X-Android-TV-Fallback': 'true',
           'X-Error-Recovery': 'metadata-fallback',
-          'X-Metadata-Type': fallbackResponse.type || 'episode'
+          'X-Metadata-Type': fallbackResponse.type || 'clip'
         });
         
         logger.info('Provided Android TV fallback response with enhanced metadata', { 
@@ -151,10 +151,10 @@ function generateFallbackLineup() {
       MediaType: "LiveTV",
       
       // Proper metadata types for Android TV (fixes "Unknown metadata type" errors)
-      type: 'episode',
-      metadata_type: 'episode',
+      type: 'clip',
+      metadata_type: 'clip',
       content_type: 4,
-      mediaType: 'episode',
+      mediaType: 'clip',
       contentType: 4,
       
       // Episode metadata structure

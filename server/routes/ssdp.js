@@ -236,7 +236,7 @@ router.get('/lineup.json', async (req, res) => {
       URL: `${baseURL}/stream/${channel.id}`,
       // Android TV compatibility fields
       MediaType: 'LiveTV',
-      ContentType: 5,
+      ContentType: 4,
       Live: true
     }));
     
