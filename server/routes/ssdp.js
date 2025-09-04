@@ -9,6 +9,7 @@ const cacheService = require('../services/cacheService');
 const { getSessionManager } = require('../utils/sessionPersistenceFix');
 const { enhanceLineupForStreamingDecisions, validateStreamingMetadata, generateDeviceXMLWithStreamingInfo } = require('../utils/streamingDecisionFix');
 const { channelSwitchingMiddleware, optimizeLineupForChannelSwitching } = require('../utils/channelSwitchingFix');
+const { getConsumerManager } = require('../services/consumerManager');
 
 // HDHomeRun discovery endpoint with caching
 router.get('/discover.json', cacheMiddleware('discover'), responseTimeMonitor(100), async (req, res) => {
@@ -878,8 +879,9 @@ router.get('/Live/:sessionId', async (req, res) => {
       path: req.path
     });
 
-    // Update session activity in the persistent session manager
+    // Update session activity in both managers
     const sessionManager = getSessionManager();
+    const consumerManager = getConsumerManager();
     
     if (sessionId && sessionManager) {
       sessionManager.updateSessionActivity(sessionId);
@@ -897,6 +899,34 @@ router.get('/Live/:sessionId', async (req, res) => {
         });
       }
     }
+    
+    // Create or update persistent consumer for HDHomeRun emulation
+    if (sessionId && consumerManager) {
+      const existingConsumer = consumerManager.getConsumer(sessionId);
+      
+      if (!existingConsumer) {
+        // Create new persistent consumer
+        consumerManager.createConsumer(sessionId, null, null, {
+          userAgent,
+          clientIp: req.ip || req.connection.remoteAddress,
+          state: 'streaming',
+          metadata: {
+            endpoint: '/Live/',
+            method: 'GET',
+            requestPath: req.originalUrl
+          }
+        });
+        
+        logger.info('Created persistent consumer for HDHomeRun emulation', {
+          sessionId,
+          userAgent
+        });
+      } else {
+        // Update activity
+        consumerManager.updateActivity(sessionId);
+        consumerManager.updateState(sessionId, 'streaming');
+      }
+    }
 
     // Always respond with success to prevent "Failed to find consumer" errors
     res.set({
@@ -905,19 +935,26 @@ router.get('/Live/:sessionId', async (req, res) => {
       'Connection': 'keep-alive'
     });
     
+    // Get persistent consumer data
+    const persistentConsumer = consumerManager.getConsumer(sessionId);
+    
     const consumerResponse = {
       success: true,
       sessionId: sessionId,
       consumer: {
-        id: sessionId,
+        id: persistentConsumer?.id || sessionId,
         available: true,
         active: true,
-        state: 'streaming',
-        lastActivity: Date.now(),
+        state: persistentConsumer?.state || 'streaming',
+        lastActivity: persistentConsumer?.lastActivity || Date.now(),
         status: 'connected',
         instanceAvailable: true,
         hasConsumer: true,
-        ready: true
+        ready: true,
+        // HDHomeRun-specific fields for better emulation
+        persistent: true,
+        createdAt: persistentConsumer?.createdAt || Date.now(),
+        updatedAt: persistentConsumer?.updatedAt || Date.now()
       },
       instance: {
         available: true,
@@ -925,6 +962,7 @@ router.get('/Live/:sessionId', async (req, res) => {
         active: true
       },
       live: true,
+      persistent: true,
       timestamp: new Date().toISOString()
     };
     
@@ -955,10 +993,34 @@ router.get('/Live/:sessionId/:action', async (req, res) => {
       url: req.originalUrl
     });
 
-    // Update session activity
+    // Update session activity and consumer
     const sessionManager = getSessionManager();
+    const consumerManager = getConsumerManager();
+    
     if (sessionId && sessionManager) {
       sessionManager.updateSessionActivity(sessionId);
+    }
+    
+    // Update persistent consumer with action
+    if (sessionId && consumerManager) {
+      consumerManager.updateActivity(sessionId);
+      
+      // Handle specific consumer actions
+      switch (action) {
+        case 'stop':
+        case 'close':
+          consumerManager.updateState(sessionId, 'stopped');
+          break;
+        case 'pause':
+          consumerManager.updateState(sessionId, 'paused');
+          break;
+        case 'play':
+        case 'resume':
+          consumerManager.updateState(sessionId, 'streaming');
+          break;
+        default:
+          consumerManager.updateState(sessionId, 'streaming');
+      }
     }
 
     res.set({
@@ -1000,6 +1062,8 @@ router.post('/Live/:sessionId', async (req, res) => {
     
     // Update or create session
     const sessionManager = getSessionManager();
+    const consumerManager = getConsumerManager();
+    
     if (sessionId && sessionManager) {
       sessionManager.updateSessionActivity(sessionId);
       
@@ -1010,6 +1074,27 @@ router.post('/Live/:sessionId', async (req, res) => {
           isConsumerEndpoint: true,
           method: 'POST'
         });
+      }
+    }
+    
+    // Create or update persistent consumer
+    if (sessionId && consumerManager) {
+      const existingConsumer = consumerManager.getConsumer(sessionId);
+      
+      if (!existingConsumer) {
+        consumerManager.createConsumer(sessionId, null, null, {
+          userAgent: req.get('User-Agent'),
+          clientIp: req.ip || req.connection.remoteAddress,
+          state: 'streaming',
+          metadata: {
+            endpoint: '/Live/',
+            method: 'POST',
+            body: req.body
+          }
+        });
+      } else {
+        consumerManager.updateActivity(sessionId);
+        consumerManager.updateState(sessionId, 'streaming');
       }
     }
     
@@ -1419,6 +1504,32 @@ router.get('/status', async (req, res) => {
   } catch (error) {
     logger.error('Status endpoint error:', error);
     res.status(500).json({ error: 'Status request failed' });
+  }
+});
+
+// Consumer statistics endpoint for monitoring HDHomeRun emulation
+router.get('/consumers', async (req, res) => {
+  try {
+    const consumerManager = getConsumerManager();
+    const stats = consumerManager.getStats();
+    const activeConsumers = consumerManager.getActiveConsumers();
+    
+    res.json({
+      success: true,
+      statistics: stats,
+      activeConsumers: activeConsumers.map(consumer => ({
+        id: consumer.id,
+        sessionId: consumer.sessionId,
+        state: consumer.state,
+        lastActivity: consumer.lastActivity,
+        uptime: Date.now() - consumer.createdAt,
+        userAgent: consumer.userAgent
+      })),
+      timestamp: new Date().toISOString()
+    });
+  } catch (error) {
+    logger.error('Consumer stats endpoint error:', error);
+    res.status(500).json({ error: 'Failed to get consumer stats' });
   }
 });
 
