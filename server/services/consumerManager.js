@@ -1,6 +1,6 @@
 const { v4: uuidv4 } = require('uuid');
 const logger = require('../utils/logger');
-const { getDatabase } = require('./database');
+const database = require('./database');
 
 /**
  * Consumer Manager - Persistent consumer tracking for HDHomeRun emulation
@@ -23,7 +23,7 @@ class ConsumerManager {
    */
   initDatabase() {
     try {
-      const db = getDatabase();
+      const db = database;
       
       // Create consumers table if it doesn't exist
       db.exec(`
@@ -58,7 +58,7 @@ class ConsumerManager {
    */
   loadConsumers() {
     try {
-      const db = getDatabase();
+      const db = database;
       const stmt = db.prepare(`
         SELECT * FROM consumers 
         WHERE state IN ('streaming', 'buffering', 'paused')
@@ -115,7 +115,7 @@ class ConsumerManager {
       this.consumers.set(sessionId, consumer);
       
       // Persist to database
-      const db = getDatabase();
+      const db = database;
       const stmt = db.prepare(`
         INSERT OR REPLACE INTO consumers (
           id, session_id, channel_id, stream_url, state,
@@ -168,7 +168,7 @@ class ConsumerManager {
     if (!consumer) {
       // Try to load from database
       try {
-        const db = getDatabase();
+        const db = database;
         const stmt = db.prepare('SELECT * FROM consumers WHERE session_id = ?');
         const dbConsumer = stmt.get(sessionId);
         
@@ -214,7 +214,7 @@ class ConsumerManager {
       
       // Update in database (async, don't wait)
       try {
-        const db = getDatabase();
+        const db = database;
         const stmt = db.prepare(`
           UPDATE consumers 
           SET last_activity = ?, updated_at = ?
@@ -250,7 +250,7 @@ class ConsumerManager {
       
       // Update in database
       try {
-        const db = getDatabase();
+        const db = database;
         const stmt = db.prepare(`
           UPDATE consumers 
           SET state = ?, updated_at = ?
@@ -275,8 +275,8 @@ class ConsumerManager {
     
     if (!consumer) return false;
     
-    // Check if consumer is stale (no activity for 30 minutes for live streaming)
-    const staleThreshold = 30 * 60 * 1000;
+    // Check if consumer is stale (no activity for 5 minutes - original value)
+    const staleThreshold = 5 * 60 * 1000;
     const isStale = (Date.now() - consumer.lastActivity) > staleThreshold;
     
     return !isStale && ['streaming', 'buffering', 'paused'].includes(consumer.state);
@@ -291,7 +291,7 @@ class ConsumerManager {
     
     // Remove from database
     try {
-      const db = getDatabase();
+      const db = database;
       const stmt = db.prepare('DELETE FROM consumers WHERE session_id = ?');
       stmt.run(sessionId);
       
@@ -306,10 +306,10 @@ class ConsumerManager {
    */
   cleanupStaleConsumers() {
     try {
-      const staleThreshold = 60 * 60; // 1 hour in seconds for live streaming sessions
+      const staleThreshold = 10 * 60; // 10 minutes in seconds (original value)
       
       // Remove from database
-      const db = getDatabase();
+      const db = database;
       const stmt = db.prepare(`
         DELETE FROM consumers 
         WHERE last_activity < strftime('%s', 'now') - ?
@@ -342,7 +342,7 @@ class ConsumerManager {
   getActiveConsumers() {
     const activeConsumers = [];
     const now = Date.now();
-    const activeThreshold = 30 * 60 * 1000; // 30 minutes for live streaming
+    const activeThreshold = 5 * 60 * 1000; // 5 minutes (original value)
     
     for (const consumer of this.consumers.values()) {
       if ((now - consumer.lastActivity) <= activeThreshold &&
@@ -379,7 +379,7 @@ class ConsumerManager {
     
     // Mark all consumers as stopped
     try {
-      const db = getDatabase();
+      const db = database;
       const stmt = db.prepare(`
         UPDATE consumers 
         SET state = 'stopped', updated_at = strftime('%s', 'now')

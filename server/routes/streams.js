@@ -13,6 +13,106 @@ const { v4: uuidv4 } = require('uuid');
 // Apply session keep-alive middleware to all stream endpoints
 router.use(sessionKeepAlive());
 
+/**
+ * Determine if resilient streaming should be used based on request and stream characteristics
+ */
+function shouldUseResilientStreaming(req, stream) {
+  const userAgent = req.get('User-Agent') || '';
+  const isAndroidTV = userAgent.toLowerCase().includes('androidtv') || 
+                     userAgent.toLowerCase().includes('android tv') ||
+                     userAgent.toLowerCase().includes('nexusplayer') ||
+                     userAgent.toLowerCase().includes('mibox') ||
+                     userAgent.toLowerCase().includes('shield');
+  
+  const isPlexClient = userAgent.toLowerCase().includes('plex') ||
+                      userAgent.toLowerCase().includes('pms') ||
+                      userAgent.toLowerCase().includes('lavf');
+  
+  // Check for explicit resilience request
+  if (req.query.resilient === 'true' || req.query.resilience === 'true') {
+    return { 
+      enabled: true, 
+      reason: 'explicit_request',
+      layer: 'user_requested'
+    };
+  }
+  
+  // Enable for Android TV clients (prone to connection issues)
+  if (isAndroidTV) {
+    return { 
+      enabled: true, 
+      reason: 'android_tv_client',
+      layer: 'client_optimization'
+    };
+  }
+  
+  // Enable for Plex clients streaming certain problematic stream types
+  if (isPlexClient && stream) {
+    const problematicTypes = ['rtsp', 'rtmp', 'udp', 'mms', 'srt'];
+    if (problematicTypes.includes(stream.type)) {
+      return { 
+        enabled: true, 
+        reason: 'problematic_stream_type',
+        layer: 'protocol_optimization',
+        streamType: stream.type
+      };
+    }
+    
+    // Enable for streams with known connection issues
+    if (stream.url && (
+      stream.url.includes('unstable') || 
+      stream.url.includes('backup') ||
+      stream.url.includes('fallback')
+    )) {
+      return { 
+        enabled: true, 
+        reason: 'unreliable_source',
+        layer: 'source_optimization'
+      };
+    }
+  }
+  
+  // Enable based on system load (when regular streams are struggling)
+  try {
+    const os = require('os');
+    const loadAverage = os.loadavg()[0]; // 1-minute load average
+    const cpuCount = os.cpus().length;
+    const loadPercentage = (loadAverage / cpuCount) * 100;
+    
+    // If system is under high load, use resilient streaming to help recovery
+    if (loadPercentage > 80) {
+      return { 
+        enabled: true, 
+        reason: 'high_system_load',
+        layer: 'system_optimization',
+        loadPercentage: Math.round(loadPercentage)
+      };
+    }
+  } catch (error) {
+    // Ignore load checking errors
+  }
+  
+  // Check for network instability indicators in headers
+  const connectionHeader = req.get('Connection') || '';
+  const userNetworkHints = req.get('X-Network-Type') || '';
+  
+  if (connectionHeader.toLowerCase().includes('unstable') || 
+      userNetworkHints.toLowerCase().includes('cellular') ||
+      userNetworkHints.toLowerCase().includes('wifi-weak')) {
+    return { 
+      enabled: true, 
+      reason: 'network_instability',
+      layer: 'network_optimization'
+    };
+  }
+  
+  // Default: don't use resilient streaming
+  return { 
+    enabled: false, 
+    reason: 'standard_streaming_sufficient'
+  };
+}
+
 // Stream proxy endpoint for Plex - handles both main playlist and sub-files
 router.get('/stream/:channelId/:filename?', async (req, res) => {
   try {
@@ -346,11 +446,61 @@ router.get('/stream/:channelId/:filename?', async (req, res) => {
           }
         }
         
-        // Let streamManager handle MPEG-TS transcoding with session awareness
-        await streamManager.proxyPlexCompatibleStream(targetUrl, channel, stream, req, res);
+        // Check if resilient streaming should be used
+        const resilienceDecision = shouldUseResilientStreaming(req, stream);
+        
+        if (resilienceDecision.enabled) {
+          logger.info('Using resilient streaming for Plex request', {
+            channelId: channel ? channel.id : stream.id,
+            channelName: channel ? channel.name : stream.name,
+            userAgent: req.get('User-Agent'),
+            reason: resilienceDecision.reason
+          });
+          
+          // Use resilient streaming with multi-layer recovery
+          await streamManager.createResilientStreamProxy(
+            channel ? channel.id : stream.id,
+            {
+              url: targetUrl,
+              type: stream.type,
+              auth: stream.auth,
+              headers: {}
+            },
+            req,
+            res
+          );
+        } else {
+          // Let streamManager handle MPEG-TS transcoding with session awareness
+          await streamManager.proxyPlexCompatibleStream(targetUrl, channel, stream, req, res);
+        }
       } else {
-        // For regular requests, let streamManager handle session creation and URL rewriting
-        await streamManager.proxyStreamWithChannel(targetUrl, channel, stream, req, res);
+        // Check if resilient streaming should be used for non-Plex requests
+        const resilienceDecision = shouldUseResilientStreaming(req, stream);
+        
+        if (resilienceDecision.enabled) {
+          logger.info('Using resilient streaming for regular request', {
+            channelId: channel ? channel.id : stream.id,
+            channelName: channel ? channel.name : stream.name,
+            userAgent: req.get('User-Agent'),
+            reason: resilienceDecision.reason
+          });
+          
+          // Use resilient streaming
+          await streamManager.createResilientStreamProxy(
+            channel ? channel.id : stream.id,
+            {
+              url: targetUrl,
+              type: stream.type,
+              auth: stream.auth,
+              headers: {}
+            },
+            req,
+            res
+          );
+        } else {
+          // For regular requests, let streamManager handle session creation and URL rewriting
+          await streamManager.proxyStreamWithChannel(targetUrl, channel, stream, req, res);
+        }
       }
     }
     
@@ -397,6 +547,75 @@ router.get('/streams/convert/hls/:streamId', async (req, res) => {
 });
 
 // Active streams endpoint - Enhanced with persistent session management
+// Resilience statistics endpoint
+router.get('/streams/resilience', async (req, res) => {
+  try {
+    logger.info('Getting stream resilience statistics');
+
+    // Get resilience stats from stream manager
+    const resilientStats = streamManager.getResilientStreamStats();
+    const healthCheck = streamManager.isResilientStreamingHealthy();
+
+    // Helper function to format duration
+    function formatDuration(ms) {
+      const seconds = Math.floor(ms / 1000);
+      const minutes = Math.floor(seconds / 60);
+      const hours = Math.floor(minutes / 60);
+      
+      if (hours > 0) {
+        return `${hours}h ${minutes % 60}m ${seconds % 60}s`;
+      } else if (minutes > 0) {
+        return `${minutes}m ${seconds % 60}s`;
+      } else {
+        return `${seconds}s`;
+      }
+    }
+
+    const response = {
+      success: true,
+      timestamp: new Date().toISOString(),
+      
+      // Service health
+      health: healthCheck,
+      
+      // Detailed statistics
+      statistics: resilientStats,
+      
+      // Configuration
+      configuration: {
+        resilienceLayers: 4,
+        layerDescriptions: {
+          1: 'FFmpeg reconnection (0-5s)',
+          2: 'Process restart (5-15s)', 
+          3: 'Session recreation (15-30s)',
+          4: 'Smart buffering (continuous)'
+        }
+      },
+      
+      // Usage summary
+      summary: {
+        totalResilientStreams: resilientStats.summary.totalResilientStreams,
+        healthyStreamsPercent: resilientStats.summary.totalResilientStreams > 0 
+          ? Math.round((resilientStats.summary.healthyStreams / resilientStats.summary.totalResilientStreams) * 100)
+          : 100,
+        averageUptimeFormatted: resilientStats.summary.averageUptime > 0
+          ? formatDuration(resilientStats.summary.averageUptime)
+          : 'N/A',
+        totalRecoveryEvents: resilientStats.summary.totalRecoveryEvents
+      }
+    };
+
+    res.json(response);
+  } catch (error) {
+    logger.error('Failed to get resilience statistics', { error: error.message });
+    res.status(500).json({
+      success: false,
+      error: 'Failed to retrieve resilience statistics',
+      details: error.message
+    });
+  }
+});
+
 router.get('/streams/active', async (req, res) => {
   try {
     // Get max concurrent streams from settings

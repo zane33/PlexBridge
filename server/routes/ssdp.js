@@ -10,6 +10,8 @@ const { getSessionManager } = require('../utils/sessionPersistenceFix');
 const { enhanceLineupForStreamingDecisions, validateStreamingMetadata, generateDeviceXMLWithStreamingInfo } = require('../utils/streamingDecisionFix');
 const { channelSwitchingMiddleware, optimizeLineupForChannelSwitching } = require('../utils/channelSwitchingFix');
 const { getConsumerManager } = require('../services/consumerManager');
+const coordinatedSessionManager = require('../services/coordinatedSessionManager');
+const clientCrashDetector = require('../services/clientCrashDetector');
 const { v4: uuidv4 } = require('uuid');
 
 // HDHomeRun discovery endpoint with caching
@@ -284,30 +286,85 @@ router.get('/consumer/:sessionId/:action?', async (req, res) => {
   try {
     const { sessionId, action } = req.params;
     const userAgent = req.get('User-Agent') || '';
+    const clientIP = req.ip || req.connection.remoteAddress;
     
     logger.info('Plex consumer request', { 
       sessionId, 
       action, 
       userAgent,
+      clientIP,
       headers: {
         'x-plex-session-identifier': req.headers['x-plex-session-identifier'],
         'x-session-id': req.headers['x-session-id']
       },
-      query: req.query,
-      ip: req.ip || req.connection.remoteAddress
+      query: req.query
     });
 
-    // Update session activity in the persistent session manager
-    const sessionManager = getSessionManager();
+    // Detect Android TV clients
+    const isAndroidTV = userAgent.toLowerCase().includes('androidtv') || 
+                       userAgent.toLowerCase().includes('android tv') ||
+                       userAgent.toLowerCase().includes('nexusplayer') ||
+                       userAgent.toLowerCase().includes('mibox') ||
+                       userAgent.toLowerCase().includes('shield');
+
+    // Update coordinated session activity with crash detection
+    const activityRecorded = coordinatedSessionManager.updateSessionActivity(
+      sessionId, 
+      'consumer', 
+      { 
+        action: action || 'status',
+        userAgent,
+        clientIP,
+        isAndroidTV
+      }
+    );
+
+    // Check session health using crash detector
+    const sessionHealth = clientCrashDetector.checkSessionHealth(sessionId);
     
-    // Update or create session tracking
-    if (sessionId) {
+    // If session is unhealthy, respond accordingly but don't crash
+    if (!sessionHealth.healthy) {
+      logger.warn('Consumer request for unhealthy session', {
+        sessionId,
+        healthReason: sessionHealth.reason,
+        action: sessionHealth.action,
+        isAndroidTV
+      });
+      
+      // For confirmed crashes, return error state
+      if (sessionHealth.reason === 'confirmed_crash' || sessionHealth.reason === 'confirmed_timeout_crash') {
+        res.set({
+          'Content-Type': 'application/json; charset=utf-8',
+          'Cache-Control': 'no-cache'
+        });
+        
+        return res.status(410).json({
+          success: false,
+          sessionId,
+          status: 'terminated',
+          consumer: {
+            id: sessionId,
+            available: false,
+            active: false,
+            state: 'crashed',
+            lastActivity: Date.now(),
+            status: 'disconnected',
+            instanceAvailable: false,
+            hasConsumer: false,
+            crashReason: sessionHealth.reason
+          },
+          error: 'Session terminated due to client crash',
+          timestamp: new Date().toISOString()
+        });
+      }
+    }
+
+    // Update legacy session managers for compatibility
+    const sessionManager = getSessionManager();
+    if (sessionId && sessionManager) {
       sessionManager.updateSessionActivity(sessionId);
       
-      // Check if session exists and is healthy
       const sessionStatus = sessionManager.getSessionStatus(sessionId);
-      
-      // If session doesn't exist, create a placeholder
       if (!sessionStatus.exists) {
         sessionManager.createSession('consumer', sessionId, '', {
           userAgent,
@@ -317,53 +374,44 @@ router.get('/consumer/:sessionId/:action?', async (req, res) => {
       }
     }
 
-    // Always respond with success for consumer requests
-    // This prevents "Failed to find consumer" errors that crash streams
+    // Always respond with success for consumer requests (unless crashed)
     res.set({
       'Content-Type': 'application/json; charset=utf-8',
       'Cache-Control': 'no-cache',
       'Connection': 'keep-alive'
     });
     
-    // Get session status for better consumer response
-    const sessionStatus = sessionManager ? sessionManager.getSessionStatus(sessionId) : null;
-    
-    // Detect Android TV for enhanced consumer response
-    const isAndroidTV = userAgent.toLowerCase().includes('androidtv') || 
-                       userAgent.toLowerCase().includes('android tv') ||
-                       userAgent.toLowerCase().includes('nexusplayer') ||
-                       userAgent.toLowerCase().includes('mibox') ||
-                       userAgent.toLowerCase().includes('shield');
-    
     const consumerResponse = {
       success: true,
       sessionId: sessionId,
-      status: sessionStatus?.exists ? 'active' : 'available',
+      status: sessionHealth.healthy ? 'active' : 'monitoring',
       consumer: {
         id: sessionId,
         available: true,
-        active: sessionStatus?.exists || false,
-        state: sessionStatus?.exists ? 'streaming' : 'ready',
+        active: sessionHealth.healthy,
+        state: sessionHealth.healthy ? 'streaming' : 'monitoring',
         lastActivity: Date.now(),
         status: 'connected',
-        instanceAvailable: sessionStatus?.instanceAvailable || true,
-        hasConsumer: sessionStatus?.hasConsumer || true,
+        instanceAvailable: sessionHealth.healthy,
+        hasConsumer: sessionHealth.healthy,
+        
+        // Health information
+        healthStatus: sessionHealth.reason,
         
         // Android TV specific consumer fields
         ...(isAndroidTV && {
-          ready: true,
-          buffering: false,
+          ready: sessionHealth.healthy,
+          buffering: !sessionHealth.healthy,
           clientType: 'AndroidTV',
           metadata_type: 'clip',
           contentType: 4,
           live: 1
         })
       },
-      session: sessionStatus ? {
-        exists: sessionStatus.exists,
-        isRunning: sessionStatus.isRunning,
-        isMapped: sessionStatus.isMapped
-      } : null,
+      session: {
+        healthy: sessionHealth.healthy,
+        reason: sessionHealth.reason
+      },
       timestamp: new Date().toISOString()
     };
     
@@ -373,7 +421,7 @@ router.get('/consumer/:sessionId/:action?', async (req, res) => {
     // Always succeed to prevent crashes but include consumer object
     res.status(200).json({ 
       success: true,
-      consumer: { available: true }
+      consumer: { available: true, state: 'error' }
     });
   }
 });
@@ -689,13 +737,68 @@ router.get('/livetv/sessions/:sessionId', async (req, res) => {
   try {
     const { sessionId } = req.params;
     const { includeBandwidths, offset } = req.query;
+    const userAgent = req.get('User-Agent') || '';
+    const clientIP = req.ip || req.connection.remoteAddress;
     
     logger.debug('Plex Live TV session request', { 
       sessionId,
       includeBandwidths,
       offset,
       query: req.query,
-      userAgent: req.get('User-Agent')
+      userAgent,
+      clientIP
+    });
+
+    // CRITICAL: Check session health BEFORE responding
+    // This prevents timeline calls from continuing after client crashes
+    const sessionHealth = clientCrashDetector.checkSessionHealth(sessionId);
+    
+    if (!sessionHealth.healthy) {
+      logger.warn('LiveTV session request for unhealthy session', {
+        sessionId,
+        healthReason: sessionHealth.reason,
+        action: sessionHealth.action,
+        userAgent
+      });
+      
+      // For confirmed crashes, return error XML to stop timeline calls
+      if (sessionHealth.reason === 'confirmed_crash' || sessionHealth.reason === 'confirmed_timeout_crash') {
+        res.set({
+          'Content-Type': 'application/xml; charset=utf-8',
+          'Cache-Control': 'no-cache'
+        });
+        
+        const errorXML = `<?xml version="1.0" encoding="UTF-8"?>
+<MediaContainer size="0" identifier="com.plexapp.plugins.library" error="Session terminated">
+  <Error code="410" message="Session terminated due to client crash" />
+</MediaContainer>`;
+        
+        logger.error('Returning error XML for crashed session', { sessionId });
+        return res.status(410).send(errorXML);
+      }
+      
+      // For possible crashes, don't create new sessions
+      if (sessionHealth.reason === 'android_tv_possible_crash' || sessionHealth.reason === 'client_timeout') {
+        res.set({
+          'Content-Type': 'application/xml; charset=utf-8',
+          'Cache-Control': 'no-cache'
+        });
+        
+        const timeoutXML = `<?xml version="1.0" encoding="UTF-8"?>
+<MediaContainer size="0" identifier="com.plexapp.plugins.library" />`;
+        
+        logger.warn('Returning empty XML for possible crashed session', { sessionId });
+        return res.status(204).send(timeoutXML);
+      }
+    }
+
+    // Record timeline activity for crash detection
+    coordinatedSessionManager.updateSessionActivity(sessionId, 'timeline', {
+      includeBandwidths,
+      offset,
+      userAgent,
+      clientIP,
+      isLiveTVSession: true
     });
     
     // CRITICAL: Return XML MediaContainer that Plex expects (not JSON)
@@ -704,24 +807,26 @@ router.get('/livetv/sessions/:sessionId', async (req, res) => {
       'Cache-Control': 'no-cache'
     });
     
-    // Update session activity to prevent consumer timeout
+    // Update session activity in legacy session manager for compatibility
     const sessionManager = getSessionManager();
     if (sessionId && sessionManager) {
       sessionManager.updateSessionActivity(sessionId);
       
       const sessionStatus = sessionManager.getSessionStatus(sessionId);
       if (!sessionStatus.exists) {
-        // Create session if it doesn't exist
-        sessionManager.createSession('livetv', sessionId, '', {
-          userAgent: req.get('User-Agent'),
-          isLiveTVSession: true,
-          isUniversalTranscode: true,
-          keepAlive: true
-        });
-        logger.info('Created new LiveTV session for consumer tracking', {
-          sessionId,
-          userAgent: req.get('User-Agent')
-        });
+        // Only create session if health check passed
+        if (sessionHealth.healthy) {
+          sessionManager.createSession('livetv', sessionId, '', {
+            userAgent,
+            isLiveTVSession: true,
+            isUniversalTranscode: true,
+            keepAlive: true
+          });
+          logger.info('Created new LiveTV session for consumer tracking', {
+            sessionId,
+            userAgent
+          });
+        }
       } else {
         logger.debug('Updated existing LiveTV session activity', { sessionId });
       }
@@ -742,6 +847,16 @@ router.get('/livetv/sessions/:sessionId', async (req, res) => {
 
   } catch (error) {
     logger.error('Live TV session XML error:', error);
+    
+    // Record error for crash detection
+    if (req.params.sessionId) {
+      clientCrashDetector.recordActivity(req.params.sessionId, 'error', {
+        error: error.message,
+        type: 'livetv_session',
+        httpCode: 500
+      });
+    }
+    
     res.status(200).send('<?xml version="1.0" encoding="UTF-8"?><MediaContainer size="0" />');
   }
 });

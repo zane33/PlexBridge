@@ -127,7 +127,7 @@ const defaultConfig = {
     },
     streaming: {
       maxConcurrentStreams: parseInt(process.env.MAX_CONCURRENT_STREAMS) || 10,
-      streamTimeout: parseInt(process.env.STREAM_TIMEOUT) || 300000, // 5 minutes for live streaming
+      streamTimeout: parseInt(process.env.STREAM_TIMEOUT) || 30000, // 30 seconds (original value)
       reconnectAttempts: parseInt(process.env.RECONNECT_ATTEMPTS) || 3,
       bufferSize: parseInt(process.env.STREAM_BUFFER_SIZE) || 65536,
       adaptiveBitrate: process.env.ADAPTIVE_BITRATE !== 'false',

@@ -240,6 +240,17 @@ const gracefulShutdown = async (signal) => {
       logger.warn('Session Persistence Manager shutdown error:', sessionShutdownError);
     }
 
+    // Shutdown Coordinated Session Manager and Crash Detection
+    try {
+      const coordinatedSessionManager = require('./services/coordinatedSessionManager');
+      if (coordinatedSessionManager && coordinatedSessionManager.shutdown) {
+        await coordinatedSessionManager.shutdown();
+        logger.info('Coordinated Session Manager shutdown completed');
+      }
+    } catch (coordSessionShutdownError) {
+      logger.warn('Coordinated Session Manager shutdown error:', coordSessionShutdownError);
+    }
+
     // Close database connections
     try {
       await database.close();
@@ -474,6 +485,19 @@ const initializeApp = async () => {
     } catch (sessionError) {
       logger.warn('Failed to initialize Session Persistence Manager:', sessionError.message);
       logger.error('Session management error details:', sessionError);
+    }
+
+    // Initialize Coordinated Session Manager with Crash Detection
+    try {
+      logger.info('Initializing Coordinated Session Manager with crash detection...');
+      const coordinatedSessionManager = require('./services/coordinatedSessionManager');
+      const clientCrashDetector = require('./services/clientCrashDetector');
+      logger.info('✅ Coordinated Session Manager initialized successfully');
+      logger.info(`Intelligent crash detection active for Android TV clients`);
+      logger.info(`Session conflict resolution enabled for multiple clients`);
+    } catch (coordSessionError) {
+      logger.warn('Failed to initialize Coordinated Session Manager:', coordSessionError.message);
+      logger.error('Coordinated session management error details:', coordSessionError);
     }
 
     // Register API routes after database initialization

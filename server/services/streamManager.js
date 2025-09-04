@@ -7,6 +7,7 @@ const config = require('../config');
 const cacheService = require('./cacheService');
 const settingsService = require('./settingsService');
 const streamSessionManager = require('./streamSessionManager');
+const streamResilienceService = require('./streamResilienceService');
 
 class StreamManager {
   constructor() {
@@ -513,6 +514,239 @@ class StreamManager {
         resolve({ valid: false, error: 'Validation timeout', type: 'srt' });
       }, 10000);
     });
+  }
+
+  // Create a resilient stream proxy with multi-layer recovery
+  async createResilientStreamProxy(streamId, streamData, req, res) {
+    try {
+      logger.info('Creating resilient stream proxy', { 
+        streamId, 
+        url: streamData.url,
+        userAgent: req.get('User-Agent')
+      });
+
+      const clientIdentifier = this.generateClientIdentifier(req);
+      const { url, type, auth, headers: customHeaders = {} } = streamData;
+      
+      // Generate unique session ID for resilience tracking
+      const sessionId = `resilient_${streamId}_${clientIdentifier}_${Date.now()}`;
+      
+      // Check if client already has an active resilient stream
+      const existingStream = this.activeStreams.get(`resilient_${streamId}_${clientIdentifier}`);
+      if (existingStream) {
+        logger.info('Found existing resilient stream for client, terminating it', {
+          streamId,
+          clientIdentifier,
+          existingSessionId: existingStream.sessionId
+        });
+        
+        // Stop existing stream
+        streamResilienceService.stopStream(existingStream.sessionId);
+        this.activeStreams.delete(`resilient_${streamId}_${clientIdentifier}`);
+      }
+
+      // Get channel information
+      let channelInfo = null;
+      try {
+        const database = require('./database');
+        const channel = await database.get('SELECT name, number FROM channels WHERE id = ?', [streamId]);
+        if (channel) {
+          channelInfo = { name: channel.name, number: channel.number };
+        }
+      } catch (error) {
+        logger.warn('Failed to get channel info for resilient stream', { streamId, error: error.message });
+      }
+
+      // Prepare resilience options
+      const resilienceOptions = {
+        streamType: type,
+        auth,
+        customHeaders,
+        clientInfo: {
+          userAgent: req.get('User-Agent'),
+          clientIP: req.ip,
+          clientIdentifier
+        },
+        channelInfo,
+        // Enhanced configuration for Android TV and Plex
+        enhancedResilience: req.get('User-Agent')?.toLowerCase().includes('android') ||
+                           req.get('User-Agent')?.toLowerCase().includes('plex'),
+        plexOptimizations: true
+      };
+
+      logger.info('Starting resilient stream with multi-layer recovery', {
+        sessionId,
+        streamId,
+        url,
+        type,
+        clientInfo: resilienceOptions.clientInfo.userAgent
+      });
+
+      // Start resilient stream with the resilience service
+      const resilientOutputStream = await streamResilienceService.startResilientStream(
+        sessionId, 
+        url, 
+        resilienceOptions
+      );
+
+      // Store stream information
+      const streamInfo = {
+        sessionId,
+        streamId,
+        clientIdentifier,
+        startTime: Date.now(),
+        clientIP: req.ip,
+        userAgent: req.get('User-Agent'),
+        url: streamData.url,
+        type: streamData.type,
+        isResilient: true,
+        resilienceMetrics: {
+          recoveryEvents: 0,
+          lastRecoveryTime: null,
+          totalUptime: 0
+        }
+      };
+      
+      this.activeStreams.set(`resilient_${streamId}_${clientIdentifier}`, streamInfo);
+
+      // Start enhanced session tracking
+      try {
+        await streamSessionManager.startSession({
+          sessionId,
+          streamId,
+          clientIP: req.ip,
+          userAgent: req.get('User-Agent'),
+          clientIdentifier,
+          channelName: channelInfo?.name,
+          channelNumber: channelInfo?.number,
+          streamUrl: streamData.url,
+          streamType: streamData.type
+        });
+      } catch (sessionError) {
+        logger.warn('Failed to start enhanced session tracking for resilient stream', {
+          sessionId,
+          error: sessionError.message
+        });
+      }
+
+      // Set up resilience event monitoring
+      streamResilienceService.on('stream:recovery_started', (event) => {
+        if (event.streamId === sessionId) {
+          logger.warn('Stream recovery started', {
+            streamId: event.streamId,
+            layer: event.layer,
+            error: event.error
+          });
+          
+          // Update stream metrics
+          if (streamInfo.resilienceMetrics) {
+            streamInfo.resilienceMetrics.recoveryEvents++;
+            streamInfo.resilienceMetrics.lastRecoveryTime = Date.now();
+          }
+
+          // Notify session manager of recovery event
+          streamSessionManager.updateSessionMetrics(sessionId, { errorIncrement: 1 });
+        }
+      });
+
+      streamResilienceService.on('stream:recovery_completed', (event) => {
+        if (event.streamId === sessionId) {
+          logger.info('Stream recovery completed', {
+            streamId: event.streamId,
+            layer: event.layer,
+            recoveryDuration: event.recoveryDuration
+          });
+        }
+      });
+
+      streamResilienceService.on('stream:failed', (event) => {
+        if (event.streamId === sessionId) {
+          logger.error('Resilient stream failed after all recovery attempts', {
+            streamId: event.streamId,
+            error: event.error
+          });
+          
+          // Clean up
+          this.activeStreams.delete(`resilient_${streamId}_${clientIdentifier}`);
+          streamSessionManager.endSession(sessionId, 'stream_failed');
+        }
+      });
+
+      // Set appropriate headers for resilient streaming
+      res.set({
+        'Content-Type': 'video/mp2t',
+        'Connection': 'keep-alive',
+        'Cache-Control': 'no-cache, no-store, must-revalidate',
+        'Pragma': 'no-cache',
+        'Expires': '0',
+        'Transfer-Encoding': 'chunked',
+        'Access-Control-Allow-Origin': '*',
+        'X-Stream-Type': 'resilient',
+        'X-Resilience-Layers': '4',
+        'X-Session-Id': sessionId
+      });
+
+      // Handle client disconnect
+      req.on('close', () => {
+        logger.info('Client disconnected from resilient stream', {
+          sessionId,
+          streamId,
+          clientIdentifier
+        });
+        
+        // Stop resilient stream
+        streamResilienceService.stopStream(sessionId);
+        this.activeStreams.delete(`resilient_${streamId}_${clientIdentifier}`);
+        streamSessionManager.endSession(sessionId, 'client_disconnect');
+      });
+
+      // Pipe the resilient output stream to the response
+      resilientOutputStream.on('error', (error) => {
+        logger.error('Resilient stream output error', {
+          sessionId,
+          error: error.message
+        });
+        
+        if (!res.headersSent) {
+          res.status(500).end();
+        }
+      });
+
+      resilientOutputStream.on('data', (chunk) => {
+        // Update session metrics
+        streamSessionManager.updateSessionMetrics(sessionId, {
+          bytesTransferred: (streamInfo.bytesTransferred || 0) + chunk.length,
+          currentBitrate: Math.round((chunk.length * 8) / 1) // Rough bitrate calculation
+        });
+        
+        streamInfo.bytesTransferred = (streamInfo.bytesTransferred || 0) + chunk.length;
+      });
+
+      // Start streaming
+      resilientOutputStream.pipe(res);
+
+      logger.info('Resilient stream proxy created successfully', {
+        sessionId,
+        streamId,
+        clientIdentifier,
+        url: streamData.url
+      });
+
+    } catch (error) {
+      logger.error('Failed to create resilient stream proxy', {
+        streamId,
+        error: error.message,
+        stack: error.stack
+      });
+      
+      if (!res.headersSent) {
+        res.status(500).json({
+          error: 'Failed to create resilient stream',
+          message: error.message,
+          streamId
+        });
+      }
+    }
   }
 
   // Create a stream proxy for Plex
@@ -2990,6 +3224,88 @@ class StreamManager {
     }
     this.streamTimeouts.clear();
   }
+
+  // Get resilience statistics and stream health metrics
+  getResilientStreamStats() {
+    const resilientStreams = [];
+    const serviceStats = streamResilienceService.getServiceStats();
+    
+    for (const [key, stream] of this.activeStreams) {
+      if (stream.isResilient) {
+        const resilienceStatus = streamResilienceService.getStreamStatus(stream.sessionId);
+        
+        resilientStreams.push({
+          sessionId: stream.sessionId,
+          streamId: stream.streamId,
+          clientIdentifier: stream.clientIdentifier,
+          clientIP: stream.clientIP,
+          userAgent: stream.userAgent,
+          url: stream.url,
+          type: stream.type,
+          startTime: stream.startTime,
+          uptime: Date.now() - stream.startTime,
+          
+          // Resilience metrics
+          resilience: resilienceStatus || {
+            status: 'unknown',
+            isHealthy: false,
+            isRecovering: false,
+            ffmpegRetries: 0,
+            processRestarts: 0,
+            sessionRecreations: 0
+          },
+          
+          // Recovery events
+          resilienceMetrics: stream.resilienceMetrics || {
+            recoveryEvents: 0,
+            lastRecoveryTime: null,
+            totalUptime: 0
+          }
+        });
+      }
+    }
+
+    return {
+      // Service-level statistics
+      service: serviceStats,
+      
+      // Individual stream statistics
+      streams: resilientStreams,
+      
+      // Summary metrics
+      summary: {
+        totalResilientStreams: resilientStreams.length,
+        healthyStreams: resilientStreams.filter(s => s.resilience.isHealthy).length,
+        recoveringStreams: resilientStreams.filter(s => s.resilience.isRecovering).length,
+        totalRecoveryEvents: resilientStreams.reduce((sum, s) => sum + s.resilienceMetrics.recoveryEvents, 0),
+        averageUptime: resilientStreams.length > 0 
+          ? resilientStreams.reduce((sum, s) => sum + s.uptime, 0) / resilientStreams.length
+          : 0
+      }
+    };
+  }
+
+  // Check if resilient streaming is available and healthy
+  isResilientStreamingHealthy() {
+    const stats = this.getResilientStreamStats();
+    const serviceStats = stats.service;
+    
+    return {
+      available: true,
+      serviceHealthy: serviceStats.activeStreams >= 0, // Service is responding
+      streamsHealthy: stats.summary.healthyStreams === stats.summary.totalResilientStreams,
+      recovering: stats.summary.recoveringStreams > 0,
+      
+      // Health indicators
+      indicators: {
+        totalStreams: stats.summary.totalResilientStreams,
+        healthyStreams: stats.summary.healthyStreams,
+        recoveringStreams: stats.summary.recoveringStreams,
+        totalRecoveryEvents: stats.summary.totalRecoveryEvents,
+        serviceUptime: serviceStats.serviceUptime
+      }
+    };
+  }
 }
 
 // Create singleton instance
@@ -2998,7 +3314,7 @@ const streamManager = new StreamManager();
 // Periodic cleanup of stale sessions (every 5 minutes)
 setInterval(() => {
   const now = Date.now();
-  const maxSessionAge = 4 * 60 * 60 * 1000; // 4 hours for live streaming sessions
+  const maxSessionAge = 60 * 60 * 1000; // 1 hour (original value)
   
   for (const [sessionId, stream] of streamManager.activeStreams) {
     if (now - stream.startTime > maxSessionAge) {
