@@ -403,7 +403,7 @@ router.get('/timeline/:itemId?', async (req, res) => {
         Timeline: [{
           state: "playing",
           type: "video",
-          itemType: "episode", // Android TV expects episode type for live TV
+          itemType: "clip", // Android TV requires clip type for Live TV
           ratingKey: itemId || "18961",
           key: `/library/metadata/${itemId || "18961"}`,
           playQueueItemID: parseInt(itemId) || 18961,
@@ -1530,6 +1530,53 @@ router.get('/consumers', async (req, res) => {
   } catch (error) {
     logger.error('Consumer stats endpoint error:', error);
     res.status(500).json({ error: 'Failed to get consumer stats' });
+  }
+});
+
+// CRITICAL: Transcode decision endpoint for Android TV compatibility
+router.get('/video/:/transcode/universal/decision', async (req, res) => {
+  try {
+    const { path, session, mediaIndex } = req.query;
+    
+    logger.info('Plex transcode decision request (Android TV)', {
+      path,
+      session,
+      mediaIndex,
+      query: req.query,
+      userAgent: req.get('User-Agent')
+    });
+    
+    // Extract metadata ID from path if available
+    const pathMatch = path ? path.match(/metadata\/(.+?)(?:\/|$)/) : null;
+    const metadataId = pathMatch ? pathMatch[1] : 'live-tv-stream';
+    
+    // Return proper MediaContainer XML for transcoding decision
+    res.set({
+      'Content-Type': 'application/xml; charset=utf-8',
+      'Cache-Control': 'no-cache'
+    });
+    
+    const transcodeDecisionXML = `<?xml version="1.0" encoding="UTF-8"?>
+<MediaContainer size="1" identifier="com.plexapp.plugins.library">
+  <Video ratingKey="${metadataId}" key="/library/metadata/${metadataId}" type="clip" title="Live TV Stream" summary="Live television programming" duration="86400000" live="1" addedAt="${Math.floor(Date.now() / 1000)}" updatedAt="${Math.floor(Date.now() / 1000)}">
+    <Media id="1" duration="86400000" bitrate="5000" width="1920" height="1080" aspectRatio="1.78" audioChannels="2" audioCodec="aac" videoCodec="h264" videoResolution="1080" container="mpegts" videoFrameRate="25p" audioProfile="lc" videoProfile="high">
+      <Part id="1" key="/stream/${session || metadataId}" file="/stream/${session || metadataId}" size="999999999" duration="86400000" container="mpegts" hasThumbnail="0">
+        <Stream id="1" streamType="1" default="1" codec="h264" index="0" bitrate="4000" bitDepth="8" height="1080" width="1920" displayTitle="1080p (H.264)" extendedDisplayTitle="1080p (H.264)" />
+        <Stream id="2" streamType="2" selected="1" default="1" codec="aac" index="1" channels="2" bitrate="128" audioChannelLayout="stereo" samplingRate="48000" displayTitle="Stereo (AAC)" extendedDisplayTitle="Stereo (AAC)" />
+      </Part>
+    </Media>
+  </Video>
+</MediaContainer>`;
+
+    res.send(transcodeDecisionXML);
+  } catch (error) {
+    logger.error('Transcode decision endpoint error:', error);
+    
+    // Return minimal valid MediaContainer on error
+    res.set({
+      'Content-Type': 'application/xml; charset=utf-8'
+    });
+    res.status(200).send('<?xml version="1.0" encoding="UTF-8"?><MediaContainer size="0" />');
   }
 });
 
