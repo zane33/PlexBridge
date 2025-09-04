@@ -261,12 +261,17 @@ router.get('/lineup.json', async (req, res) => {
       userAgent: req.get('User-Agent')
     });
 
-    // CRITICAL: Proper headers to prevent HTML response errors
+    // CRITICAL: Proper headers to prevent HTML response errors and force cache refresh
     res.set({
       'Content-Type': 'application/json; charset=utf-8',
-      'Cache-Control': 'no-cache, no-store, must-revalidate',
+      'Cache-Control': 'no-cache, no-store, must-revalidate, private',
       'Pragma': 'no-cache',
-      'Expires': '0'
+      'Expires': '0',
+      'ETag': `"plexbridge-lineup-${Date.now()}"`,
+      'Last-Modified': new Date().toUTCString(),
+      'Vary': 'User-Agent, Accept',
+      'X-Content-Type': 'live-tv-lineup',
+      'X-Metadata-Version': '4.0-corrected'  // Signal that metadata is corrected
     });
 
     res.json(lineup);
@@ -642,7 +647,13 @@ router.get('/library/metadata/:metadataId', async (req, res) => {
     
     res.set({
       'Content-Type': 'application/json; charset=utf-8',
-      'Cache-Control': 'no-cache'
+      'Cache-Control': 'no-cache, no-store, must-revalidate, private',
+      'Pragma': 'no-cache',
+      'Expires': '0',
+      'ETag': `"plexbridge-metadata-${metadataId}-${Date.now()}"`,
+      'Last-Modified': new Date().toUTCString(),
+      'X-Content-Type': 'live-tv-metadata',
+      'X-Metadata-Version': '4.0-corrected'  // Signal that metadata uses type 4, not 5
     });
     
     res.json(metadata);

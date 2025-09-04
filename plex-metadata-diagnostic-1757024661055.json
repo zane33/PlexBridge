@@ -1,0 +1,17 @@
+{
+  "timestamp": "2025-09-04T22:24:21.054Z",
+  "summary": {
+    "totalFindings": 0,
+    "criticalIssues": 0,
+    "errors": 0
+  },
+  "recommendations": [
+    "✅ No type 5 metadata detected in PlexBridge responses",
+    "The type 5 errors may be coming from:",
+    "  1. Cached metadata in Plex server",
+    "  2. Database records not yet updated",
+    "  3. External IPTV source metadata",
+    "  4. Third-party plugins or middleware"
+  ],
+  "findings": []
+}

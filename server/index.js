@@ -528,6 +528,21 @@ const initializeApp = async () => {
       app.use('/', ssdpRoutes);
       app.use('/', streamRoutes);
       
+      // Add metadata type validation middleware to prevent type 5 errors
+      const { metadataValidationMiddleware } = require('./utils/metadataTypeValidator');
+      const { criticalPlexEndpointMiddleware, plexCachePreventionMiddleware } = require('./utils/plexCachePreventionMiddleware');
+      
+      // Apply cache prevention first, then validation
+      app.use('/library', criticalPlexEndpointMiddleware, metadataValidationMiddleware);
+      app.use('/lineup', criticalPlexEndpointMiddleware, metadataValidationMiddleware);
+      app.use('/discover', criticalPlexEndpointMiddleware, metadataValidationMiddleware);
+      app.use('/device', plexCachePreventionMiddleware, metadataValidationMiddleware);
+      app.use('/timeline', criticalPlexEndpointMiddleware, metadataValidationMiddleware);
+      app.use('/consumer', plexCachePreventionMiddleware, metadataValidationMiddleware);
+      app.use('/api', plexCachePreventionMiddleware, metadataValidationMiddleware);
+      
+      logger.info('✅ Metadata validation and cache prevention middleware activated for Plex endpoints');
+      
       // Add Android TV error handler after all routes
       const { androidTVErrorHandler } = require('./middleware/androidTVErrorHandler');
       app.use(androidTVErrorHandler());
