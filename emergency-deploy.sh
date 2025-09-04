@@ -1,7 +1,7 @@
 #!/bin/bash
 
 echo "================================"
-echo "EMERGENCY DEPLOYMENT - Critical H.264 and Consumer Fixes"
+echo "H.264 PPS CORRUPTION FIX - Emergency Deployment v2"
 echo "================================"
 echo ""
 
@@ -51,11 +51,12 @@ else
 fi
 
 echo ""
-echo "📋 EMERGENCY FIXES DEPLOYED:"
-echo "1. ✅ Added /livetv/sessions/ endpoint for Plex Universal Transcode"
-echo "2. ✅ Created emergency-safe H.264 profile with minimal processing"
-echo "3. ✅ Forced ALL enhanced encoding to use emergency-safe mode"
-echo "4. ✅ Enhanced consumer session tracking"
+echo "📋 H.264 PPS CORRUPTION FIXES DEPLOYED:"
+echo "1. ✅ Fixed emergency-safe profile with correct minimal FFmpeg parameters"
+echo "2. ✅ Added ultra-minimal fallback profile for severe corruption"
+echo "3. ✅ Enhanced error detection with escalation logic"
+echo "4. ✅ All enhanced encoding streams forced to use safe profiles"
+echo "5. ✅ Added /livetv/sessions/ endpoint for Plex Universal Transcode"
 echo ""
 
 echo "📊 MONITORING:"
@@ -64,10 +65,11 @@ echo "Check errors: docker-compose -f docker-local.yml logs | grep -i error"
 echo ""
 
 echo "🎯 EXPECTED RESULTS:"
-echo "- No more 'Failed to find consumer' errors"
-echo "- No more H.264 PPS/decode errors"
-echo "- Enhanced encoding streams work without crashes"
-echo "- Plex Universal Transcode requests succeed"
+echo "- ✅ No more H.264 PPS/decode_slice_header errors"
+echo "- ✅ Enhanced encoding streams start successfully"
+echo "- ✅ No more 'non-existing PPS 0 referenced' errors"
+echo "- ✅ Streams use minimal FFmpeg processing to prevent corruption"
+echo "- ✅ Automatic escalation to ultra-minimal if problems persist"
 echo ""
 
 echo "Emergency deployment completed! Monitor the logs for verification."

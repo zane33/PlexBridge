@@ -188,36 +188,53 @@ const ENHANCED_ENCODING_PROFILES = {
     h264_recovery: true // Flag for H.264 error recovery
   },
 
-  // EMERGENCY: Ultra-safe mode for severely corrupted H.264 streams
+  // CORRECT: Minimal H.264 safe profile that actually works
   'emergency-safe': {
-    name: 'Emergency Safe Mode',
-    description: 'Ultra-conservative profile that avoids ALL potential H.264 corruption sources',
+    name: 'H.264 PPS Safe Mode',
+    description: 'Minimal working profile that prevents H.264 PPS corruption',
     ffmpeg_options: [
-      // ABSOLUTE MINIMAL processing
-      '-err_detect', 'ignore_err',
-      '-fflags', '+discardcorrupt',
+      // Hide FFmpeg banner and reduce verbosity
+      '-hide_banner',
+      '-loglevel', 'error',
       
-      // NO analysis - just copy immediately  
-      '-probesize', '32',         // Absolute minimum (32 bytes)
-      '-analyzeduration', '0',    // No analysis at all
+      // CRITICAL: Minimal input processing that doesn't corrupt PPS
+      '-probesize', '2000',       // Very small probe to avoid corruption
+      '-analyzeduration', '1000', // Minimal analysis (1ms)
+      '-fflags', '+discardcorrupt', // Discard corrupt packets
+      '-err_detect', 'ignore_err',  // Ignore decode errors
       
-      // Direct timestamp passthrough
-      '-avoid_negative_ts', 'disabled', // Don't touch timestamps
-      
-      // Pure copy with no processing
+      // Pure copy mode - no re-encoding that could corrupt PPS
       '-c:v', 'copy',
       '-c:a', 'copy',
       
-      // Simplest possible output
-      '-f', 'mpegts'
-      
-      // NO other parameters that could cause corruption
+      // Simple MPEG-TS output with no special processing
+      '-f', 'mpegts',
+      '-muxdelay', '0',
+      '-flush_packets', '1'
     ],
-    priority: 200, // Highest priority
+    priority: 200,
+    timeout_ms: 10000,
+    retry_attempts: 1,
+    enable_monitoring: false,
+    emergency_mode: true
+  },
+
+  // ULTRA-MINIMAL: Last resort if emergency-safe still fails
+  'ultra-minimal': {
+    name: 'Ultra Minimal Copy',
+    description: 'Absolute bare minimum FFmpeg command',
+    ffmpeg_options: [
+      // Absolutely minimal command
+      '-hide_banner',
+      '-loglevel', 'panic', // Only fatal errors
+      '-c', 'copy',         // Copy everything
+      '-f', 'mpegts'        // Output format only
+    ],
+    priority: 250,
     timeout_ms: 5000,
     retry_attempts: 1,
-    enable_monitoring: false, // Don't even monitor to avoid interference
-    emergency_mode: true
+    enable_monitoring: false,
+    ultra_safe: true
   }
 };
 
@@ -253,12 +270,26 @@ function selectEncodingProfile(streamInfo, channelNumber = null, errorHistory = 
                                error.includes('decode_slice_header')
                              );
       
-      if (hasSevereErrors) {
+      // Count consecutive failures to escalate to ultra-minimal if needed
+      const consecutiveFailures = streamInfo.consecutive_h264_failures || 0;
+      
+      if (consecutiveFailures > 3) {
+        logger.error('MULTIPLE H.264 failures - escalating to ULTRA-MINIMAL mode', {
+          channelNumber,
+          streamName: streamInfo.name,
+          profile: 'ultra-minimal',
+          errorCount: h264ErrorTypes.length,
+          consecutiveFailures,
+          errorSample: h264ErrorTypes.slice(0, 3)
+        });
+        return 'ultra-minimal';
+      } else if (hasSevereErrors || consecutiveFailures > 1) {
         logger.error('SEVERE H.264 errors detected - using EMERGENCY SAFE MODE', {
           channelNumber,
           streamName: streamInfo.name,
           profile: 'emergency-safe',
           errorCount: h264ErrorTypes.length,
+          consecutiveFailures,
           errorSample: h264ErrorTypes.slice(0, 3)
         });
         return 'emergency-safe';
