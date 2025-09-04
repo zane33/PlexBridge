@@ -9,6 +9,21 @@ const settingsService = require('./settingsService');
 const streamSessionManager = require('./streamSessionManager');
 const streamResilienceService = require('./streamResilienceService');
 
+// Android TV Configuration Constants
+const ANDROID_TV_CONFIG = {
+  RESET_INTERVAL: 1200, // 20 minutes in seconds
+  ANALYZE_DURATION: 5000000, // 5MB (reduced from 10MB for faster startup)
+  PROBE_SIZE: 5000000, // 5MB (reduced from 10MB for faster startup)
+  SEGMENT_DURATION: 30, // 30 seconds
+  BUFFER_SIZE: '256k',
+  QUEUE_SIZE: 4096,
+  MAX_RESTARTS: 3, // Maximum restarts per 5-minute window
+  RESTART_WINDOW: 300000, // 5 minutes in milliseconds
+  RESTART_DELAY: 2000, // 2 seconds delay before restart (increased from 1 second)
+  HEALTH_CHECK_INTERVAL: 10000, // Check stream health every 10 seconds
+  USER_AGENT_PATTERNS: ['android', 'shield', 'androidtv']
+};
+
 class StreamManager {
   constructor() {
     this.activeStreams = new Map();
@@ -17,6 +32,116 @@ class StreamManager {
     this.channelStreams = new Map(); // Track streams per channel
     this.clientSessions = new Map(); // Track client sessions to prevent sharing
     this.streamTimeouts = new Map(); // Track stream timeouts
+  }
+
+  // Android TV Detection Utility
+  isAndroidTVClient(userAgent) {
+    if (!userAgent) return false;
+    const userAgentLower = userAgent.toLowerCase();
+    return ANDROID_TV_CONFIG.USER_AGENT_PATTERNS.some(pattern => 
+      userAgentLower.includes(pattern)
+    );
+  }
+
+  // Build structured FFmpeg arguments for Android TV
+  buildAndroidTVFFmpegArgs(streamUrl, settings = null) {
+    const baseArgs = [
+      '-hide_banner', '-loglevel', 'error',
+      '-analyzeduration', ANDROID_TV_CONFIG.ANALYZE_DURATION.toString(),
+      '-probesize', ANDROID_TV_CONFIG.PROBE_SIZE.toString(),
+      '-reconnect', '1',
+      '-reconnect_at_eof', '1',
+      '-reconnect_streamed', '1',
+      '-reconnect_delay_max', '2',
+      '-i', streamUrl,
+      '-c:v', 'copy',
+      '-c:a', 'copy',
+      '-bsf:v', 'dump_extra',
+      '-f', 'segment',
+      '-segment_time', ANDROID_TV_CONFIG.SEGMENT_DURATION.toString(),
+      '-segment_format', 'mpegts',
+      '-segment_list_type', 'flat',
+      '-segment_list', 'pipe:2', // Use stderr instead of /dev/null for better performance
+      '-reset_timestamps', '1',
+      '-avoid_negative_ts', 'make_zero',
+      '-fflags', '+genpts+igndts+discardcorrupt+nobuffer',
+      '-flags', '+low_delay',
+      '-copyts',
+      '-muxdelay', '0',
+      '-muxpreload', '0',
+      '-flush_packets', '1',
+      '-max_delay', '0',
+      '-max_muxing_queue_size', ANDROID_TV_CONFIG.QUEUE_SIZE.toString(),
+      '-rtbufsize', ANDROID_TV_CONFIG.BUFFER_SIZE,
+      'pipe:1'
+    ];
+
+    // Add HLS-specific arguments if needed
+    if (streamUrl.includes('.m3u8')) {
+      const hlsArgs = [
+        '-allowed_extensions', 'ALL',
+        '-protocol_whitelist', 'file,http,https,tcp,tls,pipe,crypto',
+        '-user_agent', 'PlexBridge/1.0',
+        '-live_start_index', '0',
+        '-http_persistent', '1'
+      ];
+      
+      // Insert HLS args before the input URL
+      const inputIndex = baseArgs.indexOf('-i');
+      if (inputIndex > -1) {
+        baseArgs.splice(inputIndex, 0, ...hlsArgs);
+      }
+    }
+
+    return baseArgs;
+  }
+
+  // Validate response stream before piping
+  validateResponseStream(res, sessionId) {
+    if (!res) {
+      logger.error('Response object is null', { sessionId });
+      return false;
+    }
+    
+    if (res.writableEnded || res.destroyed || res.finished) {
+      logger.warn('Response stream already closed, cannot pipe data', { 
+        sessionId,
+        writableEnded: res.writableEnded,
+        destroyed: res.destroyed,
+        finished: res.finished
+      });
+      return false;
+    }
+    
+    return true;
+  }
+
+  // Check restart throttling
+  shouldThrottleRestart(streamInfo) {
+    if (!streamInfo.restartCount) return false;
+    
+    const now = Date.now();
+    const firstRestart = streamInfo.firstRestart || now;
+    
+    // Reset counter if outside the time window
+    if ((now - firstRestart) > ANDROID_TV_CONFIG.RESTART_WINDOW) {
+      streamInfo.restartCount = 0;
+      streamInfo.firstRestart = now;
+      return false;
+    }
+    
+    // Check if we've exceeded the restart limit
+    if (streamInfo.restartCount >= ANDROID_TV_CONFIG.MAX_RESTARTS) {
+      logger.warn('Restart limit exceeded for stream', {
+        sessionId: streamInfo.sessionId,
+        restartCount: streamInfo.restartCount,
+        timeWindow: ANDROID_TV_CONFIG.RESTART_WINDOW,
+        maxRestarts: ANDROID_TV_CONFIG.MAX_RESTARTS
+      });
+      return true;
+    }
+    
+    return false;
   }
 
   // Universal stream format detection
@@ -1175,49 +1300,51 @@ class StreamManager {
     
     // Check if request is from Android TV for specific optimizations
     const userAgent = req.get('User-Agent') || '';
-    const isAndroidTV = userAgent.toLowerCase().includes('android') || userAgent.toLowerCase().includes('shield');
+    const isAndroidTV = this.isAndroidTVClient(userAgent);
     
-    // Get configurable FFmpeg command line with proper transcoding
-    let ffmpegCommand;
+    // Get configurable FFmpeg arguments
+    let args;
     if (isAndroidTV) {
-      // Android TV specific configuration to prevent buffering
-      // CRITICAL FIX: Increased probesize and analyzeduration for proper audio codec detection
-      ffmpegCommand = settings?.plexlive?.transcoding?.androidtv?.ffmpegArgs || 
-                     settings?.plexlive?.transcoding?.mpegts?.ffmpegArgs || 
-                     config.plexlive?.transcoding?.mpegts?.ffmpegArgs ||
-                     '-hide_banner -loglevel error -analyzeduration 10000000 -probesize 10000000 -reconnect 1 -reconnect_at_eof 1 -reconnect_streamed 1 -reconnect_delay_max 2 -i [URL] -c:v copy -c:a copy -bsf:v dump_extra -f segment -segment_time 30 -segment_format mpegts -segment_list_type flat -segment_list /dev/null -reset_timestamps 1 -avoid_negative_ts make_zero -fflags +genpts+igndts+discardcorrupt+nobuffer -flags +low_delay -copyts -muxdelay 0 -muxpreload 0 -flush_packets 1 -max_delay 0 -max_muxing_queue_size 4096 -rtbufsize 256k pipe:1';
+      // Use structured Android TV configuration
+      args = this.buildAndroidTVFFmpegArgs(finalUrl, settings);
       
-      logger.info('Using Android TV optimized FFmpeg configuration', { clientIP: req.ip });
+      logger.info('Using Android TV optimized FFmpeg configuration', { 
+        clientIP: req.ip,
+        userAgent: userAgent,
+        analyzeDuration: ANDROID_TV_CONFIG.ANALYZE_DURATION,
+        probeSize: ANDROID_TV_CONFIG.PROBE_SIZE
+      });
     } else {
-      ffmpegCommand = settings?.plexlive?.transcoding?.mpegts?.ffmpegArgs || 
-                     config.plexlive?.transcoding?.mpegts?.ffmpegArgs ||
-                     '-hide_banner -loglevel error -reconnect 1 -reconnect_at_eof 1 -reconnect_streamed 1 -reconnect_delay_max 2 -i [URL] -c:v copy -c:a copy -bsf:v dump_extra -f mpegts -mpegts_copyts 1 -avoid_negative_ts make_zero -fflags +genpts+igndts+discardcorrupt -copyts -muxdelay 0 -muxpreload 0 -flush_packets 1 -max_delay 0 -max_muxing_queue_size 9999 pipe:1';
-    }
-    
-    // Replace [URL] placeholder with actual stream URL
-    ffmpegCommand = ffmpegCommand.replace('[URL]', finalUrl);
-    
-    // Add HLS-specific arguments if needed
-    if (finalUrl.includes('.m3u8')) {
-      let hlsArgs = settings?.plexlive?.transcoding?.mpegts?.hlsProtocolArgs || 
-                   config.plexlive?.transcoding?.mpegts?.hlsProtocolArgs ||
-                   '-allowed_extensions ALL -protocol_whitelist file,http,https,tcp,tls,pipe,crypto';
+      // Standard FFmpeg configuration for non-Android TV clients
+      const ffmpegCommand = settings?.plexlive?.transcoding?.mpegts?.ffmpegArgs || 
+                           config.plexlive?.transcoding?.mpegts?.ffmpegArgs ||
+                           '-hide_banner -loglevel error -reconnect 1 -reconnect_at_eof 1 -reconnect_streamed 1 -reconnect_delay_max 2 -i [URL] -c:v copy -c:a copy -bsf:v dump_extra -f mpegts -mpegts_copyts 1 -avoid_negative_ts make_zero -fflags +genpts+igndts+discardcorrupt -copyts -muxdelay 0 -muxpreload 0 -flush_packets 1 -max_delay 0 -max_muxing_queue_size 9999 pipe:1';
       
-      // For redirected streams, add additional HLS options for better compatibility
-      if (finalUrl !== url) {
-        hlsArgs += ' -http_seekable 0 -multiple_requests 1 -http_persistent 0';
-        logger.stream('Added HLS compatibility options for redirected stream', {
-          originalUrl: url,
-          finalUrl: finalUrl
-        });
+      // Replace [URL] placeholder with actual stream URL
+      let processedCommand = ffmpegCommand.replace('[URL]', finalUrl);
+      
+      // Add HLS-specific arguments if needed
+      if (finalUrl.includes('.m3u8')) {
+        let hlsArgs = settings?.plexlive?.transcoding?.mpegts?.hlsProtocolArgs || 
+                     config.plexlive?.transcoding?.mpegts?.hlsProtocolArgs ||
+                     '-allowed_extensions ALL -protocol_whitelist file,http,https,tcp,tls,pipe,crypto';
+        
+        // For redirected streams, add additional HLS options for better compatibility
+        if (finalUrl !== url) {
+          hlsArgs += ' -http_seekable 0 -multiple_requests 1 -http_persistent 0';
+          logger.stream('Added HLS compatibility options for redirected stream', {
+            originalUrl: url,
+            finalUrl: finalUrl
+          });
+        }
+        
+        // Insert HLS args BEFORE the input URL for proper protocol handling
+        processedCommand = processedCommand.replace('-i ' + finalUrl, hlsArgs + ' -i ' + finalUrl);
       }
       
-      // Insert HLS args BEFORE the input URL for proper protocol handling
-      ffmpegCommand = ffmpegCommand.replace('-i ' + finalUrl, hlsArgs + ' -i ' + finalUrl);
+      // Parse command line into arguments array
+      args = processedCommand.split(' ').filter(arg => arg.trim() !== '');
     }
-    
-    // Parse command line into arguments array
-    const args = ffmpegCommand.split(' ').filter(arg => arg.trim() !== '');
 
     // Add authentication if needed
     if (auth && auth.username) {
@@ -2235,7 +2362,7 @@ class StreamManager {
       if (isAndroidTV) {
         const resetInterval = settings?.plexlive?.transcoding?.mpegts?.androidtv?.resetInterval ||
                              config.plexlive?.transcoding?.mpegts?.androidtv?.resetInterval ||
-                             1200; // 20 minutes default
+                             ANDROID_TV_CONFIG.RESET_INTERVAL;
         
         streamInfo.androidTVResetTimer = setTimeout(() => {
           logger.info('Android TV stream reset triggered to prevent EOF crash', {
@@ -2581,6 +2708,14 @@ class StreamManager {
       
       logger.stream('Plex MPEG-TS stream proxy created successfully', { sessionId, channelId: channel.id });
 
+      // CRITICAL FIX: Validate response stream before piping
+      if (!this.validateResponseStream(res, sessionId)) {
+        logger.error('Response stream is invalid, cleaning up FFmpeg process', { sessionId });
+        ffmpegProcess.kill('SIGTERM');
+        this.cleanupStream(sessionId, 'response_invalid');
+        return;
+      }
+
       // Pipe FFmpeg output directly to response without buffering
       ffmpegProcess.stdout.pipe(res);
       
@@ -2650,15 +2785,59 @@ class StreamManager {
         return;
       }
 
+      // CRITICAL FIX: Validate response stream before attempting restart
+      if (!this.validateResponseStream(res, sessionId)) {
+        logger.warn('Response stream is closed, aborting restart', { sessionId });
+        this.cleanupStream(sessionId, 'response_closed');
+        return;
+      }
+
+      // CRITICAL FIX: Check restart throttling
+      if (this.shouldThrottleRestart(streamInfo)) {
+        logger.error('Restart limit exceeded, abandoning stream', {
+          sessionId,
+          channelId: channel.id,
+          restartCount: streamInfo.restartCount
+        });
+        this.cleanupStream(sessionId, 'restart_limit_exceeded');
+        return;
+      }
+
+      // Initialize restart tracking
+      if (!streamInfo.restartCount) {
+        streamInfo.restartCount = 0;
+        streamInfo.firstRestart = Date.now();
+      }
+      streamInfo.restartCount++;
+
       logger.info('Restarting Android TV stream to prevent EOF crash', {
         sessionId,
         channelId: channel.id,
         channelName: channel.name,
-        pid: streamInfo.process.pid
+        pid: streamInfo.process.pid,
+        restartCount: streamInfo.restartCount
       });
 
-      // Kill the existing FFmpeg process
-      streamInfo.process.kill('SIGTERM');
+      // Kill the existing FFmpeg process gracefully
+      if (streamInfo.process && streamInfo.process.pid) {
+        try {
+          streamInfo.process.kill('SIGTERM');
+          
+          // Give process time to shut down gracefully
+          await new Promise(resolve => setTimeout(resolve, ANDROID_TV_CONFIG.RESTART_DELAY));
+          
+          // Force kill if still running
+          if (!streamInfo.process.killed) {
+            streamInfo.process.kill('SIGKILL');
+          }
+        } catch (killError) {
+          logger.warn('Error killing existing FFmpeg process', {
+            sessionId,
+            pid: streamInfo.process.pid,
+            error: killError.message
+          });
+        }
+      }
       
       // Clear the reset timer
       if (streamInfo.androidTVResetTimer) {
@@ -2666,29 +2845,12 @@ class StreamManager {
         delete streamInfo.androidTVResetTimer;
       }
 
-      // Brief pause to allow clean shutdown
-      await new Promise(resolve => setTimeout(resolve, 1000));
-
-      // Start new FFmpeg process with same configuration
+      // Start new FFmpeg process with structured configuration
       const settingsService = require('./settingsService');
       const settings = await settingsService.getSettings();
       
-      let ffmpegCommand = settings?.plexlive?.transcoding?.androidtv?.ffmpegArgs ||
-                         settings?.plexlive?.transcoding?.mpegts?.androidtv?.ffmpegArgs ||
-                         config.plexlive?.transcoding?.mpegts?.androidtv?.ffmpegArgs ||
-                         '-hide_banner -loglevel error -analyzeduration 10000000 -probesize 10000000 -reconnect 1 -reconnect_at_eof 1 -reconnect_streamed 1 -reconnect_delay_max 2 -i [URL] -c:v copy -c:a copy -bsf:v dump_extra -f segment -segment_time 30 -segment_format mpegts -segment_list_type flat -segment_list /dev/null -reset_timestamps 1 -avoid_negative_ts make_zero -fflags +genpts+igndts+discardcorrupt+nobuffer -flags +low_delay -copyts -muxdelay 0 -muxpreload 0 -flush_packets 1 -max_delay 0 -max_muxing_queue_size 4096 -rtbufsize 256k pipe:1';
-      
-      ffmpegCommand = ffmpegCommand.replace('[URL]', streamUrl);
-      
-      // Add HLS-specific arguments if needed
-      if (streamUrl.includes('.m3u8')) {
-        let hlsArgs = settings?.plexlive?.transcoding?.mpegts?.hlsProtocolArgs || 
-                     config.plexlive?.transcoding?.mpegts?.hlsProtocolArgs ||
-                     '-allowed_extensions ALL -protocol_whitelist file,http,https,tcp,tls,pipe,crypto';
-        ffmpegCommand = ffmpegCommand.replace('-i ' + streamUrl, hlsArgs + ' -i ' + streamUrl);
-      }
-      
-      const args = ffmpegCommand.split(' ').filter(arg => arg.trim() !== '');
+      // Use the new structured Android TV args
+      const args = this.buildAndroidTVFFmpegArgs(streamUrl, settings);
       const { spawn } = require('child_process');
       
       const newFFmpegProcess = spawn(config.streams.ffmpegPath, args);
@@ -2699,7 +2861,6 @@ class StreamManager {
 
       // Update stream info with new process
       streamInfo.process = newFFmpegProcess;
-      streamInfo.restartCount = (streamInfo.restartCount || 0) + 1;
       streamInfo.lastRestart = Date.now();
 
       logger.info('Android TV stream successfully restarted', {
@@ -2709,13 +2870,21 @@ class StreamManager {
         restartCount: streamInfo.restartCount
       });
 
+      // CRITICAL FIX: Validate response stream again before piping
+      if (!this.validateResponseStream(res, sessionId)) {
+        logger.error('Response stream became invalid during restart, cleaning up', { sessionId });
+        newFFmpegProcess.kill('SIGTERM');
+        this.cleanupStream(sessionId, 'response_invalid_during_restart');
+        return;
+      }
+
       // Pipe new process to same response stream
       newFFmpegProcess.stdout.pipe(res, { end: false });
       
       // Set up new reset timer
       const resetInterval = settings?.plexlive?.transcoding?.mpegts?.androidtv?.resetInterval ||
                            config.plexlive?.transcoding?.mpegts?.androidtv?.resetInterval ||
-                           1200; // 20 minutes
+                           ANDROID_TV_CONFIG.RESET_INTERVAL;
       
       streamInfo.androidTVResetTimer = setTimeout(() => {
         this.restartStreamForAndroidTV(sessionId, channel, stream, streamUrl, req, res);
