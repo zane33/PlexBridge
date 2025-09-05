@@ -14,6 +14,22 @@ const coordinatedSessionManager = require('../services/coordinatedSessionManager
 const clientCrashDetector = require('../services/clientCrashDetector');
 const { v4: uuidv4 } = require('uuid');
 
+/**
+ * SECURITY: Escape XML special characters to prevent injection attacks
+ * CRITICAL: This prevents XML injection vulnerabilities that cause Android TV crashes
+ * @param {string} str - String to escape
+ * @returns {string} - XML-safe string
+ */
+function escapeXML(str) {
+  if (!str) return '';
+  return str.toString()
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
 // HDHomeRun discovery endpoint with caching
 router.get('/discover.json', cacheMiddleware('discover'), responseTimeMonitor(100), async (req, res) => {
   try {
@@ -567,18 +583,242 @@ router.get('/timeline/:itemId?', async (req, res) => {
   }
 });
 
+// Library sections endpoint - CRITICAL for Plex MediaContainer XML compatibility
+router.get('/library/sections', async (req, res) => {
+  try {
+    const userAgent = req.get('User-Agent') || '';
+    const acceptHeader = req.get('Accept') || '';
+    const isXMLRequest = acceptHeader.includes('application/xml') || acceptHeader.includes('text/xml');
+    
+    logger.info('PLEX LIBRARY SECTIONS REQUEST - MediaContainer format detection', { 
+      userAgent: userAgent.substring(0, 200),
+      acceptHeader,
+      isXMLRequest,
+      plexClientId: req.get('X-Plex-Client-Identifier'),
+      plexProduct: req.get('X-Plex-Product'),
+      plexVersion: req.get('X-Plex-Version'),
+      timestamp: new Date().toISOString()
+    });
+    
+    // Get channel count for sections
+    const channelCount = await database.get('SELECT COUNT(*) as count FROM channels WHERE enabled = 1');
+    const totalChannels = channelCount?.count || 0;
+    
+    // CRITICAL: Return XML MediaContainer for Plex Server compatibility
+    if (isXMLRequest || userAgent.includes('Plex')) {
+      res.set({
+        'Content-Type': 'application/xml; charset=utf-8',
+        'Cache-Control': 'no-cache, no-store, must-revalidate, private',
+        'Pragma': 'no-cache',
+        'Expires': '0',
+        'X-Plex-MediaContainer-Format': 'xml',
+        'X-Content-Type-Override': 'xml-mediacontainer'
+      });
+      
+      const sectionsXML = `<?xml version="1.0" encoding="UTF-8"?>
+<MediaContainer size="1" allowSync="0" identifier="com.plexapp.plugins.library" mediaTagPrefix="/system/bundle/media/flags/" mediaTagVersion="${Math.floor(Date.now() / 1000)}" title1="Plex Library" title2="">
+  <Directory allowSync="0" art="/:/resources/show-fanart.jpg" banner="/:/resources/show-banner.jpg" composite="/library/sections/1/composite/1" filters="1" key="/library/sections/1" language="en" refreshing="0" scanner="Plex Series Scanner" agent="com.plexapp.agents.thetvdb" type="show" title="Live TV" updatedAt="${Math.floor(Date.now() / 1000)}" uuid="e05e77e4-1cc3-4e1e-9e79-8bf9b51f5f3f">
+    <Location id="1" path="/library/sections/1"/>
+  </Directory>
+</MediaContainer>`;
+
+      res.send(sectionsXML);
+    } else {
+      // Fallback JSON response for non-Plex clients
+      res.set({
+        'Content-Type': 'application/json; charset=utf-8',
+        'Cache-Control': 'no-cache'
+      });
+      
+      res.json({
+        MediaContainer: {
+          size: 1,
+          allowSync: 0,
+          identifier: "com.plexapp.plugins.library",
+          title1: "Plex Library",
+          title2: "",
+          Directory: [{
+            allowSync: 0,
+            art: "/:/resources/show-fanart.jpg",
+            banner: "/:/resources/show-banner.jpg",
+            composite: "/library/sections/1/composite/1",
+            filters: 1,
+            key: "/library/sections/1",
+            language: "en",
+            refreshing: 0,
+            scanner: "Plex Series Scanner",
+            agent: "com.plexapp.agents.thetvdb",
+            type: "show",
+            title: "Live TV",
+            updatedAt: Math.floor(Date.now() / 1000),
+            uuid: "e05e77e4-1cc3-4e1e-9e79-8bf9b51f5f3f",
+            Location: [{
+              id: 1,
+              path: "/library/sections/1"
+            }]
+          }]
+        }
+      });
+    }
+  } catch (error) {
+    logger.error('Library sections error:', error);
+    
+    // Always return valid XML MediaContainer on error for Plex compatibility
+    res.set({
+      'Content-Type': 'application/xml; charset=utf-8'
+    });
+    res.status(200).send(`<?xml version="1.0" encoding="UTF-8"?>
+<MediaContainer size="0" identifier="com.plexapp.plugins.library" />
+`);
+  }
+});
+
+// Library section detail endpoint - handles specific section requests
+router.get('/library/sections/:sectionId', async (req, res) => {
+  try {
+    const { sectionId } = req.params;
+    const userAgent = req.get('User-Agent') || '';
+    const acceptHeader = req.get('Accept') || '';
+    const isXMLRequest = acceptHeader.includes('application/xml') || acceptHeader.includes('text/xml');
+    
+    logger.info('PLEX LIBRARY SECTION DETAIL REQUEST', { 
+      sectionId,
+      userAgent: userAgent.substring(0, 200),
+      acceptHeader,
+      isXMLRequest,
+      query: req.query,
+      timestamp: new Date().toISOString()
+    });
+    
+    // Get channels for this section (assuming section 1 is Live TV)
+    let channels = [];
+    if (sectionId === '1') {
+      const channelRows = await database.all(`
+        SELECT c.*, s.url, s.type 
+        FROM channels c 
+        LEFT JOIN streams s ON c.id = s.channel_id 
+        WHERE c.enabled = 1 AND s.enabled = 1
+        ORDER BY c.number
+        LIMIT 50
+      `);
+      channels = channelRows || [];
+    }
+    
+    if (isXMLRequest || userAgent.includes('Plex')) {
+      res.set({
+        'Content-Type': 'application/xml; charset=utf-8',
+        'Cache-Control': 'no-cache, no-store, must-revalidate, private',
+        'Pragma': 'no-cache',
+        'Expires': '0',
+        'X-Plex-MediaContainer-Format': 'xml'
+      });
+      
+      // Generate XML for channels as Video elements (type "episode" for Live TV)
+      const videoElements = channels.map(channel => {
+        return `    <Video ratingKey="live-${channel.id}" key="/library/metadata/live-${channel.id}" type="episode" title="${escapeXML(channel.name)}" grandparentTitle="${escapeXML(channel.name)}" parentTitle="Live Programming" contentRating="TV-PG" summary="Live television programming" index="1" parentIndex="1" year="${new Date().getFullYear()}" duration="86400000" addedAt="${Math.floor(Date.now() / 1000)}" updatedAt="${Math.floor(Date.now() / 1000)}" live="1">
+      <Media id="${channel.id}" duration="86400000" bitrate="5000" width="1920" height="1080" aspectRatio="1.78" audioChannels="2" audioCodec="aac" videoCodec="h264" videoResolution="1080" container="mpegts" videoFrameRate="25">
+        <Part id="${channel.id}" key="/stream/${channel.id}" duration="86400000" file="/stream/${channel.id}" size="0" container="mpegts" />
+      </Media>
+    </Video>`;
+      }).join('\n');
+      
+      const sectionXML = `<?xml version="1.0" encoding="UTF-8"?>
+<MediaContainer size="${channels.length}" allowSync="0" identifier="com.plexapp.plugins.library" librarySectionID="${sectionId}" librarySectionTitle="Live TV" librarySectionUUID="e05e77e4-1cc3-4e1e-9e79-8bf9b51f5f3f" mediaTagPrefix="/system/bundle/media/flags/" mediaTagVersion="${Math.floor(Date.now() / 1000)}" sortAsc="1" title1="Live TV" title2="All Shows" viewGroup="episode" viewMode="458832">
+${videoElements}
+</MediaContainer>`;
+
+      res.send(sectionXML);
+    } else {
+      // Fallback JSON response
+      res.set({
+        'Content-Type': 'application/json; charset=utf-8',
+        'Cache-Control': 'no-cache'
+      });
+      
+      const videoJson = channels.map(channel => ({
+        ratingKey: `live-${channel.id}`,
+        key: `/library/metadata/live-${channel.id}`,
+        type: "episode",
+        title: channel.name,
+        grandparentTitle: channel.name,
+        parentTitle: "Live Programming",
+        contentRating: "TV-PG",
+        summary: "Live television programming",
+        index: 1,
+        parentIndex: 1,
+        year: new Date().getFullYear(),
+        duration: 86400000,
+        addedAt: Math.floor(Date.now() / 1000),
+        updatedAt: Math.floor(Date.now() / 1000),
+        live: 1,
+        Media: [{
+          id: channel.id,
+          duration: 86400000,
+          bitrate: 5000,
+          width: 1920,
+          height: 1080,
+          aspectRatio: 1.78,
+          audioChannels: 2,
+          audioCodec: "aac",
+          videoCodec: "h264",
+          videoResolution: "1080",
+          container: "mpegts",
+          videoFrameRate: "25",
+          Part: [{
+            id: channel.id,
+            key: `/stream/${channel.id}`,
+            duration: 86400000,
+            file: `/stream/${channel.id}`,
+            size: 0,
+            container: "mpegts"
+          }]
+        }]
+      }));
+      
+      res.json({
+        MediaContainer: {
+          size: channels.length,
+          allowSync: 0,
+          identifier: "com.plexapp.plugins.library",
+          librarySectionID: sectionId,
+          librarySectionTitle: "Live TV",
+          librarySectionUUID: "e05e77e4-1cc3-4e1e-9e79-8bf9b51f5f3f",
+          title1: "Live TV",
+          title2: "All Shows",
+          viewGroup: "episode",
+          viewMode: 458832,
+          Video: videoJson
+        }
+      });
+    }
+  } catch (error) {
+    logger.error('Library section detail error:', error);
+    
+    res.set({
+      'Content-Type': 'application/xml; charset=utf-8'
+    });
+    res.status(200).send(`<?xml version="1.0" encoding="UTF-8"?>
+<MediaContainer size="0" identifier="com.plexapp.plugins.library" />
+`);
+  }
+});
+
 // Metadata endpoint - handles all metadata requests to prevent unknown item errors
 router.get('/library/metadata/:metadataId', async (req, res) => {
   try {
     const { metadataId } = req.params;
     
-    // Enhanced logging for Grabber detection
+    // Enhanced logging for Grabber detection and content negotiation
     const userAgent = req.get('User-Agent') || '';
+    const acceptHeader = req.get('Accept') || '';
+    const isXMLRequest = acceptHeader.includes('application/xml') || acceptHeader.includes('text/xml');
     const isGrabber = userAgent.includes('Grabber') || req.get('X-Plex-Client-Identifier')?.includes('grabber');
     
     logger.info('PLEX LIBRARY METADATA REQUEST - Enhanced monitoring', { 
       metadataId,
       userAgent: userAgent.substring(0, 200),
+      acceptHeader,
+      isXMLRequest,
       isGrabberRequest: isGrabber,
       plexClientId: req.get('X-Plex-Client-Identifier'),
       plexProduct: req.get('X-Plex-Product'),
@@ -615,153 +855,208 @@ router.get('/library/metadata/:metadataId', async (req, res) => {
       logger.debug('Could not fetch channel for metadata', { channelId, error: dbError.message });
     }
     
-    // Build metadata response with real or fallback data
-    const metadata = {
-      MediaContainer: {
-        size: 1,
-        allowSync: 0,
-        identifier: "com.plexapp.plugins.library",
-        librarySectionID: 1,
-        librarySectionTitle: "Live TV",
-        librarySectionUUID: "e05e77e4-1cc3-4e1e-9e79-8bf9b51f5f3f",
-        Video: [{
-          ratingKey: metadataId || "18961",
-          key: `/library/metadata/${metadataId}`,
-          parentRatingKey: `show_${channelId}`,
-          grandparentRatingKey: `series_${channelId}`,
-          guid: `plex://episode/${metadataId}`,
-          type: "episode", // CRITICAL: Must match contentType: 4 = episode for Grabber consistency
-          title: channel?.name || `Channel ${channelId}`,
-          grandparentTitle: channel?.name || `Channel ${channelId}`,
-          parentTitle: "Live Programming",
-          contentRating: "TV-PG",
-          summary: channel?.description || "Live television programming",
-          index: 1,
-          parentIndex: 1,
-          year: new Date().getFullYear(),
-          
-          // CRITICAL: FIXED - contentType: 4 = episode, not clip
-          contentType: 4, // Type 4 is "episode" for Live TV (consistent with timeline)
-          metadata_type: 'episode',
-          mediaType: 'episode',
-          thumb: `/library/metadata/${metadataId}/thumb`,
-          art: `/library/metadata/${metadataId}/art`,
-          parentThumb: `/library/metadata/${metadataId}/parentThumb`,
-          grandparentThumb: `/library/metadata/${metadataId}/grandparentThumb`,
-          duration: 86400000, // 24 hours for live TV
-          addedAt: Math.floor(Date.now() / 1000),
-          updatedAt: Math.floor(Date.now() / 1000),
-          live: 1,
-          Media: [{
-            id: channelId,
-            duration: 86400000,
-            bitrate: 5000,
-            width: 1920,
-            height: 1080,
-            aspectRatio: 1.78,
-            audioChannels: 2,
-            audioCodec: "aac",
-            videoCodec: "h264",
-            videoResolution: "1080",
-            container: "mpegts",
-            videoFrameRate: "25",
-            optimizedForStreaming: 1,
-            protocol: "http",
-            Part: [{
+    // CRITICAL: Respond with XML or JSON based on content negotiation
+    if (isXMLRequest || userAgent.includes('Plex')) {
+      // Return XML MediaContainer format that Plex Server expects
+      res.set({
+        'Content-Type': 'application/xml; charset=utf-8',
+        'Cache-Control': 'no-cache, no-store, must-revalidate, private, max-age=0',
+        'Pragma': 'no-cache',
+        'Expires': '0',
+        'ETag': `"plexbridge-metadata-${metadataId}-${Date.now()}-${Math.random()}"`,
+        'Last-Modified': new Date().toUTCString(),
+        'X-Plex-MediaContainer-Format': 'xml',
+        
+        // CRITICAL: Grabber-specific cache invalidation headers
+        'X-Plex-Cache-Invalidate': 'force',
+        'X-Plex-Grabber-Refresh': 'true',
+        'X-Metadata-Consistency': 'episode-type-4-only',
+        'X-Content-Type-Locked': '4',
+        'X-Library-Type-Locked': 'episode',
+        'X-Grabber-Cache-Prevent': 'active',
+        
+        'X-Content-Type': 'live-tv-metadata',
+        'X-Metadata-Version': '4.0-episode-consistent-xml',
+        'X-Type-Consistency-Fix': 'applied'
+      });
+
+      const metadataXML = `<?xml version="1.0" encoding="UTF-8"?>
+<MediaContainer size="1" allowSync="0" identifier="com.plexapp.plugins.library" librarySectionID="1" librarySectionTitle="Live TV" librarySectionUUID="e05e77e4-1cc3-4e1e-9e79-8bf9b51f5f3f">
+  <Video ratingKey="${metadataId || "18961"}" key="/library/metadata/${metadataId}" parentRatingKey="show_${channelId}" grandparentRatingKey="series_${channelId}" guid="plex://episode/${metadataId}" type="episode" title="${escapeXML(channel?.name || `Channel ${channelId}`)}" grandparentTitle="${escapeXML(channel?.name || `Channel ${channelId}`)}" parentTitle="Live Programming" contentRating="TV-PG" summary="${escapeXML(channel?.description || "Live television programming")}" index="1" parentIndex="1" year="${new Date().getFullYear()}" thumb="/library/metadata/${metadataId}/thumb" art="/library/metadata/${metadataId}/art" parentThumb="/library/metadata/${metadataId}/parentThumb" grandparentThumb="/library/metadata/${metadataId}/grandparentThumb" duration="86400000" addedAt="${Math.floor(Date.now() / 1000)}" updatedAt="${Math.floor(Date.now() / 1000)}" live="1">
+    <Media id="${channelId}" duration="86400000" bitrate="5000" width="1920" height="1080" aspectRatio="1.78" audioChannels="2" audioCodec="aac" videoCodec="h264" videoResolution="1080" container="mpegts" videoFrameRate="25" optimizedForStreaming="1" protocol="http">
+      <Part id="${channelId}" key="/stream/${channelId}" duration="86400000" file="/stream/${channelId}" size="0" container="mpegts" indexes="sd" hasThumbnail="0">
+        <Stream id="1" streamType="1" codec="h264" index="0" bitrate="4000" language="eng" languageCode="eng" height="1080" width="1920" frameRate="25.0" profile="high" level="40" pixelFormat="yuv420p" />
+        <Stream id="2" streamType="2" codec="aac" index="1" channels="2" bitrate="128" language="eng" languageCode="eng" samplingRate="48000" profile="lc" />
+      </Part>
+    </Media>
+  </Video>
+</MediaContainer>`;
+
+      res.send(metadataXML);
+    } else {
+      // Fallback JSON response for non-Plex clients  
+      const metadata = {
+        MediaContainer: {
+          size: 1,
+          allowSync: 0,
+          identifier: "com.plexapp.plugins.library",
+          librarySectionID: 1,
+          librarySectionTitle: "Live TV",
+          librarySectionUUID: "e05e77e4-1cc3-4e1e-9e79-8bf9b51f5f3f",
+          Video: [{
+            ratingKey: metadataId || "18961",
+            key: `/library/metadata/${metadataId}`,
+            parentRatingKey: `show_${channelId}`,
+            grandparentRatingKey: `series_${channelId}`,
+            guid: `plex://episode/${metadataId}`,
+            type: "episode", // CRITICAL: Must match contentType: 4 = episode for Grabber consistency
+            title: channel?.name || `Channel ${channelId}`,
+            grandparentTitle: channel?.name || `Channel ${channelId}`,
+            parentTitle: "Live Programming",
+            contentRating: "TV-PG",
+            summary: channel?.description || "Live television programming",
+            index: 1,
+            parentIndex: 1,
+            year: new Date().getFullYear(),
+            
+            // CRITICAL: FIXED - contentType: 4 = episode, not clip
+            contentType: 4, // Type 4 is "episode" for Live TV (consistent with timeline)
+            metadata_type: 'episode',
+            mediaType: 'episode',
+            thumb: `/library/metadata/${metadataId}/thumb`,
+            art: `/library/metadata/${metadataId}/art`,
+            parentThumb: `/library/metadata/${metadataId}/parentThumb`,
+            grandparentThumb: `/library/metadata/${metadataId}/grandparentThumb`,
+            duration: 86400000, // 24 hours for live TV
+            addedAt: Math.floor(Date.now() / 1000),
+            updatedAt: Math.floor(Date.now() / 1000),
+            live: 1,
+            Media: [{
               id: channelId,
-              key: `/stream/${channelId}`,
               duration: 86400000,
-              file: `/stream/${channelId}`,
-              size: 0,
+              bitrate: 5000,
+              width: 1920,
+              height: 1080,
+              aspectRatio: 1.78,
+              audioChannels: 2,
+              audioCodec: "aac",
+              videoCodec: "h264",
+              videoResolution: "1080",
               container: "mpegts",
-              indexes: "sd",
-              hasThumbnail: 0,
-              Stream: [
-                {
-                  id: 1,
-                  streamType: 1,
-                  codec: "h264",
-                  index: 0,
-                  bitrate: 4000,
-                  language: "eng",
-                  languageCode: "eng",
-                  height: 1080,
-                  width: 1920,
-                  frameRate: 25.0,
-                  profile: "high",
-                  level: "40",
-                  pixelFormat: "yuv420p"
-                },
-                {
-                  id: 2,
-                  streamType: 2,
-                  codec: "aac",
-                  index: 1,
-                  channels: 2,
-                  bitrate: 128,
-                  language: "eng",
-                  languageCode: "eng",
-                  samplingRate: 48000,
-                  profile: "lc"
-                }
-              ]
+              videoFrameRate: "25",
+              optimizedForStreaming: 1,
+              protocol: "http",
+              Part: [{
+                id: channelId,
+                key: `/stream/${channelId}`,
+                duration: 86400000,
+                file: `/stream/${channelId}`,
+                size: 0,
+                container: "mpegts",
+                indexes: "sd",
+                hasThumbnail: 0,
+                Stream: [
+                  {
+                    id: 1,
+                    streamType: 1,
+                    codec: "h264",
+                    index: 0,
+                    bitrate: 4000,
+                    language: "eng",
+                    languageCode: "eng",
+                    height: 1080,
+                    width: 1920,
+                    frameRate: 25.0,
+                    profile: "high",
+                    level: "40",
+                    pixelFormat: "yuv420p"
+                  },
+                  {
+                    id: 2,
+                    streamType: 2,
+                    codec: "aac",
+                    index: 1,
+                    channels: 2,
+                    bitrate: 128,
+                    language: "eng",
+                    languageCode: "eng",
+                    samplingRate: 48000,
+                    profile: "lc"
+                  }
+                ]
+              }]
             }]
           }]
-        }]
-      }
-    };
-    
-    res.set({
-      'Content-Type': 'application/json; charset=utf-8',
-      'Cache-Control': 'no-cache, no-store, must-revalidate, private, max-age=0',
-      'Pragma': 'no-cache',
-      'Expires': '0',
-      'ETag': `"plexbridge-metadata-${metadataId}-${Date.now()}-${Math.random()}"`,
-      'Last-Modified': new Date().toUTCString(),
+        }
+      };
       
-      // CRITICAL: Grabber-specific cache invalidation headers
-      'X-Plex-Cache-Invalidate': 'force',
-      'X-Plex-Grabber-Refresh': 'true',
-      'X-Metadata-Consistency': 'episode-type-4-only',
-      'X-Content-Type-Locked': '4',
-      'X-Library-Type-Locked': 'episode',
-      'X-Grabber-Cache-Prevent': 'active',
+      res.set({
+        'Content-Type': 'application/json; charset=utf-8',
+        'Cache-Control': 'no-cache, no-store, must-revalidate, private, max-age=0',
+        'Pragma': 'no-cache',
+        'Expires': '0',
+        'ETag': `"plexbridge-metadata-${metadataId}-${Date.now()}-${Math.random()}"`,
+        'Last-Modified': new Date().toUTCString(),
+        
+        // CRITICAL: Grabber-specific cache invalidation headers
+        'X-Plex-Cache-Invalidate': 'force',
+        'X-Plex-Grabber-Refresh': 'true',
+        'X-Metadata-Consistency': 'episode-type-4-only',
+        'X-Content-Type-Locked': '4',
+        'X-Library-Type-Locked': 'episode',
+        'X-Grabber-Cache-Prevent': 'active',
+        
+        'X-Content-Type': 'live-tv-metadata',
+        'X-Metadata-Version': '4.0-episode-consistent',
+        'X-Type-Consistency-Fix': 'applied'
+      });
       
-      'X-Content-Type': 'live-tv-metadata',
-      'X-Metadata-Version': '4.0-episode-consistent',  // Signal consistent episode metadata
-      'X-Type-Consistency-Fix': 'applied'
-    });
-    
-    res.json(metadata);
+      res.json(metadata);
+    }
   } catch (error) {
     logger.error('Metadata request error:', error);
-    // Return minimal valid metadata on error with Android TV compatibility
-    res.status(200).json({
-      MediaContainer: {
-        size: 1,
-        identifier: "com.plexapp.plugins.library",
-        librarySectionID: 1,
-        librarySectionTitle: "Live TV",
-        Video: [{
-          ratingKey: req.params.metadataId,
-          type: "clip",
-          title: "Live TV",
-          grandparentTitle: "Live TV",
-          parentTitle: "Live Programming",
-          duration: 86400000,
-          live: 1,
-          
-          // CRITICAL: Android TV requires type="clip" for Live TV
-          contentType: 4, // Type 4 is "clip" for Live TV
-          metadata_type: 'clip',
-          mediaType: 'clip',
-          index: 1,
-          parentIndex: 1,
-          year: new Date().getFullYear(),
-          summary: "Live television programming"
-        }]
-      }
-    });
+    
+    // Determine response format even for errors
+    const userAgent = req.get('User-Agent') || '';
+    const acceptHeader = req.get('Accept') || '';
+    const isXMLRequest = acceptHeader.includes('application/xml') || acceptHeader.includes('text/xml');
+    
+    if (isXMLRequest || userAgent.includes('Plex')) {
+      // Return minimal XML MediaContainer on error for Plex compatibility
+      res.set({
+        'Content-Type': 'application/xml; charset=utf-8'
+      });
+      res.status(200).send(`<?xml version="1.0" encoding="UTF-8"?>
+<MediaContainer size="1" identifier="com.plexapp.plugins.library" librarySectionID="1" librarySectionTitle="Live TV">
+  <Video ratingKey="${escapeXML(req.params.metadataId)}" type="episode" title="Live TV" grandparentTitle="Live TV" parentTitle="Live Programming" duration="86400000" live="1" index="1" parentIndex="1" year="${new Date().getFullYear()}" summary="Live television programming" />
+</MediaContainer>`);
+    } else {
+      // Return minimal valid metadata on error with Android TV compatibility
+      res.status(200).json({
+        MediaContainer: {
+          size: 1,
+          identifier: "com.plexapp.plugins.library",
+          librarySectionID: 1,
+          librarySectionTitle: "Live TV",
+          Video: [{
+            ratingKey: req.params.metadataId,
+            type: "episode", // CRITICAL: Always use episode for consistency  
+            title: "Live TV",
+            grandparentTitle: "Live TV",
+            parentTitle: "Live Programming",
+            duration: 86400000,
+            live: 1,
+            contentType: 4, // Type 4 is "episode" for Live TV
+            metadata_type: 'episode',
+            mediaType: 'episode',
+            index: 1,
+            parentIndex: 1,
+            year: new Date().getFullYear(),
+            summary: "Live television programming"
+          }]
+        }
+      });
+    }
   }
 });
 
@@ -783,40 +1078,57 @@ router.get('/library/metadata/:metadataId/:imageType', (req, res) => {
   res.send(pixel);
 });
 
-// Catch-all route for any library requests that aren't handled
+// Catch-all route for any library requests that aren't handled - MUST be after specific routes
 router.get('/library/*', (req, res) => {
   logger.debug('Catch-all library request', { 
     url: req.url,
     userAgent: req.get('User-Agent')
   });
   
-  // Always return valid JSON MediaContainer to prevent HTML errors
-  res.set({
-    'Content-Type': 'application/json; charset=utf-8',
-    'Cache-Control': 'no-cache'
-  });
+  // Check if this should return XML or JSON
+  const userAgent = req.get('User-Agent') || '';
+  const acceptHeader = req.get('Accept') || '';
+  const isXMLRequest = acceptHeader.includes('application/xml') || acceptHeader.includes('text/xml');
   
-  res.json({
-    MediaContainer: {
-      size: 0,
-      identifier: "com.plexapp.plugins.library",
-      librarySectionID: 1,
-      librarySectionTitle: "Live TV",
-      allowSync: 0,
-      art: "/:/resources/show-fanart.jpg",
-      banner: "/:/resources/show-banner.jpg",
-      key: "/library/sections/1",
-      primary: "photo",
-      prompt: "Search Live TV",
-      searchTypes: "",
-      theme: "/:/resources/show-theme.mp3",
-      thumb: "/:/resources/show.png",
-      title1: "Live TV",
-      title2: "",
-      viewGroup: "show",
-      viewMode: 65592
-    }
-  });
+  if (isXMLRequest || userAgent.includes('Plex')) {
+    // Return XML MediaContainer for Plex compatibility
+    res.set({
+      'Content-Type': 'application/xml; charset=utf-8',
+      'Cache-Control': 'no-cache'
+    });
+    
+    res.send(`<?xml version="1.0" encoding="UTF-8"?>
+<MediaContainer size="0" identifier="com.plexapp.plugins.library" librarySectionID="1" librarySectionTitle="Live TV" allowSync="0" art="/:/resources/show-fanart.jpg" banner="/:/resources/show-banner.jpg" key="/library/sections/1" primary="photo" prompt="Search Live TV" searchTypes="" theme="/:/resources/show-theme.mp3" thumb="/:/resources/show.png" title1="Live TV" title2="" viewGroup="show" viewMode="65592" />
+`);
+  } else {
+    // Always return valid JSON MediaContainer to prevent HTML errors
+    res.set({
+      'Content-Type': 'application/json; charset=utf-8',
+      'Cache-Control': 'no-cache'
+    });
+    
+    res.json({
+      MediaContainer: {
+        size: 0,
+        identifier: "com.plexapp.plugins.library",
+        librarySectionID: 1,
+        librarySectionTitle: "Live TV",
+        allowSync: 0,
+        art: "/:/resources/show-fanart.jpg",
+        banner: "/:/resources/show-banner.jpg",
+        key: "/library/sections/1",
+        primary: "photo",
+        prompt: "Search Live TV",
+        searchTypes: "",
+        theme: "/:/resources/show-theme.mp3",
+        thumb: "/:/resources/show.png",
+        title1: "Live TV",
+        title2: "",
+        viewGroup: "show",
+        viewMode: 65592
+      }
+    });
+  }
 });
 
 // Live TV sessions endpoint - handles Plex Live TV session requests
@@ -923,9 +1235,9 @@ router.get('/livetv/sessions/:sessionId', async (req, res) => {
     // CRITICAL: Use type="clip" (type 4) for Live TV - Android TV requires this
     const mediaContainerXML = `<?xml version="1.0" encoding="UTF-8"?>
 <MediaContainer size="1" identifier="com.plexapp.plugins.library" mediaTagPrefix="/system/bundle/media/flags/" mediaTagVersion="${Math.floor(Date.now() / 1000)}">
-  <Video sessionKey="${sessionId}" key="/library/metadata/live-${sessionId}" ratingKey="live-${sessionId}" type="clip" title="Live TV Stream" duration="86400000" viewOffset="${offset || 0}" live="1" addedAt="${Math.floor(Date.now() / 1000)}" updatedAt="${Math.floor(Date.now() / 1000)}">
+  <Video sessionKey="${escapeXML(sessionId)}" key="/library/metadata/live-${escapeXML(sessionId)}" ratingKey="live-${escapeXML(sessionId)}" type="clip" title="Live TV Stream" duration="86400000" viewOffset="${escapeXML(offset || 0)}" live="1" addedAt="${Math.floor(Date.now() / 1000)}" updatedAt="${Math.floor(Date.now() / 1000)}">
     <Media duration="86400000" container="mpegts" videoCodec="h264" audioCodec="aac" width="1920" height="1080" aspectRatio="1.78" bitrate="5000" audioChannels="2" videoFrameRate="25">
-      <Part key="/stream/${sessionId}" file="/stream/${sessionId}" container="mpegts" duration="86400000" size="999999999" />
+      <Part key="/stream/${escapeXML(sessionId)}" file="/stream/${escapeXML(sessionId)}" container="mpegts" duration="86400000" size="999999999" />
     </Media>
   </Video>
 </MediaContainer>`;
@@ -2042,9 +2354,9 @@ router.get('/video/:/transcode/universal/decision', async (req, res) => {
     
     const transcodeDecisionXML = `<?xml version="1.0" encoding="UTF-8"?>
 <MediaContainer size="1" identifier="com.plexapp.plugins.library">
-  <Video ratingKey="${metadataId}" key="/library/metadata/${metadataId}" type="clip" title="Live TV Stream" summary="Live television programming" duration="86400000" live="1" addedAt="${Math.floor(Date.now() / 1000)}" updatedAt="${Math.floor(Date.now() / 1000)}">
+  <Video ratingKey="${escapeXML(metadataId)}" key="/library/metadata/${escapeXML(metadataId)}" type="clip" title="Live TV Stream" summary="Live television programming" duration="86400000" live="1" addedAt="${Math.floor(Date.now() / 1000)}" updatedAt="${Math.floor(Date.now() / 1000)}">
     <Media id="1" duration="86400000" bitrate="5000" width="1920" height="1080" aspectRatio="1.78" audioChannels="2" audioCodec="aac" videoCodec="h264" videoResolution="1080" container="mpegts" videoFrameRate="25p" audioProfile="lc" videoProfile="high">
-      <Part id="1" key="/stream/${session || metadataId}" file="/stream/${session || metadataId}" size="999999999" duration="86400000" container="mpegts" hasThumbnail="0">
+      <Part id="1" key="/stream/${escapeXML(session || metadataId)}" file="/stream/${escapeXML(session || metadataId)}" size="999999999" duration="86400000" container="mpegts" hasThumbnail="0">
         <Stream id="1" streamType="1" default="1" codec="h264" index="0" bitrate="4000" bitDepth="8" height="1080" width="1920" displayTitle="1080p (H.264)" extendedDisplayTitle="1080p (H.264)" />
         <Stream id="2" streamType="2" selected="1" default="1" codec="aac" index="1" channels="2" bitrate="128" audioChannelLayout="stereo" samplingRate="48000" displayTitle="Stereo (AAC)" extendedDisplayTitle="Stereo (AAC)" />
       </Part>
