@@ -207,18 +207,54 @@ router.get('/stream/:channelId/:filename?', async (req, res) => {
       // Create or get existing persistent session
       const persistentSession = sessionManager.createSession(channelId, uniqueSessionId, null, clientInfo);
       
-      // Also create a consumer session alias if different
-      if (consumerSessionId !== sessionId) {
-        sessionManager.createSession(channelId, consumerSessionId, null, {
-          ...clientInfo,
-          isConsumerAlias: true,
-          primarySessionId: sessionId
+      // CRITICAL ANDROID TV FIX: Always create both session IDs as consumers
+      // This prevents the "Failed to find consumer" error in Plex server logs
+      
+      // Create primary session
+      sessionManager.createSession(channelId, sessionId, null, clientInfo);
+      
+      // Always create consumer session alias (even if same ID) to ensure Plex can find consumer
+      sessionManager.createSession(channelId, consumerSessionId, null, {
+        ...clientInfo,
+        isConsumerAlias: true,
+        primarySessionId: sessionId,
+        consumerType: 'plex_session_identifier'
+      });
+      
+      // CRITICAL: Also register with consumer manager for "Failed to find consumer" fix
+      const consumerManager = getConsumerManager();
+      if (consumerManager && consumerManager.registerConsumer) {
+        // Register both session IDs as active consumers
+        consumerManager.registerConsumer(sessionId, {
+          channelId,
+          streamUrl: targetUrl,
+          clientInfo,
+          sessionType: 'primary',
+          timestamp: Date.now()
         });
-        logger.info('Created consumer session alias', {
+        
+        consumerManager.registerConsumer(consumerSessionId, {
+          channelId,
+          streamUrl: targetUrl,
+          clientInfo,
+          sessionType: 'consumer_alias',
           primarySessionId: sessionId,
-          consumerSessionId: consumerSessionId
+          timestamp: Date.now()
+        });
+        
+        logger.info('Registered consumers to prevent "Failed to find consumer" errors', {
+          primarySessionId: sessionId,
+          consumerSessionId: consumerSessionId,
+          channelId
         });
       }
+      
+      logger.info('Created enhanced consumer session management', {
+        primarySessionId: sessionId,
+        consumerSessionId: consumerSessionId,
+        isAndroidTV,
+        channelId
+      });
       
       // Create streaming session for decision tracking (critical for Android TV)
       const streamingSession = createStreamingSession(channelId, clientInfo);
@@ -232,6 +268,25 @@ router.get('/stream/:channelId/:filename?', async (req, res) => {
         'X-Content-Type': 'live-tv',
         'X-Media-Type': '4'  // Episode type for Live TV, not 5 (trailer)
       });
+      
+      // ANDROID TV SESSION RESILIENCE: Prevent premature termination
+      if (isAndroidTV) {
+        res.set({
+          'X-Android-TV-Session': 'true',
+          'X-Session-Timeout': '300',  // 5 minutes timeout for Android TV
+          'X-Reconnect-Grace': '30',   // 30 seconds grace period for reconnection
+          'X-Buffer-Resilience': 'high', // High resilience for buffering
+          'Cache-Control': 'no-cache, no-store, must-revalidate'
+        });
+        
+        logger.info('Applied Android TV session resilience headers', {
+          sessionId,
+          consumerSessionId,
+          channelId,
+          timeout: '300s',
+          gracePeriod: '30s'
+        });
+      }
       
       logger.info('Created persistent streaming session', {
         sessionId,
@@ -391,22 +446,81 @@ router.get('/stream/:channelId/:filename?', async (req, res) => {
     
     // For sub-files (segments), use enhanced segment handler with retry logic
     if (isSubFile) {
-      // Handle .ts segments with proper error recovery
-      if (filename.endsWith('.ts')) {
-        logger.info('Handling MPEG-TS segment request', {
+      // Handle ALL segment types with proper error recovery (not just .ts)
+      if (filename.endsWith('.ts') || filename.endsWith('.m4s') || filename.endsWith('.mp4') || filename.match(/\d+\.ts$/)) {
+        logger.info('Handling media segment request', {
           channelId,
           filename,
           targetUrl,
-          sessionId
+          sessionId,
+          fileType: filename.split('.').pop()
         });
         
-        // Use segment handler for reliability
-        return await segmentHandler.streamSegment(targetUrl, res, {
-          userAgent: userAgent,
-          headers: {
-            'X-Session-ID': sessionId
+        // ANDROID TV CRITICAL FIX: Enhanced error handling for segment requests
+        try {
+          // Use segment handler for reliability with Android TV specific options
+          return await segmentHandler.streamSegment(targetUrl, res, {
+            userAgent: userAgent,
+            headers: {
+              'X-Session-ID': sessionId,
+              'Accept': '*/*',
+              'Connection': 'keep-alive'
+            },
+            // Android TV specific timeout and retry settings
+            timeout: 15000,
+            maxRetries: 5,
+            androidTV: isAndroidTV
+          });
+        } catch (segmentError) {
+          logger.error('Segment handler failed, attempting direct fallback', {
+            targetUrl,
+            filename,
+            error: segmentError.message,
+            isAndroidTV
+          });
+          
+          // FALLBACK: Direct proxy attempt if segment handler fails
+          try {
+            const axios = require('axios');
+            const response = await axios.get(targetUrl, {
+              responseType: 'arraybuffer',
+              timeout: 10000,
+              headers: {
+                'User-Agent': userAgent || 'PlexBridge/1.0',
+                'Accept': '*/*'
+              }
+            });
+            
+            res.set({
+              'Content-Type': response.headers['content-type'] || 'video/mp2t',
+              'Content-Length': response.headers['content-length'],
+              'Cache-Control': 'no-cache, no-store, must-revalidate',
+              'Access-Control-Allow-Origin': '*'
+            });
+            
+            return res.send(Buffer.from(response.data));
+            
+          } catch (fallbackError) {
+            logger.error('Both segment handler and fallback failed', {
+              targetUrl,
+              filename,
+              segmentError: segmentError.message,
+              fallbackError: fallbackError.message,
+              isAndroidTV
+            });
+            
+            // LAST RESORT: Return specific 404 with Android TV friendly error
+            if (isAndroidTV) {
+              res.status(410).set({
+                'Content-Type': 'text/plain',
+                'X-Android-TV-Error': 'segment-unavailable'
+              }).send('Segment temporarily unavailable - please retry');
+            } else {
+              res.status(404).send('Segment not found');
+            }
+            return;
           }
-        });
+        }
       }
       
       try {
@@ -486,16 +600,39 @@ router.get('/stream/:channelId/:filename?', async (req, res) => {
                 filename,
                 channelId,
                 preventTimeout: true,
-                extendTimeout: 300000 // 5 minutes timeout instead of default
+                extendTimeout: 300000, // 5 minutes timeout instead of default
+                bufferingProtection: true, // Protect against buffering-induced termination
+                resilientMode: true // Enable resilient streaming mode
               });
               
               logger.debug('Android TV session extended for HLS segment', {
                 sessionId: finalSessionId,
                 filename,
-                channelId
+                channelId,
+                resilientMode: true
               });
             } catch (sessionError) {
               logger.warn('Failed to update Android TV session activity:', sessionError.message);
+            }
+          }
+          
+          // ADDITIONAL ANDROID TV FIX: Monitor for session health
+          if (isAndroidTV && finalSessionId) {
+            try {
+              // Emit session health event to prevent premature termination
+              const io = global.io;
+              if (io) {
+                io.emit('android-tv-session-active', {
+                  sessionId: finalSessionId,
+                  channelId,
+                  timestamp: new Date().toISOString(),
+                  segmentRequest: filename,
+                  healthy: true
+                });
+              }
+            } catch (emitError) {
+              // Non-critical error, just log
+              logger.debug('Failed to emit Android TV session health:', emitError.message);
             }
           }
         }

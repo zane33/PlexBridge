@@ -129,16 +129,44 @@ class SegmentHandler {
    * @param {Object} options - Streaming options
    */
   async streamSegment(segmentUrl, res, options = {}) {
+    const isAndroidTV = options.androidTV || false;
+    const maxRetries = options.maxRetries || this.maxRetries;
+    const timeout = options.timeout || 10000;
+    
     try {
-      const segmentData = await this.handleSegment(segmentUrl, options);
+      // Enhanced options for Android TV
+      const enhancedOptions = {
+        ...options,
+        timeout,
+        maxRetries
+      };
       
-      // Set proper headers for MPEG-TS segments
-      res.set({
-        'Content-Type': 'video/mp2t',
+      const segmentData = await this.handleSegment(segmentUrl, enhancedOptions);
+      
+      // Set proper headers for segments - enhanced for Android TV
+      const headers = {
         'Cache-Control': 'no-cache, no-store, must-revalidate',
         'Access-Control-Allow-Origin': '*',
         'Accept-Ranges': 'bytes'
-      });
+      };
+      
+      // Determine content type based on segment URL
+      if (segmentUrl.includes('.m4s') || segmentUrl.includes('.mp4')) {
+        headers['Content-Type'] = 'video/mp4';
+      } else if (segmentUrl.includes('.ts')) {
+        headers['Content-Type'] = 'video/mp2t';
+      } else {
+        headers['Content-Type'] = segmentData.headers['content-type'] || 'video/mp2t';
+      }
+      
+      // Android TV specific headers for better compatibility
+      if (isAndroidTV) {
+        headers['X-Android-TV-Segment'] = 'true';
+        headers['Connection'] = 'keep-alive';
+        headers['Cache-Control'] = 'max-age=0, no-cache, no-store, must-revalidate';
+      }
+      
+      res.set(headers);
 
       // Copy relevant headers from upstream
       if (segmentData.headers['content-length']) {
@@ -148,17 +176,57 @@ class SegmentHandler {
       // Send the segment data
       res.send(Buffer.from(segmentData.data));
       
+      // Log successful segment delivery for Android TV debugging
+      if (isAndroidTV) {
+        logger.debug('Android TV segment delivered successfully', {
+          segmentUrl: segmentUrl.substring(segmentUrl.lastIndexOf('/') + 1),
+          size: segmentData.data.length,
+          contentType: headers['Content-Type']
+        });
+      }
+      
     } catch (error) {
       logger.error('Failed to stream segment', {
         segmentUrl,
-        error: error.message
+        error: error.message,
+        isAndroidTV,
+        maxRetries,
+        timeout
       });
       
-      // Return appropriate error response
+      // Enhanced error handling for Android TV
+      if (isAndroidTV) {
+        // Try to generate dummy segment for continuity
+        try {
+          const dummySegment = this.generateDummySegment(2);
+          
+          res.set({
+            'Content-Type': 'video/mp2t',
+            'Content-Length': dummySegment.length.toString(),
+            'X-Android-TV-Dummy': 'true',
+            'X-Android-TV-Error-Recovery': 'true',
+            'Cache-Control': 'no-cache'
+          });
+          
+          logger.warn('Serving dummy segment for Android TV error recovery', {
+            segmentUrl,
+            dummySize: dummySegment.length
+          });
+          
+          return res.send(dummySegment);
+          
+        } catch (dummyError) {
+          logger.error('Failed to generate dummy segment', dummyError);
+        }
+      }
+      
+      // Return appropriate error response based on error type
       if (error.message.includes('404')) {
         res.status(404).send('Segment not found');
       } else if (error.message.includes('timeout')) {
-        res.status(504).send('Segment fetch timeout');
+        res.status(504).send('Segment fetch timeout');  
+      } else if (error.message.includes('ECONNRESET') || error.message.includes('ECONNREFUSED')) {
+        res.status(503).send('Upstream connection failed');
       } else {
         res.status(502).send('Failed to fetch segment');
       }
