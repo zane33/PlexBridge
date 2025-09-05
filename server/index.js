@@ -84,6 +84,10 @@ app.use(morgan('combined', { stream: { write: message => logger.info(message.tri
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 
+// Add GLOBAL metadata validation middleware FIRST - catches ALL responses
+const { globalMetadataValidationMiddleware } = require('./utils/metadataTypeValidator');
+app.use(globalMetadataValidationMiddleware);
+
 // Add Plex request logging middleware
 const { plexRequestLogger, malformedRequestHandler } = require('./middleware/plexRequestLogger');
 app.use(plexRequestLogger());
@@ -514,12 +518,14 @@ const initializeApp = async () => {
       const streamingRoutes = require('./routes/streaming');
       const diagnosticsRoutes = require('./routes/diagnostics');
       const adminFixRoutes = require('./routes/admin-fix');
+      const type5MonitorRoutes = require('./routes/type5-monitor');
 
       // API Routes - MUST BE BEFORE STATIC FILES
       app.use('/', healthRoutes);  // Health check routes
       app.use('/', plexSetupRoutes);  // Plex setup guide
       app.use('/api/diagnostics', diagnosticsRoutes);  // Diagnostics and crash tracking
       app.use('/api/admin', adminFixRoutes);  // Admin fix utilities
+      app.use('/api/type5', type5MonitorRoutes);  // Real-time type 5 monitoring
       app.use('/api/streams/parse/m3u', m3uRoutes);
       app.use('/api/streams/import/m3u', m3uImportRoutes);
       app.use('/api/streaming', streamingRoutes);  // Enhanced streaming monitoring

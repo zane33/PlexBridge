@@ -223,6 +223,8 @@ function metadataValidationMiddleware(req, res, next) {
   
   // Store original json method
   const originalJson = res.json;
+  const originalSend = res.send;
+  const originalEnd = res.end;
 
   // Override res.json to validate metadata before sending
   res.json = function(data) {
@@ -256,6 +258,202 @@ function metadataValidationMiddleware(req, res, next) {
       });
       // Fallback to original data if validation fails
       return originalJson.call(this, data);
+    }
+  };
+
+  // Override res.send to catch any JSON-like responses sent as text
+  res.send = function(data) {
+    try {
+      const context = `${req.method} ${req.path}`;
+      const clientType = getClientType(req);
+      
+      // Try to detect and validate JSON-like content
+      if (typeof data === 'string' && data.trim().startsWith('{')) {
+        try {
+          const parsedData = JSON.parse(data);
+          let validatedData = validateAndCorrectMetadata(parsedData, context);
+          
+          if (clientType === 'web') {
+            validatedData = validateForWebClient(validatedData, req);
+            
+            res.set({
+              'X-Web-Client-Optimized': 'true',
+              'X-Content-Type': 'live-tv-episode',
+              'X-Metadata-Type': '4',
+              'X-PlexBridge-Web-Safe': 'true'
+            });
+          }
+          
+          // Send validated JSON
+          return originalSend.call(this, JSON.stringify(validatedData));
+        } catch (parseError) {
+          // Not JSON, send as-is
+          return originalSend.call(this, data);
+        }
+      }
+      
+      return originalSend.call(this, data);
+    } catch (error) {
+      logger.error('Metadata send validation error', {
+        path: req.path,
+        method: req.method,
+        error: error.message
+      });
+      return originalSend.call(this, data);
+    }
+  };
+
+  next();
+}
+
+/**
+ * GLOBAL metadata validation middleware - catches ALL responses from ANY route
+ * This ensures no type 5 metadata can escape, regardless of endpoint
+ * Enhanced with Plex Grabber detection to prevent caching of invalid metadata
+ */
+function globalMetadataValidationMiddleware(req, res, next) {
+  const { getClientType } = require('./webClientDetector');
+  
+  // Detect Plex Grabber requests (internal metadata fetching)
+  const userAgent = req.get('User-Agent') || '';
+  const isGrabberRequest = userAgent.includes('Plex') || 
+                          userAgent.includes('Grabber') ||
+                          req.headers['x-plex-client-identifier'] ||
+                          req.path.includes('/timeline/') ||
+                          req.path.includes('/library/metadata/');
+  
+  // Store original methods
+  const originalJson = res.json;
+  const originalSend = res.send;
+  const originalEnd = res.end;
+
+  // Helper function to check for type 5 issues before validation
+  function hasType5Issues(data) {
+    if (!data || typeof data !== 'object') return false;
+    
+    const dataStr = JSON.stringify(data);
+    return dataStr.includes('"type":5') || 
+           dataStr.includes('"type":"5"') || 
+           dataStr.includes('"contentType":5') ||
+           dataStr.includes('"content_type":5') ||
+           dataStr.includes('"mediaType":"trailer"');
+  }
+
+  // Global JSON validation
+  res.json = function(data) {
+    try {
+      const context = `GLOBAL ${req.method} ${req.path}`;
+      const clientType = getClientType(req);
+      const hadType5Issues = hasType5Issues(data);
+      
+      // Always validate all JSON responses
+      let validatedData = validateAndCorrectMetadata(data, context);
+      
+      // Extra anti-caching headers for Grabber requests to prevent type 5 caching
+      if (isGrabberRequest) {
+        res.set({
+          'X-Plex-Grabber-Response': 'validated',
+          'X-Cache-Control-Override': 'no-cache',
+          'X-Metadata-Fresh': 'type-5-prevented',
+          'X-PlexBridge-Grabber-Safe': 'true'
+        });
+        
+        logger.info('GRABBER REQUEST DETECTED: Applied enhanced validation', {
+          path: req.path,
+          userAgent: userAgent.substring(0, 100),
+          hadType5Issues
+        });
+      }
+      
+      // Extra validation for web clients
+      if (clientType === 'web') {
+        validatedData = validateForWebClient(validatedData, req);
+        
+        // Add critical web client headers
+        res.set({
+          'X-Global-Validation': 'active',
+          'X-Web-Client-Protected': 'true',
+          'X-Type5-Prevention': 'global',
+          'X-Metadata-Validated': new Date().toISOString(),
+          'X-Had-Type5-Issues': hadType5Issues.toString()
+        });
+        
+        if (hadType5Issues) {
+          logger.warn('GLOBAL: Type 5 issues detected and corrected for web client', {
+            path: req.path,
+            method: req.method,
+            userAgent: req.get('User-Agent')?.substring(0, 100),
+            context
+          });
+        }
+        
+        logger.debug('Global web client validation applied', {
+          path: req.path,
+          userAgent: req.get('User-Agent')?.substring(0, 100),
+          hadIssues: hadType5Issues
+        });
+      } else if (hadType5Issues) {
+        logger.warn('GLOBAL: Type 5 issues detected and corrected for non-web client', {
+          path: req.path,
+          method: req.method,
+          clientType,
+          userAgent: req.get('User-Agent')?.substring(0, 100)
+        });
+      }
+      
+      return originalJson.call(this, validatedData);
+    } catch (error) {
+      logger.error('CRITICAL: Global metadata validation failed', {
+        path: req.path,
+        method: req.method,
+        error: error.message,
+        userAgent: req.get('User-Agent')?.substring(0, 100)
+      });
+      return originalJson.call(this, data);
+    }
+  };
+
+  // Global send validation for JSON strings
+  res.send = function(data) {
+    try {
+      const context = `GLOBAL ${req.method} ${req.path}`;
+      const clientType = getClientType(req);
+      
+      // Detect JSON responses sent as strings
+      if (typeof data === 'string' && (data.trim().startsWith('{') || data.trim().startsWith('['))) {
+        try {
+          const parsedData = JSON.parse(data);
+          let validatedData = validateAndCorrectMetadata(parsedData, context);
+          
+          if (clientType === 'web') {
+            validatedData = validateForWebClient(validatedData, req);
+            
+            res.set({
+              'X-Global-Send-Validation': 'active',
+              'X-Web-Client-Protected': 'true',
+              'X-Type5-Prevention': 'global-send'
+            });
+          }
+          
+          logger.debug('Global send validation applied to JSON string', {
+            path: req.path,
+            clientType
+          });
+          
+          return originalSend.call(this, JSON.stringify(validatedData));
+        } catch (parseError) {
+          // Not valid JSON, continue normally
+          return originalSend.call(this, data);
+        }
+      }
+      
+      return originalSend.call(this, data);
+    } catch (error) {
+      logger.error('Global send validation error', {
+        path: req.path,
+        error: error.message
+      });
+      return originalSend.call(this, data);
     }
   };
 
@@ -314,6 +512,8 @@ function createLiveTVMetadata(channel, options = {}) {
 module.exports = {
   validateAndCorrectMetadata,
   metadataValidationMiddleware,
+  globalMetadataValidationMiddleware,
+  validateForWebClient,
   validatePlexEndpointResponse,
   createLiveTVMetadata,
   VALID_LIVE_TV_CONTENT_TYPES,

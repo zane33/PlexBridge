@@ -29,6 +29,8 @@ function plexCachePreventionMiddleware(req, res, next) {
     'X-Plex-Content-Fresh': 'true',
     'X-PlexBridge-Validated': 'true',
     'X-Content-Type-Options': 'nosniff',
+    'X-Plex-Grabber-Bypass': 'force-refresh',
+    'X-Type5-Prevention': 'active',
     
     // Ensure fresh metadata responses
     'X-Metadata-Version': Date.now().toString(),

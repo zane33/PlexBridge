@@ -436,16 +436,50 @@ router.get('/timeline/:itemId?', async (req, res) => {
   try {
     const { itemId } = req.params;
     
-    logger.debug('Plex timeline request', { 
+    // Enhanced logging for Grabber detection
+    const userAgent = req.get('User-Agent') || '';
+    const isGrabber = userAgent.includes('Grabber') || req.get('X-Plex-Client-Identifier')?.includes('grabber');
+    
+    logger.info('PLEX TIMELINE REQUEST - Enhanced monitoring', { 
       itemId,
       query: req.query,
-      userAgent: req.get('User-Agent')
+      userAgent: userAgent.substring(0, 200),
+      isGrabberRequest: isGrabber,
+      plexClientId: req.get('X-Plex-Client-Identifier'),
+      plexProduct: req.get('X-Plex-Product'),
+      plexVersion: req.get('X-Plex-Version'),
+      origin: req.get('origin'),
+      referer: req.get('referer'),
+      timestamp: new Date().toISOString()
     });
+    
+    if (isGrabber) {
+      logger.warn('PLEX GRABBER DETECTED - Timeline metadata consistency critical', {
+        itemId,
+        userAgent: userAgent.substring(0, 100),
+        preventingType5: true
+      });
+    }
     
     // Return complete timeline response with proper metadata
     res.set({
       'Content-Type': 'application/json; charset=utf-8', 
-      'Cache-Control': 'no-cache'
+      'Cache-Control': 'no-cache, no-store, must-revalidate, private, max-age=0',
+      'Pragma': 'no-cache',
+      'Expires': '0',
+      'Last-Modified': new Date().toUTCString(),
+      'ETag': `"timeline-${Date.now()}-${Math.random()}"`,
+      
+      // CRITICAL: Grabber-specific cache invalidation headers
+      'X-Plex-Cache-Invalidate': 'force',
+      'X-Plex-Grabber-Refresh': 'true',
+      'X-Metadata-Consistency': 'episode-type-4-only',
+      'X-Content-Type-Locked': '4',
+      'X-Timeline-Type-Locked': 'episode',
+      'X-Grabber-Cache-Prevent': 'active',
+      
+      'X-Metadata-Version': Date.now().toString(),
+      'X-PlexBridge-Timeline': 'episode-type-4-validated'
     });
     
     // Provide a valid timeline entry to prevent completion duration errors
@@ -456,8 +490,8 @@ router.get('/timeline/:itemId?', async (req, res) => {
         machineIdentifier: process.env.DEVICE_UUID || 'plextv-001',
         Timeline: [{
           state: "playing",
-          type: "video",
-          itemType: "clip", // Android TV requires clip type for Live TV
+          type: "episode", // CRITICAL: Must match contentType: 4 = episode for Grabber consistency
+          itemType: "episode", // Consistent with contentType: 4 = episode
           ratingKey: itemId || "18961",
           key: `/library/metadata/${itemId || "18961"}`,
           playQueueItemID: parseInt(itemId) || 18961,
@@ -485,9 +519,9 @@ router.get('/timeline/:itemId?', async (req, res) => {
           machineIdentifier: process.env.DEVICE_UUID || 'plextv-001',
           
           // Android TV specific metadata fields to fix "type 5" errors
-          contentType: 4, // Type 4 is "clip" for Live TV (not episode)
-          metadata_type: 'clip',
-          mediaType: 'clip',
+          contentType: 4, // Type 4 is "episode" for Live TV (NEVER 5)
+          metadata_type: 'episode',
+          mediaType: 'episode',
           live: 1,
           grandparentTitle: 'Live TV',
           parentTitle: 'Live Programming',
@@ -502,7 +536,11 @@ router.get('/timeline/:itemId?', async (req, res) => {
       }
     };
     
-    res.json(timeline);
+    // Apply metadata validation before sending
+    const { validateAndCorrectMetadata } = require('../utils/metadataTypeValidator');
+    const validatedTimeline = validateAndCorrectMetadata(timeline, 'timeline-endpoint');
+    
+    res.json(validatedTimeline);
   } catch (error) {
     logger.error('Timeline error:', error);
     // Still return valid structure on error

@@ -41,11 +41,15 @@ function isWebClient(req) {
                  (isPlexWeb || req.get('origin') || req.get('referer'));
   
   if (result) {
-    logger.debug('Web client detected', {
+    logger.info('WEB CLIENT DETECTED - Enhanced monitoring active', {
+      path: req.path,
+      method: req.method,
       userAgent: userAgent.substring(0, 150),
       hasOrigin: !!req.get('origin'),
       hasReferer: !!req.get('referer'),
-      hasWebHeaders: !!hasWebHeaders
+      hasWebHeaders: !!hasWebHeaders,
+      origin: req.get('origin') || 'none',
+      referer: req.get('referer')?.substring(0, 100) || 'none'
     });
   }
   
