@@ -9,24 +9,52 @@ const database = require('./database');
 class ConsumerManager {
   constructor() {
     this.consumers = new Map();
-    this.initDatabase();
-    this.loadConsumers();
+    this.isInitialized = false;
+    this.initializationPromise = this.initialize();
     
-    // Cleanup stale consumers every 30 seconds
-    this.cleanupInterval = setInterval(() => this.cleanupStaleConsumers(), 30000);
-    
-    logger.info('ConsumerManager initialized with persistent tracking');
+    logger.info('ConsumerManager initializing with persistent tracking');
+  }
+
+  /**
+   * Async initialization to properly wait for database
+   */
+  async initialize() {
+    try {
+      await this.initDatabase();
+      await this.loadConsumers();
+      
+      // Cleanup stale consumers every 30 seconds
+      this.cleanupInterval = setInterval(() => this.cleanupStaleConsumers(), 30000);
+      
+      this.isInitialized = true;
+      logger.info('ConsumerManager initialized with persistent tracking');
+    } catch (error) {
+      logger.error('Failed to initialize ConsumerManager:', error);
+      // Continue without database persistence
+      this.isInitialized = false;
+    }
   }
 
   /**
    * Initialize database tables for consumer persistence
    */
-  initDatabase() {
+  async initDatabase() {
     try {
-      const db = database;
-      
-      // Create consumers table if it doesn't exist
-      db.exec(`
+      // Wait for database to be ready
+      if (!database.isInitialized) {
+        logger.info('Waiting for database initialization...');
+        let attempts = 0;
+        while (!database.isInitialized && attempts < 30) {
+          await new Promise(resolve => setTimeout(resolve, 1000));
+          attempts++;
+        }
+        if (!database.isInitialized) {
+          throw new Error('Database not initialized after 30 seconds');
+        }
+      }
+
+      // Create consumers table if it doesn't exist - Use async database methods
+      await database.run(`
         CREATE TABLE IF NOT EXISTS consumers (
           id TEXT PRIMARY KEY,
           session_id TEXT NOT NULL,
@@ -40,32 +68,31 @@ class ConsumerManager {
           client_ip TEXT,
           metadata TEXT,
           UNIQUE(session_id)
-        );
-        
-        CREATE INDEX IF NOT EXISTS idx_consumers_session ON consumers(session_id);
-        CREATE INDEX IF NOT EXISTS idx_consumers_state ON consumers(state);
-        CREATE INDEX IF NOT EXISTS idx_consumers_activity ON consumers(last_activity);
+        )
       `);
+      
+      await database.run('CREATE INDEX IF NOT EXISTS idx_consumers_session ON consumers(session_id)');
+      await database.run('CREATE INDEX IF NOT EXISTS idx_consumers_state ON consumers(state)');
+      await database.run('CREATE INDEX IF NOT EXISTS idx_consumers_activity ON consumers(last_activity)');
       
       logger.info('Consumer database tables initialized');
     } catch (error) {
       logger.error('Failed to initialize consumer database:', error);
+      throw error;
     }
   }
 
   /**
    * Load existing consumers from database on startup
    */
-  loadConsumers() {
+  async loadConsumers() {
     try {
-      const db = database;
-      const stmt = db.prepare(`
+      // Use async database.all() method
+      const activeConsumers = await database.all(`
         SELECT * FROM consumers 
         WHERE state IN ('streaming', 'buffering', 'paused')
         AND last_activity > strftime('%s', 'now') - 3600
       `);
-      
-      const activeConsumers = stmt.all();
       
       activeConsumers.forEach(consumer => {
         this.consumers.set(consumer.session_id, {
@@ -114,29 +141,30 @@ class ConsumerManager {
       // Store in memory
       this.consumers.set(sessionId, consumer);
       
-      // Persist to database
-      const db = database;
-      const stmt = db.prepare(`
-        INSERT OR REPLACE INTO consumers (
-          id, session_id, channel_id, stream_url, state,
-          created_at, updated_at, last_activity,
-          user_agent, client_ip, metadata
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-      `);
-      
-      stmt.run(
-        consumerId,
-        sessionId,
-        channelId,
-        streamUrl,
-        consumer.state,
-        Math.floor(consumer.createdAt / 1000),
-        Math.floor(consumer.updatedAt / 1000),
-        Math.floor(consumer.lastActivity / 1000),
-        consumer.userAgent,
-        consumer.clientIp,
-        JSON.stringify(consumer.metadata)
-      );
+      // Persist to database - Use async database.run() in background
+      if (this.isInitialized) {
+        database.run(`
+          INSERT OR REPLACE INTO consumers (
+            id, session_id, channel_id, stream_url, state,
+            created_at, updated_at, last_activity,
+            user_agent, client_ip, metadata
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        `, [
+          consumerId,
+          sessionId,
+          channelId,
+          streamUrl,
+          consumer.state,
+          Math.floor(consumer.createdAt / 1000),
+          Math.floor(consumer.updatedAt / 1000),
+          Math.floor(consumer.lastActivity / 1000),
+          consumer.userAgent,
+          consumer.clientIp,
+          JSON.stringify(consumer.metadata)
+        ]).catch(dbError => {
+          logger.error('Failed to persist consumer to database:', dbError);
+        });
+      }
       
       logger.debug('Created/updated consumer', {
         consumerId,
@@ -165,36 +193,8 @@ class ConsumerManager {
     // Check memory first
     let consumer = this.consumers.get(sessionId);
     
-    if (!consumer) {
-      // Try to load from database
-      try {
-        const db = database;
-        const stmt = db.prepare('SELECT * FROM consumers WHERE session_id = ?');
-        const dbConsumer = stmt.get(sessionId);
-        
-        if (dbConsumer) {
-          consumer = {
-            id: dbConsumer.id,
-            sessionId: dbConsumer.session_id,
-            channelId: dbConsumer.channel_id,
-            streamUrl: dbConsumer.stream_url,
-            state: dbConsumer.state,
-            createdAt: dbConsumer.created_at * 1000,
-            updatedAt: dbConsumer.updated_at * 1000,
-            lastActivity: dbConsumer.last_activity * 1000,
-            userAgent: dbConsumer.user_agent,
-            clientIp: dbConsumer.client_ip,
-            metadata: dbConsumer.metadata ? JSON.parse(dbConsumer.metadata) : {}
-          };
-          
-          // Cache in memory
-          this.consumers.set(sessionId, consumer);
-        }
-      } catch (error) {
-        logger.error('Failed to get consumer from database:', error);
-      }
-    }
-    
+    // For now, only check memory to avoid async issues
+    // Database loading will be handled during initialization
     return consumer;
   }
 
@@ -212,21 +212,19 @@ class ConsumerManager {
       // Update in memory
       this.consumers.set(sessionId, consumer);
       
-      // Update in database (async, don't wait)
-      try {
-        const db = database;
-        const stmt = db.prepare(`
+      // Update in database (async, don't wait) - Use async database.run() in background
+      if (this.isInitialized) {
+        database.run(`
           UPDATE consumers 
           SET last_activity = ?, updated_at = ?
           WHERE session_id = ?
-        `);
-        stmt.run(
+        `, [
           Math.floor(now / 1000),
           Math.floor(now / 1000),
           sessionId
-        );
-      } catch (error) {
-        logger.error('Failed to update consumer activity:', error);
+        ]).catch(error => {
+          logger.error('Failed to update consumer activity:', error);
+        });
       }
       
       return true;
@@ -248,17 +246,15 @@ class ConsumerManager {
       // Update in memory
       this.consumers.set(sessionId, consumer);
       
-      // Update in database
-      try {
-        const db = database;
-        const stmt = db.prepare(`
+      // Update in database - Use async database.run() in background
+      if (this.isInitialized) {
+        database.run(`
           UPDATE consumers 
           SET state = ?, updated_at = ?
           WHERE session_id = ?
-        `);
-        stmt.run(state, Math.floor(consumer.updatedAt / 1000), sessionId);
-      } catch (error) {
-        logger.error('Failed to update consumer state:', error);
+        `, [state, Math.floor(consumer.updatedAt / 1000), sessionId]).catch(error => {
+          logger.error('Failed to update consumer state:', error);
+        });
       }
       
       return true;
@@ -289,15 +285,13 @@ class ConsumerManager {
     // Remove from memory
     this.consumers.delete(sessionId);
     
-    // Remove from database
-    try {
-      const db = database;
-      const stmt = db.prepare('DELETE FROM consumers WHERE session_id = ?');
-      stmt.run(sessionId);
-      
-      logger.debug('Removed consumer', { sessionId });
-    } catch (error) {
-      logger.error('Failed to remove consumer:', error);
+    // Remove from database - Use async database.run() in background
+    if (this.isInitialized) {
+      database.run('DELETE FROM consumers WHERE session_id = ?', [sessionId]).then(() => {
+        logger.debug('Removed consumer', { sessionId });
+      }).catch(error => {
+        logger.error('Failed to remove consumer:', error);
+      });
     }
   }
 
@@ -305,20 +299,27 @@ class ConsumerManager {
    * Clean up stale consumers
    */
   cleanupStaleConsumers() {
+    // Use async wrapper to avoid blocking the interval
+    this._cleanupStaleConsumersAsync().catch(error => {
+      logger.error('Failed to cleanup stale consumers:', error);
+    });
+  }
+
+  async _cleanupStaleConsumersAsync() {
     try {
       const staleThreshold = 10 * 60; // 10 minutes in seconds (original value)
       
-      // Remove from database
-      const db = database;
-      const stmt = db.prepare(`
-        DELETE FROM consumers 
-        WHERE last_activity < strftime('%s', 'now') - ?
-        OR state IN ('stopped', 'error')
-      `);
-      const result = stmt.run(staleThreshold);
-      
-      if (result.changes > 0) {
-        logger.info(`Cleaned up ${result.changes} stale consumers`);
+      // Remove from database - Use async database.run()
+      if (this.isInitialized) {
+        const result = await database.run(`
+          DELETE FROM consumers 
+          WHERE last_activity < strftime('%s', 'now') - ?
+          OR state IN ('stopped', 'error')
+        `, [staleThreshold]);
+        
+        if (result.changes > 0) {
+          logger.info(`Cleaned up ${result.changes} stale consumers`);
+        }
       }
       
       // Clean memory cache
@@ -377,17 +378,15 @@ class ConsumerManager {
       clearInterval(this.cleanupInterval);
     }
     
-    // Mark all consumers as stopped
-    try {
-      const db = database;
-      const stmt = db.prepare(`
+    // Mark all consumers as stopped - Use async database.run() in background
+    if (this.isInitialized) {
+      database.run(`
         UPDATE consumers 
         SET state = 'stopped', updated_at = strftime('%s', 'now')
         WHERE state IN ('streaming', 'buffering', 'paused')
-      `);
-      stmt.run();
-    } catch (error) {
-      logger.error('Failed to mark consumers as stopped:', error);
+      `).catch(error => {
+        logger.error('Failed to mark consumers as stopped:', error);
+      });
     }
   }
 }

@@ -345,29 +345,62 @@ router.get('/stream/:channelId/:filename?', async (req, res) => {
       try {
         const axios = require('axios');
         
-        // CRITICAL FIX: Update session activity for HLS segment requests
-        // This was the root cause - segments were being streamed without activity updates
+        // CRITICAL FIX: Enhanced session activity tracking for HLS segments
+        // This prevents sessions from being marked as "no consumer" during active streaming
         const consumerManager = getConsumerManager();
         const sessionManager = getSessionManager();
         
-        // Extract session ID from query params or headers
-        const streamingSessionId = req.query.session || req.query.sessionId || 
-                                  req.headers['x-session-id'] || sessionId;
+        // Extract session ID from multiple possible sources (more comprehensive)
+        const streamingSessionId = req.query.session || 
+                                  req.query.sessionId || 
+                                  req.query.X_Plex_Session_Identifier ||
+                                  req.headers['x-session-id'] ||
+                                  req.headers['x-plex-session-identifier'] ||
+                                  sessionId;
         
-        // Update activity in both managers
-        if (streamingSessionId) {
+        // Also try to extract from the URL path if it's a session-based request
+        let urlSessionId = null;
+        const sessionPathMatch = req.originalUrl.match(/\/sessions\/([^\/]+)/);
+        if (sessionPathMatch) {
+          urlSessionId = sessionPathMatch[1];
+        }
+        
+        // Use the most specific session ID available
+        const finalSessionId = streamingSessionId || urlSessionId;
+        
+        // Update activity in all relevant managers
+        if (finalSessionId) {
+          let activityUpdated = false;
+          
           if (consumerManager && consumerManager.updateActivity) {
-            consumerManager.updateActivity(streamingSessionId);
-          }
-          if (sessionManager && sessionManager.updateSessionActivity) {
-            sessionManager.updateSessionActivity(streamingSessionId);
+            consumerManager.updateActivity(finalSessionId);
+            activityUpdated = true;
           }
           
-          logger.debug('Updated session activity for HLS segment', {
-            sessionId: streamingSessionId,
-            filename,
-            channelId
-          });
+          if (sessionManager && sessionManager.updateSessionActivity) {
+            sessionManager.updateSessionActivity(finalSessionId);
+            activityUpdated = true;
+          }
+          
+          // Also try to find and update any related session IDs (for session mapping)
+          if (consumerManager && consumerManager.getConsumer) {
+            const consumer = consumerManager.getConsumer(finalSessionId);
+            if (consumer && consumer.sessionId !== finalSessionId) {
+              consumerManager.updateActivity(consumer.sessionId);
+              sessionManager.updateSessionActivity(consumer.sessionId);
+            }
+          }
+          
+          if (activityUpdated) {
+            logger.debug('Enhanced session activity update for HLS segment', {
+              finalSessionId,
+              originalSessionId: streamingSessionId,
+              urlSessionId,
+              filename,
+              channelId,
+              timestamp: new Date().toISOString()
+            });
+          }
         }
         
         logger.info('Direct proxying sub-file', { targetUrl, filename, sessionId: streamingSessionId });

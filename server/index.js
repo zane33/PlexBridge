@@ -88,6 +88,11 @@ app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 const { globalMetadataValidationMiddleware } = require('./utils/metadataTypeValidator');
 app.use(globalMetadataValidationMiddleware);
 
+// Add Plex query parameter handler middleware - prevents parser warnings
+const { plexQueryHandler, plexResponseHeaders } = require('./middleware/plexQueryHandler');
+app.use(plexQueryHandler());
+app.use(plexResponseHeaders());
+
 // Add Plex request logging middleware
 const { plexRequestLogger, malformedRequestHandler } = require('./middleware/plexRequestLogger');
 app.use(plexRequestLogger());
@@ -552,6 +557,10 @@ const initializeApp = async () => {
       // Add Android TV error handler after all routes
       const { androidTVErrorHandler } = require('./middleware/androidTVErrorHandler');
       app.use(androidTVErrorHandler());
+      
+      // Add Plex-specific error handler
+      const { plexErrorHandler } = require('./middleware/plexQueryHandler');
+      app.use(plexErrorHandler());
       
       // Add malformed request error handler
       app.use(malformedRequestHandler());

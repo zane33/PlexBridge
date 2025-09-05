@@ -370,24 +370,42 @@ class PersistentSessionManager {
   startHealthMonitoring() {
     this.healthCheckInterval = setInterval(() => {
       const now = Date.now();
-      const timeoutThreshold = 60000; // 60 seconds - increased for enhanced encoding streams
+      // CRITICAL FIX: Increased timeout thresholds to prevent premature session termination
+      const timeoutThreshold = 180000; // 3 minutes - much more generous for web clients
+      const consumerGraceTimeout = 300000; // 5 minutes before marking no consumer
+      const cleanupTimeout = 900000; // 15 minutes before cleanup (was 10 minutes)
 
       for (const [sessionId, session] of this.activeSessions.entries()) {
-        // Check for inactive sessions
-        if (now - session.lastActivity > timeoutThreshold) {
-          logger.warn('Session inactive, marking as stale', {
+        const inactiveTime = now - session.lastActivity;
+        
+        // Check for inactive sessions - but be much more tolerant
+        if (inactiveTime > timeoutThreshold) {
+          logger.debug('Session showing inactivity', {
             sessionId,
-            inactiveFor: now - session.lastActivity
+            inactiveFor: inactiveTime,
+            inactiveMinutes: Math.round(inactiveTime / 60000)
           });
           
-          // Don't immediately mark as no consumer - give more time for enhanced encoding
-          if (now - session.lastActivity > 120000) { // 2 minutes
+          // CRITICAL: Much longer grace period before marking as no consumer
+          // This prevents "Failed to find consumer" during normal streaming pauses
+          if (inactiveTime > consumerGraceTimeout) {
             session.hasConsumer = false;
             session.instanceAvailable = false;
+            
+            logger.warn('Session marked as having no consumer after grace period', {
+              sessionId,
+              inactiveFor: inactiveTime,
+              inactiveMinutes: Math.round(inactiveTime / 60000)
+            });
           }
 
-          // If session is really stale (10 minutes), clean it up
-          if (now - session.lastActivity > 600000) {
+          // Only cleanup after much longer period of true inactivity
+          if (inactiveTime > cleanupTimeout) {
+            logger.info('Session cleanup triggered after extended inactivity', {
+              sessionId,
+              inactiveFor: inactiveTime,
+              inactiveMinutes: Math.round(inactiveTime / 60000)
+            });
             this.cleanupSession(sessionId);
           }
         } else {
@@ -410,7 +428,7 @@ class PersistentSessionManager {
           }
         }
       }
-    }, 5000); // Check every 5 seconds
+    }, 10000); // Check every 10 seconds (less frequent to reduce overhead)
 
     logger.info('Session health monitoring started');
   }
