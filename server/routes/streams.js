@@ -9,6 +9,8 @@ const { createStreamingSession } = require('../utils/streamingDecisionFix');
 const { getSessionManager, sessionKeepAlive, addStreamHeaders } = require('../utils/sessionPersistenceFix');
 const { getConsumerManager } = require('../services/consumerManager');
 const { v4: uuidv4 } = require('uuid');
+const segmentHandler = require('../services/segmentHandler');
+const hlsQualitySelector = require('../services/hlsQualitySelector');
 
 // Apply session keep-alive middleware to all stream endpoints
 router.use(sessionKeepAlive());
@@ -340,8 +342,26 @@ router.get('/stream/:channelId/:filename?', async (req, res) => {
       }
     }
     
-    // For sub-files, use simpler direct proxy without detection/rewriting
+    // For sub-files (segments), use enhanced segment handler with retry logic
     if (isSubFile) {
+      // Handle .ts segments with proper error recovery
+      if (filename.endsWith('.ts')) {
+        logger.info('Handling MPEG-TS segment request', {
+          channelId,
+          filename,
+          targetUrl,
+          sessionId
+        });
+        
+        // Use segment handler for reliability
+        return await segmentHandler.streamSegment(targetUrl, res, {
+          userAgent: userAgent,
+          headers: {
+            'X-Session-ID': sessionId
+          }
+        });
+      }
+      
       try {
         const axios = require('axios');
         

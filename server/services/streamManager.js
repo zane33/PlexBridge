@@ -8,6 +8,7 @@ const cacheService = require('./cacheService');
 const settingsService = require('./settingsService');
 const streamSessionManager = require('./streamSessionManager');
 const streamResilienceService = require('./streamResilienceService');
+const ffmpegProfiles = require('../config/ffmpegProfiles');
 
 // Android TV Configuration Constants
 const ANDROID_TV_CONFIG = {
@@ -2047,40 +2048,50 @@ class StreamManager {
           responseHeaders['Content-Type'] = 'video/mp2t';
         }
       } else if (forceTranscode) {
-        // Use transcoding for streams that require it
+        // Use high quality transcoding when re-encoding is required
         if (isAndroidTV) {
-          // Android TV specific transcoding to prevent buffering
+          // Android TV specific high quality transcoding
+          const profile = ffmpegProfiles.transcodingHighQuality;
+          const profileArgs = profile.args.join(' ');
           ffmpegCommand = settings?.plexlive?.transcoding?.androidtv?.transcodingArgs ||
                          settings?.plexlive?.transcoding?.mpegts?.transcodingArgs || 
                          config.plexlive?.transcoding?.mpegts?.transcodingArgs ||
-                         '-hide_banner -loglevel error -reconnect 1 -reconnect_at_eof 1 -reconnect_streamed 1 -reconnect_delay_max 5 -i [URL] -c:v libx264 -preset ultrafast -tune zerolatency -profile:v high -level 4.0 -pix_fmt yuv420p -b:v 2500k -maxrate 2500k -bufsize 1000k -g 30 -keyint_min 15 -sc_threshold 0 -c:a aac -b:a 128k -ar 48000 -ac 2 -bsf:v h264_mp4toannexb -f mpegts -mpegts_copyts 1 -avoid_negative_ts make_zero -fflags +genpts+igndts+discardcorrupt+nobuffer -flags +low_delay -max_muxing_queue_size 9999 -muxdelay 0 -muxpreload 0 -flush_packets 1 -rtbufsize 256k pipe:1';
+                         profileArgs;
           
-          logger.info('Using Android TV optimized transcoding configuration', { clientIP: req.ip });
-        } else {
-          ffmpegCommand = settings?.plexlive?.transcoding?.mpegts?.transcodingArgs || 
-                         config.plexlive?.transcoding?.mpegts?.transcodingArgs ||
-                         '-hide_banner -loglevel error -reconnect 1 -reconnect_at_eof 1 -reconnect_streamed 1 -reconnect_delay_max 5 -i [URL] -c:v libx264 -preset fast -profile:v high -level 4.0 -pix_fmt yuv420p -b:v 2500k -maxrate 2500k -bufsize 5000k -g 50 -keyint_min 25 -sc_threshold 0 -c:a aac -b:a 128k -ar 48000 -ac 2 -bsf:v h264_mp4toannexb -f mpegts -mpegts_copyts 1 -avoid_negative_ts make_zero -fflags +genpts+igndts+discardcorrupt -max_muxing_queue_size 9999 -muxdelay 0 -muxpreload 0 -flush_packets 1 pipe:1';
-        }
-      } else {
-        // Use your tested codec copy configuration for streams that don't need transcoding
-        if (isAndroidTV) {
-          // Android TV specific codec copy with segment boundaries to prevent EOF crashes
-          ffmpegCommand = settings?.plexlive?.transcoding?.mpegts?.androidtv?.ffmpegArgs ||
-                         config.plexlive?.transcoding?.mpegts?.androidtv?.ffmpegArgs ||
-                         settings?.plexlive?.transcoding?.androidtv?.ffmpegArgs ||
-                         settings?.plexlive?.transcoding?.mpegts?.ffmpegArgs || 
-                         config.plexlive?.transcoding?.mpegts?.ffmpegArgs ||
-                         '-hide_banner -loglevel error -reconnect 1 -reconnect_at_eof 1 -reconnect_streamed 1 -reconnect_delay_max 2 -i [URL] -c:v copy -c:a copy -bsf:v h264_mp4toannexb -f segment -segment_time 30 -segment_format mpegts -segment_list_type flat -segment_list /dev/null -reset_timestamps 1 -avoid_negative_ts make_zero -fflags +genpts+igndts+discardcorrupt+flush_packets -flags +global_header+low_delay -muxdelay 0 -muxpreload 0 -flush_packets 1 -max_delay 500000 -max_muxing_queue_size 4096 -rtbufsize 1024k -f mpegts pipe:1';
-          
-          logger.info('Using Android TV optimized configuration with 30-second segment boundaries', { 
+          logger.info('Using high quality transcoding for Android TV', { 
             clientIP: req.ip,
-            segmentDuration: 30,
-            eofPrevention: true
+            profile: profile.name
           });
         } else {
+          // Standard high quality transcoding
+          const profile = ffmpegProfiles.transcodingHighQuality;
+          const profileArgs = profile.args.join(' ');
+          ffmpegCommand = settings?.plexlive?.transcoding?.mpegts?.transcodingArgs || 
+                         config.plexlive?.transcoding?.mpegts?.transcodingArgs ||
+                         profileArgs;
+        }
+      } else {
+        // Use quality-preserving profiles for streams that don't need transcoding
+        if (isAndroidTV) {
+          // Android TV specific - use optimized profile for quality and stability
+          const profile = ffmpegProfiles.selectProfile(userAgent, finalStreamUrl, 'mpegts');
+          const profileArgs = profile.args.join(' ');
+          ffmpegCommand = settings?.plexlive?.transcoding?.mpegts?.androidtv?.ffmpegArgs ||
+                         config.plexlive?.transcoding?.mpegts?.androidtv?.ffmpegArgs ||
+                         profileArgs;
+          
+          logger.info('Using quality-preserving profile for Android TV', { 
+            clientIP: req.ip,
+            profile: profile.name,
+            description: profile.description
+          });
+        } else {
+          // Standard high quality copy profile for best quality preservation
+          const profile = ffmpegProfiles.highQualityCopy;
+          const profileArgs = profile.args.join(' ');
           ffmpegCommand = settings?.plexlive?.transcoding?.mpegts?.ffmpegArgs || 
                          config.plexlive?.transcoding?.mpegts?.ffmpegArgs ||
-                         '-hide_banner -loglevel error -reconnect 1 -reconnect_at_eof 1 -reconnect_streamed 1 -reconnect_delay_max 2 -i [URL] -c:v copy -c:a copy -bsf:v h264_mp4toannexb -f mpegts -mpegts_copyts 1 -avoid_negative_ts make_zero -fflags +genpts+igndts+discardcorrupt -copyts -muxdelay 0 -muxpreload 0 -flush_packets 1 -max_delay 0 -max_muxing_queue_size 9999 pipe:1';
+                         profileArgs;
         }
       }
       
