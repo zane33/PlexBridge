@@ -563,10 +563,29 @@ router.get('/library/metadata/:metadataId', async (req, res) => {
   try {
     const { metadataId } = req.params;
     
-    logger.debug('Plex metadata request', { 
+    // Enhanced logging for Grabber detection
+    const userAgent = req.get('User-Agent') || '';
+    const isGrabber = userAgent.includes('Grabber') || req.get('X-Plex-Client-Identifier')?.includes('grabber');
+    
+    logger.info('PLEX LIBRARY METADATA REQUEST - Enhanced monitoring', { 
       metadataId,
-      userAgent: req.get('User-Agent')
+      userAgent: userAgent.substring(0, 200),
+      isGrabberRequest: isGrabber,
+      plexClientId: req.get('X-Plex-Client-Identifier'),
+      plexProduct: req.get('X-Plex-Product'),
+      plexVersion: req.get('X-Plex-Version'),
+      origin: req.get('origin'),
+      referer: req.get('referer'),
+      timestamp: new Date().toISOString()
     });
+    
+    if (isGrabber) {
+      logger.warn('PLEX GRABBER DETECTED - Library metadata consistency critical', {
+        metadataId,
+        userAgent: userAgent.substring(0, 100),
+        preventingType5: true
+      });
+    }
     
     // Extract channel ID if this is a channel metadata request
     let channelId = metadataId;
@@ -601,8 +620,8 @@ router.get('/library/metadata/:metadataId', async (req, res) => {
           key: `/library/metadata/${metadataId}`,
           parentRatingKey: `show_${channelId}`,
           grandparentRatingKey: `series_${channelId}`,
-          guid: `plex://clip/${metadataId}`,
-          type: "clip",
+          guid: `plex://episode/${metadataId}`,
+          type: "episode", // CRITICAL: Must match contentType: 4 = episode for Grabber consistency
           title: channel?.name || `Channel ${channelId}`,
           grandparentTitle: channel?.name || `Channel ${channelId}`,
           parentTitle: "Live Programming",
@@ -612,10 +631,10 @@ router.get('/library/metadata/:metadataId', async (req, res) => {
           parentIndex: 1,
           year: new Date().getFullYear(),
           
-          // CRITICAL: Android TV requires type="clip" for Live TV streams
-          contentType: 4, // Type 4 is "clip" for Live TV
-          metadata_type: 'clip',
-          mediaType: 'clip',
+          // CRITICAL: FIXED - contentType: 4 = episode, not clip
+          contentType: 4, // Type 4 is "episode" for Live TV (consistent with timeline)
+          metadata_type: 'episode',
+          mediaType: 'episode',
           thumb: `/library/metadata/${metadataId}/thumb`,
           art: `/library/metadata/${metadataId}/art`,
           parentThumb: `/library/metadata/${metadataId}/parentThumb`,
@@ -685,13 +704,23 @@ router.get('/library/metadata/:metadataId', async (req, res) => {
     
     res.set({
       'Content-Type': 'application/json; charset=utf-8',
-      'Cache-Control': 'no-cache, no-store, must-revalidate, private',
+      'Cache-Control': 'no-cache, no-store, must-revalidate, private, max-age=0',
       'Pragma': 'no-cache',
       'Expires': '0',
-      'ETag': `"plexbridge-metadata-${metadataId}-${Date.now()}"`,
+      'ETag': `"plexbridge-metadata-${metadataId}-${Date.now()}-${Math.random()}"`,
       'Last-Modified': new Date().toUTCString(),
+      
+      // CRITICAL: Grabber-specific cache invalidation headers
+      'X-Plex-Cache-Invalidate': 'force',
+      'X-Plex-Grabber-Refresh': 'true',
+      'X-Metadata-Consistency': 'episode-type-4-only',
+      'X-Content-Type-Locked': '4',
+      'X-Library-Type-Locked': 'episode',
+      'X-Grabber-Cache-Prevent': 'active',
+      
       'X-Content-Type': 'live-tv-metadata',
-      'X-Metadata-Version': '4.0-corrected'  // Signal that metadata uses type 4, not 5
+      'X-Metadata-Version': '4.0-episode-consistent',  // Signal consistent episode metadata
+      'X-Type-Consistency-Fix': 'applied'
     });
     
     res.json(metadata);
