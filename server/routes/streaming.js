@@ -85,7 +85,7 @@ router.get('/capacity', async (req, res) => {
     logger.info('Getting streaming capacity metrics');
 
     const settings = await settingsService.getSettings();
-    const maxConcurrent = settings?.plexlive?.streaming?.maxConcurrentStreams || 10;
+    const maxConcurrent = parseInt(settings?.plexlive?.streaming?.maxConcurrentStreams) || 10;
     
     const capacity = streamSessionManager.getCapacityMetrics(maxConcurrent);
     const bandwidth = streamSessionManager.getBandwidthStats();
@@ -98,8 +98,8 @@ router.get('/capacity', async (req, res) => {
         bandwidth: bandwidth.formattedStats,
         limits: {
           maxConcurrentStreams: maxConcurrent,
-          streamTimeout: settings?.plexlive?.streaming?.streamTimeout || 30000,
-          reconnectAttempts: settings?.plexlive?.streaming?.reconnectAttempts || 3
+          streamTimeout: parseInt(settings?.plexlive?.streaming?.streamTimeout) || 30000,
+          reconnectAttempts: parseInt(settings?.plexlive?.streaming?.reconnectAttempts) || 3
         },
         health: {
           status: capacity.status,

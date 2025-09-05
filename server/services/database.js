@@ -402,7 +402,15 @@ class DatabaseService {
           'ALTER TABLE stream_sessions ADD COLUMN peak_bitrate INTEGER DEFAULT 0',
           'ALTER TABLE stream_sessions ADD COLUMN error_count INTEGER DEFAULT 0',
           'ALTER TABLE stream_sessions ADD COLUMN end_reason TEXT',
-          'ALTER TABLE stream_sessions ADD COLUMN last_update DATETIME DEFAULT CURRENT_TIMESTAMP'
+          'ALTER TABLE stream_sessions ADD COLUMN last_update DATETIME DEFAULT CURRENT_TIMESTAMP',
+          // Enhanced Plex session tracking fields
+          'ALTER TABLE stream_sessions ADD COLUMN plex_client_id TEXT',
+          'ALTER TABLE stream_sessions ADD COLUMN plex_client_name TEXT',
+          'ALTER TABLE stream_sessions ADD COLUMN plex_username TEXT',
+          'ALTER TABLE stream_sessions ADD COLUMN plex_device TEXT',
+          'ALTER TABLE stream_sessions ADD COLUMN plex_device_name TEXT',
+          'ALTER TABLE stream_sessions ADD COLUMN unique_client_id TEXT',
+          'ALTER TABLE stream_sessions ADD COLUMN display_name TEXT'
         ];
 
         addColumns.forEach(sql => {

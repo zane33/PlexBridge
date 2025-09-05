@@ -42,7 +42,15 @@ class StreamSessionManager {
       channelName,
       channelNumber,
       streamUrl,
-      streamType
+      streamType,
+      // Enhanced Plex client tracking fields
+      plex_client_id,
+      plex_client_name,
+      plex_username,
+      plex_device,
+      plex_device_name,
+      unique_client_id,
+      display_name
     } = sessionData;
 
     try {
@@ -78,6 +86,15 @@ class StreamSessionManager {
         streamType,
         startTime: Date.now(),
         lastUpdate: Date.now(),
+        
+        // Enhanced Plex client information
+        plexClientId: plex_client_id,
+        plexClientName: plex_client_name,
+        plexUsername: plex_username,
+        plexDevice: plex_device,
+        plexDeviceName: plex_device_name,
+        uniqueClientId: unique_client_id,
+        displayName: display_name || 'Unknown Client',
         
         // Performance metrics
         bytesTransferred: 0,
@@ -425,8 +442,9 @@ class StreamSessionManager {
           id, stream_id, client_ip, client_hostname, user_agent, client_identifier,
           channel_name, channel_number, stream_url, stream_type, started_at,
           bytes_transferred, current_bitrate, avg_bitrate, peak_bitrate,
-          error_count, status, last_update
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          error_count, status, last_update, plex_client_id, plex_client_name,
+          plex_username, plex_device, plex_device_name, unique_client_id, display_name
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `, [
         session.sessionId,
         session.streamId,
@@ -445,7 +463,15 @@ class StreamSessionManager {
         session.peakBitrate,
         session.errorCount,
         session.status,
-        new Date(session.lastUpdate).toISOString()
+        new Date(session.lastUpdate).toISOString(),
+        // New Plex tracking fields
+        session.plexClientId || null,
+        session.plexClientName || null,
+        session.plexUsername || null,
+        session.plexDevice || null,
+        session.plexDeviceName || null,
+        session.uniqueClientId || null,
+        session.displayName || null
       ]);
     } catch (error) {
       logger.error('Failed to persist session to database', {

@@ -149,16 +149,63 @@ router.get('/stream/:channelId/:filename?', async (req, res) => {
                                req.query.session ||
                                sessionId;
       
+      // Helper function to sanitize headers
+      const sanitizeHeader = (header) => {
+        if (!header) return null;
+        // Prevent SQL injection, XSS, and limit length
+        return header.toString().substring(0, 255).replace(/[<>'"]/g, '');
+      };
+
+      // Extract comprehensive Plex client information with validation
+      const plexHeaders = {
+        clientIdentifier: sanitizeHeader(req.headers['x-plex-client-identifier']) || `unknown-${req.ip}`,
+        clientName: sanitizeHeader(req.headers['x-plex-client-name']) || 'Unknown Plex Client',
+        clientVersion: sanitizeHeader(req.headers['x-plex-client-version']) || 'unknown',
+        product: sanitizeHeader(req.headers['x-plex-product']) || 'Plex',
+        platform: sanitizeHeader(req.headers['x-plex-platform']) || (isAndroidTV ? 'AndroidTV' : 'Unknown'),
+        platformVersion: sanitizeHeader(req.headers['x-plex-platform-version']) || 'unknown',
+        device: sanitizeHeader(req.headers['x-plex-device']) || 'Unknown Device',
+        deviceName: sanitizeHeader(req.headers['x-plex-device-name']) || 'Unknown',
+        username: sanitizeHeader(req.headers['x-plex-username']) || sanitizeHeader(req.headers['x-plex-user']) || null,
+        token: sanitizeHeader(req.headers['x-plex-token']) || null,
+        session: sanitizeHeader(req.headers['x-plex-session-identifier']) || consumerSessionId,
+        // Add validation flags
+        hasUserInfo: !!(req.headers['x-plex-username'] || req.headers['x-plex-user']),
+        hasClientInfo: !!req.headers['x-plex-client-identifier']
+      };
+
+      // Log when critical headers are missing for debugging
+      if (!plexHeaders.hasClientInfo) {
+        logger.warn('Missing Plex client identifier, session tracking may be limited', {
+          ip: req.ip,
+          userAgent: userAgent,
+          headers: Object.keys(req.headers).filter(h => h.startsWith('x-plex'))
+        });
+      }
+
       const clientInfo = {
         userAgent,
-        platform: isAndroidTV ? 'AndroidTV' : 'Other',
-        product: 'Plex',
+        platform: plexHeaders.platform,
+        product: plexHeaders.product,
         remoteAddress: req.ip || req.connection.remoteAddress,
-        consumerSessionId: consumerSessionId
+        consumerSessionId: consumerSessionId,
+        // Enhanced Plex client tracking (matching database schema)
+        plex_client_id: plexHeaders.clientIdentifier,
+        plex_client_name: plexHeaders.clientName,
+        plex_username: plexHeaders.username,
+        plex_device: plexHeaders.device,
+        plex_device_name: plexHeaders.deviceName,
+        // Create unique client identifier for session differentiation
+        unique_client_id: `${plexHeaders.clientIdentifier}_${req.ip}_${plexHeaders.session}`,
+        display_name: plexHeaders.username || plexHeaders.deviceName || plexHeaders.clientName || req.ip
       };
       
+      // Generate collision-resistant session ID using crypto
+      const crypto = require('crypto');
+      const uniqueSessionId = `session_${channelId}_${crypto.randomBytes(8).toString('hex')}_${Date.now()}`;
+      
       // Create or get existing persistent session
-      const persistentSession = sessionManager.createSession(channelId, sessionId, null, clientInfo);
+      const persistentSession = sessionManager.createSession(channelId, uniqueSessionId, null, clientInfo);
       
       // Also create a consumer session alias if different
       if (consumerSessionId !== sessionId) {
