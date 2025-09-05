@@ -56,7 +56,7 @@ class StreamManager {
       '-i', streamUrl,
       '-c:v', 'copy',
       '-c:a', 'copy',
-      '-bsf:v', 'dump_extra',
+      '-bsf:v', 'h264_mp4toannexb',
       '-f', 'segment',
       '-segment_time', ANDROID_TV_CONFIG.SEGMENT_DURATION.toString(),
       '-segment_format', 'mpegts',
@@ -1318,7 +1318,7 @@ class StreamManager {
       // Standard FFmpeg configuration for non-Android TV clients
       const ffmpegCommand = settings?.plexlive?.transcoding?.mpegts?.ffmpegArgs || 
                            config.plexlive?.transcoding?.mpegts?.ffmpegArgs ||
-                           '-hide_banner -loglevel error -reconnect 1 -reconnect_at_eof 1 -reconnect_streamed 1 -reconnect_delay_max 2 -i [URL] -c:v copy -c:a copy -bsf:v dump_extra -f mpegts -mpegts_copyts 1 -avoid_negative_ts make_zero -fflags +genpts+igndts+discardcorrupt -copyts -muxdelay 0 -muxpreload 0 -flush_packets 1 -max_delay 0 -max_muxing_queue_size 9999 pipe:1';
+                           '-hide_banner -loglevel error -reconnect 1 -reconnect_at_eof 1 -reconnect_streamed 1 -reconnect_delay_max 2 -i [URL] -c:v copy -c:a copy -bsf:v h264_mp4toannexb -f mpegts -mpegts_copyts 1 -avoid_negative_ts make_zero -fflags +genpts+igndts+discardcorrupt -copyts -muxdelay 0 -muxpreload 0 -flush_packets 1 -max_delay 0 -max_muxing_queue_size 9999 pipe:1';
       
       // Replace [URL] placeholder with actual stream URL
       let processedCommand = ffmpegCommand.replace('[URL]', finalUrl);
@@ -1968,10 +1968,9 @@ class StreamManager {
         });
       }
       
-      // Set appropriate headers for MPEG-TS stream with Plex optimizations
-      // Based on real HDHomeRun behavior: continuous stream without chunked encoding
-      res.set({
-        'Content-Type': 'video/mp2t',                 // MPEG-TS MIME type
+      // Set appropriate headers - will be updated after profile selection
+      let responseHeaders = {
+        'Content-Type': 'video/mp2t',                 // Default MPEG-TS MIME type
         'Access-Control-Allow-Origin': '*',
         'Access-Control-Allow-Headers': 'Range, Content-Type, Authorization',
         'Access-Control-Expose-Headers': 'Content-Range, Content-Length, Accept-Ranges',
@@ -1980,7 +1979,7 @@ class StreamManager {
         'Connection': 'keep-alive'                    // Keep connection alive for continuous streaming
         // NO Transfer-Encoding header - HDHomeRun doesn't use chunked encoding
         // NO Content-Length header - unknown length for live streams
-      });
+      };
 
       // Get FFmpeg arguments from settings
       const settingsService = require('./settingsService');
@@ -2010,29 +2009,57 @@ class StreamManager {
         transcodeMode: forceTranscode ? 'H.264/AAC' : 'codec_copy'
       });
 
-      // Check if request is from Android TV for specific optimizations
-      const userAgent = req.get('User-Agent') || '';
-      const isAndroidTV = userAgent.toLowerCase().includes('android') || userAgent.toLowerCase().includes('shield');
+      // Analyze client capabilities for browser-specific transcoding
+      const browserTranscodingFix = require('../utils/browserTranscodingFix');
+      const clientCapabilities = browserTranscodingFix.analyzeClientCapabilities(req);
+      const isAndroidTV = clientCapabilities.isAndroidTV;
       
       // Track stream duration for Android TV reset logic
       const streamDurationTracker = new Map();
       
-      // Get configurable FFmpeg command line - use transcoding if forceTranscode is enabled
+      // Check if we need browser-specific transcoding profile
+      const browserTranscodeProfile = browserTranscodingFix.selectBrowserTranscodeProfile(clientCapabilities, stream);
+      
+      // Log browser transcoding decision
+      if (browserTranscodeProfile) {
+        browserTranscodingFix.logBrowserTranscodeDecision(clientCapabilities, browserTranscodeProfile, stream);
+      }
+      
+      // Get configurable FFmpeg command line - prioritize browser profiles
       let ffmpegCommand;
-      if (forceTranscode) {
+      
+      // BROWSER TRANSCODING FIX: Use browser-specific profiles when needed
+      if (browserTranscodeProfile) {
+        const browserConfig = browserTranscodingFix.getBrowserTranscodeOptions(browserTranscodeProfile);
+        ffmpegCommand = browserConfig.ffmpeg_options.join(' ') + ' -i [URL] pipe:1';
+        
+        logger.info('Using browser-specific transcoding profile', {
+          profile: browserTranscodeProfile,
+          clientName: clientCapabilities.clientName,
+          isBrowser: clientCapabilities.isBrowser,
+          forcesTranscoding: clientCapabilities.forcesTranscoding
+        });
+        
+        // Update headers based on browser profile container
+        if (browserConfig.container === 'mp4') {
+          responseHeaders['Content-Type'] = 'video/mp4';
+        } else if (browserConfig.container === 'mpegts') {
+          responseHeaders['Content-Type'] = 'video/mp2t';
+        }
+      } else if (forceTranscode) {
         // Use transcoding for streams that require it
         if (isAndroidTV) {
           // Android TV specific transcoding to prevent buffering
           ffmpegCommand = settings?.plexlive?.transcoding?.androidtv?.transcodingArgs ||
                          settings?.plexlive?.transcoding?.mpegts?.transcodingArgs || 
                          config.plexlive?.transcoding?.mpegts?.transcodingArgs ||
-                         '-hide_banner -loglevel error -reconnect 1 -reconnect_at_eof 1 -reconnect_streamed 1 -reconnect_delay_max 5 -i [URL] -c:v libx264 -preset ultrafast -tune zerolatency -profile:v high -level 4.0 -pix_fmt yuv420p -b:v 2500k -maxrate 2500k -bufsize 1000k -g 30 -keyint_min 15 -sc_threshold 0 -c:a aac -b:a 128k -ar 48000 -ac 2 -f mpegts -mpegts_copyts 1 -avoid_negative_ts make_zero -fflags +genpts+igndts+discardcorrupt+nobuffer -flags +low_delay -max_muxing_queue_size 9999 -muxdelay 0 -muxpreload 0 -flush_packets 1 -rtbufsize 256k pipe:1';
+                         '-hide_banner -loglevel error -reconnect 1 -reconnect_at_eof 1 -reconnect_streamed 1 -reconnect_delay_max 5 -i [URL] -c:v libx264 -preset ultrafast -tune zerolatency -profile:v high -level 4.0 -pix_fmt yuv420p -b:v 2500k -maxrate 2500k -bufsize 1000k -g 30 -keyint_min 15 -sc_threshold 0 -c:a aac -b:a 128k -ar 48000 -ac 2 -bsf:v h264_mp4toannexb -f mpegts -mpegts_copyts 1 -avoid_negative_ts make_zero -fflags +genpts+igndts+discardcorrupt+nobuffer -flags +low_delay -max_muxing_queue_size 9999 -muxdelay 0 -muxpreload 0 -flush_packets 1 -rtbufsize 256k pipe:1';
           
           logger.info('Using Android TV optimized transcoding configuration', { clientIP: req.ip });
         } else {
           ffmpegCommand = settings?.plexlive?.transcoding?.mpegts?.transcodingArgs || 
                          config.plexlive?.transcoding?.mpegts?.transcodingArgs ||
-                         '-hide_banner -loglevel error -reconnect 1 -reconnect_at_eof 1 -reconnect_streamed 1 -reconnect_delay_max 5 -i [URL] -c:v libx264 -preset fast -profile:v high -level 4.0 -pix_fmt yuv420p -b:v 2500k -maxrate 2500k -bufsize 5000k -g 50 -keyint_min 25 -sc_threshold 0 -c:a aac -b:a 128k -ar 48000 -ac 2 -f mpegts -mpegts_copyts 1 -avoid_negative_ts make_zero -fflags +genpts+igndts+discardcorrupt -max_muxing_queue_size 9999 -muxdelay 0 -muxpreload 0 -flush_packets 1 pipe:1';
+                         '-hide_banner -loglevel error -reconnect 1 -reconnect_at_eof 1 -reconnect_streamed 1 -reconnect_delay_max 5 -i [URL] -c:v libx264 -preset fast -profile:v high -level 4.0 -pix_fmt yuv420p -b:v 2500k -maxrate 2500k -bufsize 5000k -g 50 -keyint_min 25 -sc_threshold 0 -c:a aac -b:a 128k -ar 48000 -ac 2 -bsf:v h264_mp4toannexb -f mpegts -mpegts_copyts 1 -avoid_negative_ts make_zero -fflags +genpts+igndts+discardcorrupt -max_muxing_queue_size 9999 -muxdelay 0 -muxpreload 0 -flush_packets 1 pipe:1';
         }
       } else {
         // Use your tested codec copy configuration for streams that don't need transcoding
@@ -2043,7 +2070,7 @@ class StreamManager {
                          settings?.plexlive?.transcoding?.androidtv?.ffmpegArgs ||
                          settings?.plexlive?.transcoding?.mpegts?.ffmpegArgs || 
                          config.plexlive?.transcoding?.mpegts?.ffmpegArgs ||
-                         '-hide_banner -loglevel error -reconnect 1 -reconnect_at_eof 1 -reconnect_streamed 1 -reconnect_delay_max 2 -i [URL] -c:v copy -c:a copy -bsf:v dump_extra -f segment -segment_time 30 -segment_format mpegts -segment_list_type flat -segment_list /dev/null -reset_timestamps 1 -avoid_negative_ts make_zero -fflags +genpts+igndts+discardcorrupt+flush_packets -flags +global_header+low_delay -muxdelay 0 -muxpreload 0 -flush_packets 1 -max_delay 500000 -max_muxing_queue_size 4096 -rtbufsize 1024k -f mpegts pipe:1';
+                         '-hide_banner -loglevel error -reconnect 1 -reconnect_at_eof 1 -reconnect_streamed 1 -reconnect_delay_max 2 -i [URL] -c:v copy -c:a copy -bsf:v h264_mp4toannexb -f segment -segment_time 30 -segment_format mpegts -segment_list_type flat -segment_list /dev/null -reset_timestamps 1 -avoid_negative_ts make_zero -fflags +genpts+igndts+discardcorrupt+flush_packets -flags +global_header+low_delay -muxdelay 0 -muxpreload 0 -flush_packets 1 -max_delay 500000 -max_muxing_queue_size 4096 -rtbufsize 1024k -f mpegts pipe:1';
           
           logger.info('Using Android TV optimized configuration with 30-second segment boundaries', { 
             clientIP: req.ip,
@@ -2053,7 +2080,7 @@ class StreamManager {
         } else {
           ffmpegCommand = settings?.plexlive?.transcoding?.mpegts?.ffmpegArgs || 
                          config.plexlive?.transcoding?.mpegts?.ffmpegArgs ||
-                         '-hide_banner -loglevel error -reconnect 1 -reconnect_at_eof 1 -reconnect_streamed 1 -reconnect_delay_max 2 -i [URL] -c:v copy -c:a copy -bsf:v dump_extra -f mpegts -mpegts_copyts 1 -avoid_negative_ts make_zero -fflags +genpts+igndts+discardcorrupt -copyts -muxdelay 0 -muxpreload 0 -flush_packets 1 -max_delay 0 -max_muxing_queue_size 9999 pipe:1';
+                         '-hide_banner -loglevel error -reconnect 1 -reconnect_at_eof 1 -reconnect_streamed 1 -reconnect_delay_max 2 -i [URL] -c:v copy -c:a copy -bsf:v h264_mp4toannexb -f mpegts -mpegts_copyts 1 -avoid_negative_ts make_zero -fflags +genpts+igndts+discardcorrupt -copyts -muxdelay 0 -muxpreload 0 -flush_packets 1 -max_delay 0 -max_muxing_queue_size 9999 pipe:1';
         }
       }
       
@@ -2135,6 +2162,16 @@ class StreamManager {
           streamName: stream?.name
         });
         // Continue with standard args
+      }
+      
+      // BROWSER TRANSCODING FIX: Apply browser-specific H.264 optimizations to existing FFmpeg args
+      if (clientCapabilities.isBrowser && !browserTranscodeProfile) {
+        args = browserTranscodingFix.optimizeForBrowserTranscoding(args, clientCapabilities);
+        logger.info('Applied browser H.264 optimizations to existing FFmpeg configuration', {
+          channelId: channel.id,
+          clientName: clientCapabilities.clientName,
+          originalArgCount: args.length
+        });
       }
       
       // Replace the URL in the args with the final URL (which may contain special characters)
@@ -2287,6 +2324,9 @@ class StreamManager {
         ffmpegPath: config.streams.ffmpegPath,
         argsCount: args.length
       });
+      
+      // Set dynamic response headers based on profile selection
+      res.set(responseHeaders);
       
       const ffmpegProcess = spawn(config.streams.ffmpegPath, args);
       
