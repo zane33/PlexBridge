@@ -349,6 +349,7 @@ router.get('/stream/:channelId/:filename?', async (req, res) => {
         // This prevents sessions from being marked as "no consumer" during active streaming
         const consumerManager = getConsumerManager();
         const sessionManager = getSessionManager();
+        const coordinatedSessionManager = require('../services/coordinatedSessionManager');
         
         // Extract session ID from multiple possible sources (more comprehensive)
         const streamingSessionId = req.query.session || 
@@ -357,6 +358,12 @@ router.get('/stream/:channelId/:filename?', async (req, res) => {
                                   req.headers['x-session-id'] ||
                                   req.headers['x-plex-session-identifier'] ||
                                   sessionId;
+        
+        // ANDROID TV FIX: Detect Android TV and prevent session cleanup
+        const userAgent = req.get('User-Agent') || '';
+        const isAndroidTV = userAgent.toLowerCase().includes('android') ||
+                           userAgent.toLowerCase().includes('shield') ||
+                           userAgent.toLowerCase().includes('tv');
         
         // Also try to extract from the URL path if it's a session-based request
         let urlSessionId = null;
@@ -398,8 +405,31 @@ router.get('/stream/:channelId/:filename?', async (req, res) => {
               urlSessionId,
               filename,
               channelId,
+              isAndroidTV,
+              userAgent: isAndroidTV ? userAgent.substring(0, 50) : undefined,
               timestamp: new Date().toISOString()
             });
+          }
+          
+          // ANDROID TV CRITICAL FIX: Extended session keepalive for Android TV clients
+          if (isAndroidTV && finalSessionId && coordinatedSessionManager) {
+            try {
+              coordinatedSessionManager.updateSessionActivity(finalSessionId, 'hls_segment', {
+                isAndroidTV: true,
+                filename,
+                channelId,
+                preventTimeout: true,
+                extendTimeout: 300000 // 5 minutes timeout instead of default
+              });
+              
+              logger.debug('Android TV session extended for HLS segment', {
+                sessionId: finalSessionId,
+                filename,
+                channelId
+              });
+            } catch (sessionError) {
+              logger.warn('Failed to update Android TV session activity:', sessionError.message);
+            }
           }
         }
         

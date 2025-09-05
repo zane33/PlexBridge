@@ -1,0 +1,89 @@
+## Android TV Streaming Fix for PlexBridge
+
+### Problem Analysis
+Android TV Plex clients crash after ~35 seconds with HTTP 404 errors and transcoding failures due to:
+1. Consumer Manager database errors (`db.prepare is not a function`) every 30 seconds
+2. Session management conflicts between multiple managers
+3. IP address mismatch in discovery (192.168.4.56 vs 192.168.3.148)
+4. Android TV-specific streaming requirements not met
+
+### Root Cause
+The primary issue is in the ConsumerManager cleanup process that runs every 30 seconds and fails with database errors, causing session invalidation that leads to HTTP 404 responses when Android TV clients request stream segments after ~35 seconds.
+
+### Fixes Required
+
+1. **Fix Consumer Manager Database Error**
+   - The container version has a different database interface
+   - Need to ensure proper database initialization before cleanup
+   - Add error handling for database method compatibility
+
+2. **Enhance Android TV Session Management** 
+   - Improve session persistence for Android TV clients
+   - Add session timeout extensions for active streaming
+   - Prevent premature session cleanup during active streams
+
+3. **Fix IP Address Configuration**
+   - Ensure consistent IP address usage in discovery and streaming
+   - Set ADVERTISED_HOST properly for production deployment
+
+4. **Android TV-Specific Stream Handling**
+   - Enhance MPEG-TS streaming for Android TV compatibility
+   - Improve FFmpeg process stability for longer sessions
+   - Add Android TV client detection and specialized handling
+
+### Critical Files to Fix
+
+1. **server/services/consumerManager.js** - Fix database cleanup errors
+2. **server/routes/ssdp.js** - Enhance Android TV session handling
+3. **server/services/streamManager.js** - Improve MPEG-TS stability
+4. **docker-compose.yml** - Fix ADVERTISED_HOST configuration
+
+### Immediate Actions
+
+1. **Stop Consumer Cleanup Errors:**
+```javascript
+// In consumerManager.js _cleanupStaleConsumersAsync()
+if (this.isInitialized && database && database.run) {
+  try {
+    const result = await database.run(`DELETE FROM consumers...`);
+  } catch (dbError) {
+    logger.warn('Database cleanup failed, using memory cleanup only:', dbError.message);
+  }
+}
+```
+
+2. **Extend Session Timeouts for Android TV:**
+```javascript
+// In Android TV streaming detection
+if (isAndroidTV) {
+  sessionTimeout = 300000; // 5 minutes instead of 30 seconds
+  enableKeepAlive = true;
+}
+```
+
+3. **Fix Stream URL Generation:**
+```javascript
+// Use consistent base URL for Android TV
+const baseURL = `http://${process.env.ADVERTISED_HOST || '192.168.3.148'}:3000`;
+```
+
+4. **Add Session Activity Updates:**
+```javascript
+// In HLS segment requests for Android TV
+coordinatedSessionManager.updateSessionActivity(sessionId, 'hls_segment', {
+  isAndroidTV: true,
+  preventTimeout: true
+});
+```
+
+### Production Deployment Fix
+
+Update docker-compose.yml:
+```yaml
+environment:
+  - ADVERTISED_HOST=192.168.3.148
+  - ANDROID_TV_SESSION_TIMEOUT=300000
+  - CONSUMER_CLEANUP_DISABLED=true
+```
+
+This fix addresses the core 35-second crash issue by preventing session cleanup during active streaming and ensuring proper Android TV compatibility.

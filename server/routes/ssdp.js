@@ -251,6 +251,15 @@ router.get('/lineup.json', async (req, res) => {
                        userAgent.toLowerCase().includes('mibox') ||
                        userAgent.toLowerCase().includes('shield');
     
+    // ANDROID TV FIX: Log Android TV detection for troubleshooting
+    if (isAndroidTV) {
+      logger.info('Android TV client detected for lineup request', {
+        userAgent: userAgent.substring(0, 100),
+        clientIP: req.ip,
+        timestamp: new Date().toISOString()
+      });
+    }
+    
     if (isAndroidTV) {
       lineup = optimizeLineupForChannelSwitching(lineup, true);
       lineup = enhanceLineupForStreamingDecisions(lineup, true);

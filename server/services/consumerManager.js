@@ -309,17 +309,28 @@ class ConsumerManager {
     try {
       const staleThreshold = 10 * 60; // 10 minutes in seconds (original value)
       
-      // Remove from database - Use async database.run()
-      if (this.isInitialized) {
-        const result = await database.run(`
-          DELETE FROM consumers 
-          WHERE last_activity < strftime('%s', 'now') - ?
-          OR state IN ('stopped', 'error')
-        `, [staleThreshold]);
-        
-        if (result.changes > 0) {
-          logger.info(`Cleaned up ${result.changes} stale consumers`);
+      // CRITICAL FIX: Add database compatibility check and error handling
+      if (this.isInitialized && database && typeof database.run === 'function') {
+        try {
+          const result = await database.run(`
+            DELETE FROM consumers 
+            WHERE last_activity < strftime('%s', 'now') - ?
+            OR state IN ('stopped', 'error')
+          `, [staleThreshold]);
+          
+          if (result && result.changes > 0) {
+            logger.info(`Cleaned up ${result.changes} stale consumers`);
+          }
+        } catch (dbError) {
+          logger.warn('Database consumer cleanup failed, using memory cleanup only:', {
+            error: dbError.message,
+            type: 'database_compatibility_issue',
+            fallback: 'memory_only_cleanup'
+          });
+          // Continue with memory cleanup only - don't crash the service
         }
+      } else {
+        logger.debug('Database not available for consumer cleanup, using memory cleanup only');
       }
       
       // Clean memory cache
