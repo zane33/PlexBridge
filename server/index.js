@@ -249,6 +249,17 @@ const gracefulShutdown = async (signal) => {
       logger.warn('Session Persistence Manager shutdown error:', sessionShutdownError);
     }
 
+    // Shutdown Android TV Session Manager
+    try {
+      const androidTVSessionManager = require('./services/androidTVSessionManager');
+      if (androidTVSessionManager && androidTVSessionManager.shutdown) {
+        await androidTVSessionManager.shutdown();
+        logger.info('Android TV Session Manager shutdown completed');
+      }
+    } catch (androidTVShutdownError) {
+      logger.warn('Android TV Session Manager shutdown error:', androidTVShutdownError);
+    }
+
     // Shutdown Coordinated Session Manager and Crash Detection
     try {
       const coordinatedSessionManager = require('./services/coordinatedSessionManager');

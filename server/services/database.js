@@ -441,7 +441,34 @@ class DatabaseService {
       `);
       createLogsTable.run();
 
-      logger.info('Database tables created successfully');
+      // Create android_tv_sessions table for enhanced session management
+      const createAndroidTVSessionsTable = this.db.prepare(`
+        CREATE TABLE IF NOT EXISTS android_tv_sessions (
+          session_id TEXT PRIMARY KEY,
+          channel_id TEXT,
+          stream_url TEXT,
+          client_info TEXT,
+          plex_session_id TEXT,
+          consumer_session_id TEXT,
+          start_time INTEGER,
+          end_time INTEGER,
+          status TEXT DEFAULT 'active',
+          healthy INTEGER DEFAULT 1,
+          error_count INTEGER DEFAULT 0,
+          consecutive_failures INTEGER DEFAULT 0,
+          url_renewal_count INTEGER DEFAULT 0,
+          ffmpeg_restart_count INTEGER DEFAULT 0,
+          is_android_tv INTEGER DEFAULT 0,
+          extended_session INTEGER DEFAULT 0,
+          proactive_management INTEGER DEFAULT 0,
+          total_uptime INTEGER DEFAULT 0,
+          created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+          updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+        )
+      `);
+      createAndroidTVSessionsTable.run();
+
+      logger.info('Database tables created successfully (including Android TV sessions)');
     } catch (error) {
       logger.error('Failed to create database tables:', error);
       throw error;

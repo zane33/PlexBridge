@@ -11,6 +11,7 @@ const { getConsumerManager } = require('../services/consumerManager');
 const { v4: uuidv4 } = require('uuid');
 const segmentHandler = require('../services/segmentHandler');
 const hlsQualitySelector = require('../services/hlsQualitySelector');
+const androidTVSessionManager = require('../services/androidTVSessionManager');
 
 // Apply session keep-alive middleware to all stream endpoints
 router.use(sessionKeepAlive());
@@ -153,6 +154,38 @@ router.get('/stream/:channelId/:filename?', async (req, res) => {
                                req.query.X_Plex_Session_Identifier ||
                                req.query.session ||
                                sessionId;
+      
+      // CRITICAL: Create enhanced Android TV session for long-running stream stability
+      if (isAndroidTV) {
+        try {
+          const androidTVSession = await androidTVSessionManager.createAndroidTVSession({
+            sessionId,
+            channelId,
+            streamUrl: targetUrl,
+            clientInfo: {
+              userAgent,
+              platform: isAndroidTV ? 'AndroidTV' : 'Unknown',
+              remoteAddress: req.ip || req.connection.remoteAddress
+            },
+            plexSessionId: consumerSessionId,
+            consumerSessionId: consumerSessionId
+          });
+          
+          logger.info('Created Android TV enhanced session for long-running stability', {
+            sessionId,
+            channelId,
+            consumerSessionId,
+            sessionUptime: 0,
+            healthMonitoringEnabled: true
+          });
+        } catch (androidTVError) {
+          logger.error('Failed to create Android TV enhanced session - using fallback', {
+            error: androidTVError.message,
+            sessionId,
+            channelId
+          });
+        }
+      }
       
       // Helper function to sanitize headers
       const sanitizeHeader = (header) => {
@@ -628,6 +661,16 @@ router.get('/stream/:channelId/:filename?', async (req, res) => {
             } catch (sessionError) {
               logger.warn('Failed to update Android TV session activity:', sessionError.message);
             }
+          }
+          
+          // ENHANCED: Update Android TV session manager for proactive health monitoring
+          if (isAndroidTV && finalSessionId) {
+            androidTVSessionManager.updateSessionActivity(finalSessionId, 'hls_segment_request');
+            logger.debug('Updated Android TV session manager activity', {
+              sessionId: finalSessionId,
+              activityType: 'hls_segment_request',
+              filename
+            });
           }
           
           // ADDITIONAL ANDROID TV FIX: Monitor for session health
