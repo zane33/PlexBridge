@@ -200,7 +200,11 @@ router.get('/stream/:channelId/:filename?', async (req, res) => {
     // Determine the target URL - NOW we have all required variables
     let targetUrl = stream.url;
     
-    // CRITICAL FIX: Now that we have channel, stream, and targetUrl, create enhanced session tracking for Plex requests
+    // CONSOLIDATED SESSION MANAGEMENT: Create single unified session for Plex requests
+    // This prevents duplicate sessions and ensures proper header extraction timing
+    let existingSession = null; // Declare in outer scope for access in multiple blocks
+    let plexHeaders = {}; // Declare in outer scope for reuse
+    
     if (isPlexRequest && !isSubFile) {
       const streamSessionManager = require('../services/streamSessionManager');
       
@@ -210,65 +214,94 @@ router.get('/stream/:channelId/:filename?', async (req, res) => {
         return header.toString().substring(0, 255).replace(/[<>'"]/g, '');
       };
       
-      // Extract Plex headers for session tracking
-      const plexHeaders = {
+      // Extract Plex headers for session tracking with comprehensive fallback
+      plexHeaders = {
         clientIdentifier: sanitizeHeader(req.headers['x-plex-client-identifier']) || `unknown-${req.ip}`,
-        clientName: sanitizeHeader(req.headers['x-plex-client-name']) || 'Unknown Plex Client',
+        clientName: sanitizeHeader(req.headers['x-plex-client-name']) || null,
         username: sanitizeHeader(req.headers['x-plex-username']) || sanitizeHeader(req.headers['x-plex-user']) || null,
-        device: sanitizeHeader(req.headers['x-plex-device']) || 'Unknown Device',
-        deviceName: sanitizeHeader(req.headers['x-plex-device-name']) || 'Unknown'
+        device: sanitizeHeader(req.headers['x-plex-device']) || null,
+        deviceName: sanitizeHeader(req.headers['x-plex-device-name']) || null
       };
       
-      const clientInfo = {
-        userAgent,
-        remoteAddress: req.ip || req.connection.remoteAddress,
-        plex_client_id: plexHeaders.clientIdentifier,
-        plex_client_name: plexHeaders.clientName,
-        plex_username: plexHeaders.username,
-        plex_device: plexHeaders.device,
-        plex_device_name: plexHeaders.deviceName,
-        unique_client_id: `${plexHeaders.clientIdentifier}_${req.ip}_${sessionId}`,
-        display_name: plexHeaders.username || plexHeaders.deviceName || plexHeaders.clientName || req.ip
-      };
+      // CRITICAL: Check for existing session FIRST to prevent duplicates
+      existingSession = streamSessionManager.getActiveSessionByClientAndStream(
+        plexHeaders.clientIdentifier, 
+        channelId
+      );
       
-      // Create enhanced session data with all variables now available
-      const enhancedSessionData = {
-        sessionId,
-        streamId: channelId,
-        clientIP: req.ip,
-        userAgent,
-        clientIdentifier: plexHeaders.clientIdentifier,
-        channelName: channel?.name || 'Unknown Channel',
-        channelNumber: channel?.number || 0,
-        streamUrl: targetUrl,
-        streamType: stream?.type || 'hls',
-        // Enhanced Plex tracking fields for dashboard
-        plexClientId: plexHeaders.clientIdentifier,
-        plexClientName: plexHeaders.clientName,
-        plexUsername: plexHeaders.username,
-        plexDevice: plexHeaders.device,
-        plexDeviceName: plexHeaders.deviceName,
-        uniqueClientId: clientInfo.unique_client_id,
-        displayName: clientInfo.display_name
-      };
-      
-      try {
-        await streamSessionManager.startSession(enhancedSessionData);
-        logger.info('Enhanced session created for dashboard tracking', {
-          sessionId,
+      if (existingSession) {
+        logger.info('Reusing existing session, updating display name if needed', {
+          sessionId: existingSession.sessionId,
+          existingDisplayName: existingSession.displayName,
           plexUsername: plexHeaders.username,
-          deviceName: plexHeaders.deviceName,
-          isAndroidTV,
-          channelName: channel?.name,
-          streamUrl: targetUrl
+          deviceName: plexHeaders.deviceName
         });
-      } catch (sessionError) {
-        logger.warn('Could not create enhanced session, continuing with basic tracking:', sessionError);
+        
+        // Try to update display name with better information if available
+        streamSessionManager.updateSessionDisplayName(
+          existingSession.sessionId,
+          plexHeaders.username,
+          plexHeaders.deviceName,
+          plexHeaders.clientName
+        );
+        
+        // Update session activity
+        existingSession.lastUpdate = Date.now();
+        sessionId = existingSession.sessionId; // Use existing session ID
+      } else {
+        // Create NEW session only if none exists
+        const clientInfo = {
+          userAgent,
+          remoteAddress: req.ip || req.connection.remoteAddress,
+          plex_client_id: plexHeaders.clientIdentifier,
+          plex_client_name: plexHeaders.clientName,
+          plex_username: plexHeaders.username,
+          plex_device: plexHeaders.device,
+          plex_device_name: plexHeaders.deviceName,
+          unique_client_id: `${plexHeaders.clientIdentifier}_${req.ip}_${sessionId}`,
+          display_name: plexHeaders.username || plexHeaders.deviceName || plexHeaders.clientName || req.ip
+        };
+        
+        // Create enhanced session data with all variables now available
+        const enhancedSessionData = {
+          sessionId,
+          streamId: channelId,
+          clientIP: req.ip,
+          userAgent,
+          clientIdentifier: plexHeaders.clientIdentifier,
+          channelName: channel?.name || 'Unknown Channel',
+          channelNumber: channel?.number || 0,
+          streamUrl: targetUrl,
+          streamType: stream?.type || 'hls',
+          // Enhanced Plex tracking fields for dashboard
+          plex_client_id: plexHeaders.clientIdentifier,
+          plex_client_name: plexHeaders.clientName,
+          plex_username: plexHeaders.username,
+          plex_device: plexHeaders.device,
+          plex_device_name: plexHeaders.deviceName,
+          unique_client_id: clientInfo.unique_client_id,
+          display_name: clientInfo.display_name
+        };
+        
+        try {
+          await streamSessionManager.startSession(enhancedSessionData);
+          logger.info('New unified session created for dashboard tracking', {
+            sessionId,
+            plexUsername: plexHeaders.username,
+            deviceName: plexHeaders.deviceName,
+            displayName: clientInfo.display_name,
+            isAndroidTV,
+            channelName: channel?.name,
+            streamUrl: targetUrl
+          });
+        } catch (sessionError) {
+          logger.warn('Could not create enhanced session, continuing with basic tracking:', sessionError);
+        }
       }
     }
-    
-    // Create persistent streaming session for consumer tracking (fixes "Failed to find consumer")
-    if (isPlexRequest && !isSubFile) {
+    // SECONDARY SESSION MANAGEMENT: Only create consumer sessions if unified session was created
+    // This prevents duplicate session creation while maintaining consumer compatibility
+    if (isPlexRequest && !isSubFile && !existingSession) {
       const sessionManager = getSessionManager();
       
       // Extract the consumer session ID that Plex will use
@@ -384,16 +417,14 @@ router.get('/stream/:channelId/:filename?', async (req, res) => {
         channelId
       });
       
-      // Create streaming session for decision tracking (critical for Android TV)
-      const streamingSession = createStreamingSession(channelId, clientInfo);
-      
-      // CRITICAL FIX: Enhanced session tracking will be done after database queries 
-      // to avoid accessing undefined channel, stream, and targetUrl variables
+      // SKIP REDUNDANT SESSION CREATION: Decision tracking handled by unified session above
+      // const streamingSession = createStreamingSession(channelId, clientInfo);
+      logger.info('Skipping redundant streaming decision session - using unified session approach');
       
       // Add session info to response headers for Plex decision making and consumer tracking
       addStreamHeaders(req, res, sessionId);
       res.set({
-        'X-PlexBridge-Session': streamingSession.sessionId,
+        'X-PlexBridge-Session': sessionId, // Use unified session ID
         'X-Persistent-Session': persistentSession.sessionId,
         'X-Consumer-Session': consumerSessionId,
         'X-Content-Type': 'live-tv',
