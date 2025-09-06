@@ -94,18 +94,20 @@
       "defaultProfile": "medium",
       "mpegts": {
         "enabled": true,
-        "ffmpegArgs": "-hide_banner -loglevel error -reconnect 1 -reconnect_at_eof 1 -reconnect_streamed 1 -reconnect_delay_max 2 -i [URL] -c:v copy -c:a copy -bsf:v h264_mp4toannexb -f mpegts -mpegts_copyts 1 -avoid_negative_ts make_zero -fflags +genpts+igndts+discardcorrupt -copyts -muxdelay 0 -muxpreload 0 -flush_packets 1 -max_delay 0 -max_muxing_queue_size 9999 pipe:1",
-        "hlsProtocolArgs": "-allowed_extensions ALL -protocol_whitelist file,http,https,tcp,tls,pipe,crypto -user_agent PlexBridge/1.0 -live_start_index 0 -http_persistent 1",
-        "androidtv": {
-          "enabled": true,
-          "ffmpegArgs": "-hide_banner -loglevel error -analyzeduration 10000000 -probesize 10000000 -reconnect 1 -reconnect_at_eof 1 -reconnect_streamed 1 -reconnect_delay_max 2 -i [URL] -c:v copy -c:a copy -bsf:v h264_mp4toannexb -f segment -segment_time 30 -segment_format mpegts -segment_list_type flat -segment_list /dev/null -reset_timestamps 1 -avoid_negative_ts make_zero -fflags +genpts+igndts+discardcorrupt+nobuffer -flags +low_delay -copyts -muxdelay 0 -muxpreload 0 -flush_packets 1 -max_delay 0 -max_muxing_queue_size 4096 -rtbufsize 256k pipe:1",
-          "segmentDuration": 30,
-          "resetInterval": 1200,
-          "audioCodecDetection": {
-            "analyzeduration": 10000000,
-            "probesize": 10000000,
-            "maxAnalyzeAttempts": 3
-          }
+        "ffmpegArgs": "-hide_banner -loglevel error -reconnect 1 -reconnect_at_eof 1 -reconnect_streamed 1 -reconnect_delay_max 5 -reconnect_on_network_error 1 -reconnect_on_http_error 4xx,5xx -rtbufsize 1M -probesize 2M -analyzeduration 5000000 -thread_queue_size 1024 -i [URL] -c:v copy -c:a copy -bsf:v h264_mp4toannexb,dump_extra -f mpegts -mpegts_copyts 1 -mpegts_start_pid 0x100 -mpegts_pmt_start_pid 0x1000 -avoid_negative_ts make_zero -fflags +genpts+igndts+discardcorrupt -copyts -muxdelay 0 -muxpreload 0 -flush_packets 1 -max_delay 0 -max_muxing_queue_size 9999 pipe:1",
+        "transcodingArgs": "-hide_banner -loglevel error -reconnect 1 -reconnect_at_eof 1 -reconnect_streamed 1 -reconnect_delay_max 10 -reconnect_on_network_error 1 -reconnect_on_http_error 4xx,5xx -rtbufsize 2M -probesize 5M -analyzeduration 10000000 -thread_queue_size 2048 -i [URL] -c:v libx264 -preset veryfast -profile:v main -level 3.1 -pix_fmt yuv420p -b:v 2000k -maxrate 3000k -bufsize 6000k -g 60 -keyint_min 30 -sc_threshold 0 -x264opts keyint=60:min-keyint=30:scenecut=0:nal-hrd=cbr:force-cfr=1 -c:a aac -b:a 128k -ar 48000 -ac 2 -bsf:v h264_mp4toannexb,dump_extra -f mpegts -mpegts_copyts 1 -mpegts_start_pid 0x100 -mpegts_pmt_start_pid 0x1000 -avoid_negative_ts make_zero -fflags +genpts+igndts+discardcorrupt -max_muxing_queue_size 9999 -muxdelay 0 -muxpreload 0 -flush_packets 1 pipe:1",
+        "hlsProtocolArgs": "-allowed_extensions ALL -protocol_whitelist file,http,https,tcp,tls,pipe,crypto -user_agent PlexBridge/1.0 -live_start_index 0 -http_persistent 1"
+      },
+      "androidtv": {
+        "enabled": true,
+        "ffmpegArgs": "-hide_banner -loglevel error -reconnect 1 -reconnect_at_eof 1 -reconnect_streamed 1 -reconnect_delay_max 5 -reconnect_on_network_error 1 -reconnect_on_http_error 4xx,5xx -rtbufsize 1M -probesize 2M -analyzeduration 5000000 -thread_queue_size 1024 -i [URL] -c:v copy -c:a copy -bsf:v h264_mp4toannexb,dump_extra,extract_extradata -f mpegts -mpegts_copyts 1 -mpegts_start_pid 0x100 -mpegts_pmt_start_pid 0x1000 -mpegts_pcr_period 20 -avoid_negative_ts make_zero -fflags +genpts+igndts+discardcorrupt+nobuffer -copyts -muxdelay 0 -muxpreload 0 -flush_packets 1 -max_delay 0 -max_muxing_queue_size 9999 -rtbufsize 512k pipe:1",
+        "transcodingArgs": "-hide_banner -loglevel error -reconnect 1 -reconnect_at_eof 1 -reconnect_streamed 1 -reconnect_delay_max 5 -i [URL] -c:v libx264 -preset superfast -tune zerolatency -profile:v main -level 3.1 -pix_fmt yuv420p -b:v 2000k -maxrate 2500k -bufsize 2000k -g 30 -keyint_min 15 -sc_threshold 0 -x264opts keyint=30:min-keyint=15:scenecut=0:nal-hrd=cbr:force-cfr=1:repeat-headers=1:aud=1:sps-id=0:pps-id=0 -c:a aac -b:a 128k -ar 48000 -ac 2 -bsf:v h264_mp4toannexb,dump_extra -f mpegts -mpegts_copyts 1 -mpegts_start_pid 0x100 -mpegts_pmt_start_pid 0x1000 -avoid_negative_ts make_zero -fflags +genpts+igndts+discardcorrupt+nobuffer -flags +low_delay -max_muxing_queue_size 9999 -muxdelay 0 -muxpreload 0 -flush_packets 1 -rtbufsize 256k pipe:1",
+        "segmentDuration": 30,
+        "resetInterval": 1200,
+        "audioCodecDetection": {
+          "analyzeduration": 10000000,
+          "probesize": 10000000,
+          "maxAnalyzeAttempts": 3
         }
       }
     },

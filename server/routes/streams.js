@@ -132,7 +132,12 @@ router.get('/stream/:channelId/:filename?', async (req, res) => {
                          req.query.format === 'mpegts' ||
                          req.query.raw === 'true';
     
-    const isAndroidTV = userAgent.toLowerCase().includes('android');
+    const isAndroidTV = userAgent.toLowerCase().includes('androidtv') || 
+                        userAgent.toLowerCase().includes('android tv') ||
+                        userAgent.toLowerCase().includes('nexusplayer') ||
+                        userAgent.toLowerCase().includes('mibox') ||
+                        userAgent.toLowerCase().includes('shield') ||
+                        userAgent.toLowerCase().includes('android');
     
     // Generate or extract session ID for persistent session management
     let sessionId = req.headers['x-session-id'] || 
@@ -271,11 +276,20 @@ router.get('/stream/:channelId/:filename?', async (req, res) => {
       
       // ANDROID TV SESSION RESILIENCE: Prevent premature termination
       if (isAndroidTV) {
+        // Extract quality parameters for Android TV
+        const quality = req.query.quality || req.query.Quality || 'high';
+        const audioBoost = req.query.audioBoost || req.query.AudioBoost || '100';
+        const directStream = req.query.directStream || req.query.DirectStream || '1';
+        
         res.set({
           'X-Android-TV-Session': 'true',
           'X-Session-Timeout': '300',  // 5 minutes timeout for Android TV
           'X-Reconnect-Grace': '30',   // 30 seconds grace period for reconnection
           'X-Buffer-Resilience': 'high', // High resilience for buffering
+          'X-Quality-Selected': quality,
+          'X-Audio-Boost': audioBoost,
+          'X-Direct-Stream': directStream,
+          'X-Transcoding-Compatible': 'true',
           'Cache-Control': 'no-cache, no-store, must-revalidate'
         });
         

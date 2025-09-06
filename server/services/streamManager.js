@@ -2084,8 +2084,8 @@ class StreamManager {
           // Android TV specific - use optimized profile for quality and stability
           const profile = ffmpegProfiles.selectProfile(userAgent, finalStreamUrl, 'mpegts');
           const profileArgs = profile.args.join(' ');
-          ffmpegCommand = settings?.plexlive?.transcoding?.mpegts?.androidtv?.ffmpegArgs ||
-                         config.plexlive?.transcoding?.mpegts?.androidtv?.ffmpegArgs ||
+          ffmpegCommand = settings?.plexlive?.transcoding?.androidtv?.ffmpegArgs ||
+                         config.plexlive?.transcoding?.androidtv?.ffmpegArgs ||
                          profileArgs;
           
           logger.info('Using quality-preserving profile for Android TV', { 

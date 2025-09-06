@@ -2332,40 +2332,193 @@ router.get('/consumers', async (req, res) => {
   }
 });
 
-// CRITICAL: Transcode decision endpoint for Android TV compatibility
+// CRITICAL: Enhanced transcode decision endpoint for Android TV compatibility
+// Additional Android TV specific endpoints for transcoding compatibility
+router.get('/video/:/transcode/universal/start.json', async (req, res) => {
+  try {
+    const { session } = req.query;
+    logger.info('Plex transcode start request (Android TV)', { session, query: req.query });
+    
+    res.json({
+      success: true,
+      session: session || 'default',
+      message: 'Transcoding session started',
+      timestamp: Date.now()
+    });
+  } catch (error) {
+    logger.error('Transcode start endpoint error:', error);
+    res.status(500).json({ error: 'Failed to start transcoding session' });
+  }
+});
+
+router.get('/video/:/transcode/universal/stop', async (req, res) => {
+  try {
+    const { session } = req.query;
+    logger.info('Plex transcode stop request (Android TV)', { session, query: req.query });
+    
+    res.json({
+      success: true,
+      session: session || 'default', 
+      message: 'Transcoding session stopped',
+      timestamp: Date.now()
+    });
+  } catch (error) {
+    logger.error('Transcode stop endpoint error:', error);
+    res.status(500).json({ error: 'Failed to stop transcoding session' });
+  }
+});
+
 router.get('/video/:/transcode/universal/decision', async (req, res) => {
   try {
-    const { path, session, mediaIndex } = req.query;
+    const { 
+      path, 
+      session, 
+      mediaIndex, 
+      audioBoost = 100,
+      autoAdjustQuality = 0,
+      directPlay = 0,
+      directStream = 1,
+      quality = 'high'  // Default to high quality based on recent HLS quality fixes
+    } = req.query;
     
-    logger.info('Plex transcode decision request (Android TV)', {
+    const userAgent = req.get('User-Agent') || '';
+    const isAndroidTV = userAgent.toLowerCase().includes('androidtv') || 
+                       userAgent.toLowerCase().includes('android tv') ||
+                       userAgent.toLowerCase().includes('nexusplayer') ||
+                       userAgent.toLowerCase().includes('mibox') ||
+                       userAgent.toLowerCase().includes('shield');
+    
+    logger.info('Plex transcode decision request', {
       path,
       session,
       mediaIndex,
-      query: req.query,
-      userAgent: req.get('User-Agent')
+      quality,
+      audioBoost,
+      autoAdjustQuality,
+      directPlay,
+      directStream,
+      isAndroidTV,
+      userAgent: isAndroidTV ? userAgent : undefined,
+      query: req.query
     });
     
     // Extract metadata ID from path if available
     const pathMatch = path ? path.match(/metadata\/(.+?)(?:\/|$)/) : null;
     const metadataId = pathMatch ? pathMatch[1] : 'live-tv-stream';
     
+    // Get channel/stream info if possible to provide accurate metadata
+    let channelInfo = null;
+    let streamResolution = { width: 1920, height: 1080, bitrate: 5000 };
+    let videoQuality = '1080p';
+    
+    // Try to get actual channel/stream information
+    try {
+      const database = require('../services/database');
+      
+      // Try to find channel by session ID or metadata ID
+      const channel = await database.get(
+        'SELECT * FROM channels WHERE id = ? OR id = ?', 
+        [session, metadataId]
+      );
+      
+      if (channel) {
+        channelInfo = channel;
+        logger.debug('Found channel info for transcoding decision', { 
+          channelId: channel.id, 
+          channelName: channel.name 
+        });
+      }
+    } catch (dbError) {
+      logger.warn('Could not fetch channel info for transcoding decision', { 
+        error: dbError.message 
+      });
+    }
+    
+    // Apply HLS quality selection logic (matching recent quality fixes)
+    const hlsQualitySelector = require('../services/hlsQualitySelector');
+    
+    // Map quality to resolution/bitrate (matching HLS quality selection fixes)
+    switch(quality.toLowerCase()) {
+      case 'low':
+        streamResolution = { width: 854, height: 480, bitrate: 2000 };
+        videoQuality = '480p';
+        break;
+      case 'medium':
+        streamResolution = { width: 1280, height: 720, bitrate: 3500 };
+        videoQuality = '720p';
+        break;
+      case 'high':
+      case 'ultra':
+        streamResolution = { width: 1920, height: 1080, bitrate: 5000 };
+        videoQuality = '1080p';
+        break;
+      default:
+        // Auto quality selection based on Android TV capability
+        if (isAndroidTV) {
+          streamResolution = { width: 1920, height: 1080, bitrate: 4500 };
+          videoQuality = '1080p';
+        }
+    }
+    
+    // Android TV specific optimizations
+    let containerFormat = 'mpegts';
+    let videoCodec = 'h264';
+    let audioCodec = 'aac';
+    let audioChannels = 2;
+    let audioBitrate = 128;
+    
+    if (isAndroidTV) {
+      // Android TV optimized settings
+      containerFormat = 'mpegts'; // Keep MPEG-TS for Android TV compatibility
+      videoCodec = 'h264';
+      audioCodec = 'aac';
+      audioChannels = 2;
+      audioBitrate = parseInt(audioBoost) >= 100 ? 160 : 128; // Boost audio if requested
+      
+      logger.debug('Applied Android TV optimizations', {
+        resolution: `${streamResolution.width}x${streamResolution.height}`,
+        bitrate: streamResolution.bitrate,
+        audioBitrate,
+        audioChannels
+      });
+    }
+    
     // Return proper MediaContainer XML for transcoding decision
     res.set({
       'Content-Type': 'application/xml; charset=utf-8',
-      'Cache-Control': 'no-cache'
+      'Cache-Control': 'no-cache',
+      'X-Android-TV-Compatible': isAndroidTV ? 'true' : 'false',
+      'X-Quality-Selected': quality,
+      'X-Resolution': `${streamResolution.width}x${streamResolution.height}`
     });
     
+    const displayTitle = channelInfo ? channelInfo.name : 'Live TV Stream';
+    const streamKey = session || metadataId;
+    
+    // Enhanced MediaContainer with Android TV compatibility
     const transcodeDecisionXML = `<?xml version="1.0" encoding="UTF-8"?>
 <MediaContainer size="1" identifier="com.plexapp.plugins.library">
-  <Video ratingKey="${escapeXML(metadataId)}" key="/library/metadata/${escapeXML(metadataId)}" type="clip" title="Live TV Stream" summary="Live television programming" duration="86400000" live="1" addedAt="${Math.floor(Date.now() / 1000)}" updatedAt="${Math.floor(Date.now() / 1000)}">
-    <Media id="1" duration="86400000" bitrate="5000" width="1920" height="1080" aspectRatio="1.78" audioChannels="2" audioCodec="aac" videoCodec="h264" videoResolution="1080" container="mpegts" videoFrameRate="25p" audioProfile="lc" videoProfile="high">
-      <Part id="1" key="/stream/${escapeXML(session || metadataId)}" file="/stream/${escapeXML(session || metadataId)}" size="999999999" duration="86400000" container="mpegts" hasThumbnail="0">
-        <Stream id="1" streamType="1" default="1" codec="h264" index="0" bitrate="4000" bitDepth="8" height="1080" width="1920" displayTitle="1080p (H.264)" extendedDisplayTitle="1080p (H.264)" />
-        <Stream id="2" streamType="2" selected="1" default="1" codec="aac" index="1" channels="2" bitrate="128" audioChannelLayout="stereo" samplingRate="48000" displayTitle="Stereo (AAC)" extendedDisplayTitle="Stereo (AAC)" />
+  <Video ratingKey="${escapeXML(metadataId)}" key="/library/metadata/${escapeXML(metadataId)}" type="clip" title="${escapeXML(displayTitle)}" summary="Live television programming" duration="86400000" live="1" addedAt="${Math.floor(Date.now() / 1000)}" updatedAt="${Math.floor(Date.now() / 1000)}">
+    <Media id="1" duration="86400000" bitrate="${streamResolution.bitrate}" width="${streamResolution.width}" height="${streamResolution.height}" aspectRatio="${(streamResolution.width/streamResolution.height).toFixed(2)}" audioChannels="${audioChannels}" audioCodec="${audioCodec}" videoCodec="${videoCodec}" videoResolution="${videoQuality.replace('p','')}" container="${containerFormat}" videoFrameRate="25p" audioProfile="lc" videoProfile="high" optimizedForStreaming="1">
+      <Part id="1" key="/stream/${escapeXML(streamKey)}" file="/stream/${escapeXML(streamKey)}" size="999999999" duration="86400000" container="${containerFormat}" hasThumbnail="0" accessible="1" exists="1">
+        <Stream id="1" streamType="1" default="1" codec="${videoCodec}" index="0" bitrate="${Math.floor(streamResolution.bitrate * 0.8)}" bitDepth="8" height="${streamResolution.height}" width="${streamResolution.width}" displayTitle="${videoQuality} (${videoCodec.toUpperCase()})" extendedDisplayTitle="${videoQuality} (${videoCodec.toUpperCase()})" />
+        <Stream id="2" streamType="2" selected="1" default="1" codec="${audioCodec}" index="1" channels="${audioChannels}" bitrate="${audioBitrate}" audioChannelLayout="stereo" samplingRate="48000" displayTitle="Stereo (${audioCodec.toUpperCase()})" extendedDisplayTitle="Stereo (${audioCodec.toUpperCase()})" />
       </Part>
     </Media>
   </Video>
 </MediaContainer>`;
+
+    logger.info('Transcoding decision response generated', {
+      metadataId,
+      streamKey,
+      resolution: `${streamResolution.width}x${streamResolution.height}`,
+      bitrate: streamResolution.bitrate,
+      quality: videoQuality,
+      container: containerFormat,
+      isAndroidTV,
+      audioBoost: parseInt(audioBoost),
+      channelName: channelInfo?.name
+    });
 
     res.send(transcodeDecisionXML);
   } catch (error) {
