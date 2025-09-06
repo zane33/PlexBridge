@@ -139,8 +139,136 @@ router.get('/stream/:channelId/:filename?', async (req, res) => {
                    req.query.sessionId || 
                    `session_${channelId}_${Date.now()}`;
     
+    // CRITICAL FIX: Handle HEAD requests early before any database processing
+    if (req.method === 'HEAD') {
+      logger.info('HEAD request for stream (not creating session)', { channelId, isPlexRequest });
+      res.set({
+        'Content-Type': 'video/mp2t',
+        'Access-Control-Allow-Origin': '*',
+        'Cache-Control': 'no-cache, no-store, must-revalidate'
+      });
+      return res.status(200).end();
+    }
+    
+    logger.info(`Stream request for channel: ${channelId}${isSubFile ? '/' + filename : ''}`, { 
+      clientIP: req.ip,
+      userAgent: req.get('User-Agent'),
+      isSubFile,
+      filename
+    });
+    
+    // CRITICAL FIX: Get channel and stream info FIRST before any session management
+    // This prevents ReferenceError when variables are accessed in session creation
+    let channel = await database.get('SELECT * FROM channels WHERE id = ?', [channelId]);
+    let stream = null;
+    
+    if (channel) {
+      // Found channel, get associated stream
+      stream = await database.get('SELECT * FROM streams WHERE channel_id = ?', [channelId]);
+      if (!stream) {
+        logger.warn('Stream not found for channel', { 
+          channelId, 
+          channelName: channel.name,
+          channelNumber: channel.number,
+          filename,
+          clientIP: req.ip 
+        });
+        return res.status(404).send('Stream not found for channel');
+      }
+    } else {
+      // No channel found, try as stream ID directly
+      stream = await database.get('SELECT * FROM streams WHERE id = ?', [channelId]);
+      if (stream && stream.channel_id) {
+        // Found stream, get associated channel
+        channel = await database.get('SELECT * FROM channels WHERE id = ?', [stream.channel_id]);
+      }
+      
+      if (!stream) {
+        logger.warn('Neither channel nor stream found', { channelId, filename, clientIP: req.ip });
+        return res.status(404).send('Channel not found');
+      }
+      
+      // Log that we're using stream ID access
+      logger.info('Stream accessed directly by stream ID', { 
+        streamId: channelId, 
+        streamName: stream.name,
+        channelId: stream.channel_id,
+        channelName: channel ? channel.name : 'Unknown'
+      });
+    }
+    
+    // Determine the target URL - NOW we have all required variables
+    let targetUrl = stream.url;
+    
+    // CRITICAL FIX: Now that we have channel, stream, and targetUrl, create enhanced session tracking for Plex requests
+    if (false && isPlexRequest && !isSubFile) {  // TEMPORARILY DISABLED FOR DEBUGGING
+      const streamSessionManager = require('../services/streamSessionManager');
+      
+      // Helper function to sanitize headers (needed for enhanced session tracking)
+      const sanitizeHeader = (header) => {
+        if (!header) return null;
+        return header.toString().substring(0, 255).replace(/[<>'"]/g, '');
+      };
+      
+      // Extract Plex headers for session tracking
+      const plexHeaders = {
+        clientIdentifier: sanitizeHeader(req.headers['x-plex-client-identifier']) || `unknown-${req.ip}`,
+        clientName: sanitizeHeader(req.headers['x-plex-client-name']) || 'Unknown Plex Client',
+        username: sanitizeHeader(req.headers['x-plex-username']) || sanitizeHeader(req.headers['x-plex-user']) || null,
+        device: sanitizeHeader(req.headers['x-plex-device']) || 'Unknown Device',
+        deviceName: sanitizeHeader(req.headers['x-plex-device-name']) || 'Unknown'
+      };
+      
+      const clientInfo = {
+        userAgent,
+        remoteAddress: req.ip || req.connection.remoteAddress,
+        plex_client_id: plexHeaders.clientIdentifier,
+        plex_client_name: plexHeaders.clientName,
+        plex_username: plexHeaders.username,
+        plex_device: plexHeaders.device,
+        plex_device_name: plexHeaders.deviceName,
+        unique_client_id: `${plexHeaders.clientIdentifier}_${req.ip}_${sessionId}`,
+        display_name: plexHeaders.username || plexHeaders.deviceName || plexHeaders.clientName || req.ip
+      };
+      
+      // Create enhanced session data with all variables now available
+      const enhancedSessionData = {
+        sessionId,
+        streamId: channelId,
+        clientIP: req.ip,
+        userAgent,
+        clientIdentifier: plexHeaders.clientIdentifier,
+        channelName: channel?.name || 'Unknown Channel',
+        channelNumber: channel?.number || 0,
+        streamUrl: targetUrl,
+        streamType: stream?.type || 'hls',
+        // Enhanced Plex tracking fields for dashboard
+        plexClientId: plexHeaders.clientIdentifier,
+        plexClientName: plexHeaders.clientName,
+        plexUsername: plexHeaders.username,
+        plexDevice: plexHeaders.device,
+        plexDeviceName: plexHeaders.deviceName,
+        uniqueClientId: clientInfo.unique_client_id,
+        displayName: clientInfo.display_name
+      };
+      
+      try {
+        await streamSessionManager.startSession(enhancedSessionData);
+        logger.info('Enhanced session created for dashboard tracking', {
+          sessionId,
+          plexUsername: plexHeaders.username,
+          deviceName: plexHeaders.deviceName,
+          isAndroidTV,
+          channelName: channel?.name,
+          streamUrl: targetUrl
+        });
+      } catch (sessionError) {
+        logger.warn('Could not create enhanced session, continuing with basic tracking:', sessionError);
+      }
+    }
+    
     // Create persistent streaming session for consumer tracking (fixes "Failed to find consumer")
-    if (isPlexRequest && !isSubFile) {
+    if (false && isPlexRequest && !isSubFile) {  // TEMPORARILY DISABLED FOR DEBUGGING
       const sessionManager = getSessionManager();
       
       // Extract the consumer session ID that Plex will use
@@ -259,39 +387,8 @@ router.get('/stream/:channelId/:filename?', async (req, res) => {
       // Create streaming session for decision tracking (critical for Android TV)
       const streamingSession = createStreamingSession(channelId, clientInfo);
       
-      // Enhanced session tracking with streamSessionManager for dashboard display
-      const streamSessionManager = require('../services/streamSessionManager');
-      const enhancedSessionData = {
-        sessionId,
-        streamId: channelId,
-        clientIP: req.ip,
-        userAgent,
-        clientIdentifier: plexHeaders.clientIdentifier,
-        channelName: channel?.name,
-        channelNumber: channel?.number,
-        streamUrl: targetUrl,
-        streamType: stream?.type || 'hls',
-        // Enhanced Plex tracking fields for dashboard
-        plexClientId: plexHeaders.clientIdentifier,
-        plexClientName: plexHeaders.clientName,
-        plexUsername: plexHeaders.username,
-        plexDevice: plexHeaders.device,
-        plexDeviceName: plexHeaders.deviceName,
-        uniqueClientId: clientInfo.unique_client_id,
-        displayName: clientInfo.display_name
-      };
-      
-      try {
-        await streamSessionManager.startSession(enhancedSessionData);
-        logger.info('Enhanced session created for dashboard tracking', {
-          sessionId,
-          plexUsername: plexHeaders.username,
-          deviceName: plexHeaders.deviceName,
-          isAndroidTV
-        });
-      } catch (sessionError) {
-        logger.warn('Could not create enhanced session, continuing with basic tracking:', sessionError);
-      }
+      // CRITICAL FIX: Enhanced session tracking will be done after database queries 
+      // to avoid accessing undefined channel, stream, and targetUrl variables
       
       // Add session info to response headers for Plex decision making and consumer tracking
       addStreamHeaders(req, res, sessionId);
@@ -378,47 +475,8 @@ router.get('/stream/:channelId/:filename?', async (req, res) => {
       filename
     });
     
-    // Get channel info from database - first try as channel ID
-    let channel = await database.get('SELECT * FROM channels WHERE id = ?', [channelId]);
-    let stream = null;
-    
-    if (channel) {
-      // Found channel, get associated stream
-      stream = await database.get('SELECT * FROM streams WHERE channel_id = ?', [channelId]);
-      if (!stream) {
-        logger.warn('Stream not found for channel', { 
-          channelId, 
-          channelName: channel.name,
-          channelNumber: channel.number,
-          filename,
-          clientIP: req.ip 
-        });
-        return res.status(404).send('Stream not found for channel');
-      }
-    } else {
-      // No channel found, try as stream ID directly
-      stream = await database.get('SELECT * FROM streams WHERE id = ?', [channelId]);
-      if (stream && stream.channel_id) {
-        // Found stream, get associated channel
-        channel = await database.get('SELECT * FROM channels WHERE id = ?', [stream.channel_id]);
-      }
-      
-      if (!stream) {
-        logger.warn('Neither channel nor stream found', { channelId, filename, clientIP: req.ip });
-        return res.status(404).send('Channel not found');
-      }
-      
-      // Log that we're using stream ID access
-      logger.info('Stream accessed directly by stream ID', { 
-        streamId: channelId, 
-        streamName: stream.name,
-        channelId: stream.channel_id,
-        channelName: channel ? channel.name : 'Unknown'
-      });
-    }
-    
-    // Determine the target URL
-    let targetUrl = stream.url;
+    // CRITICAL FIX: Database queries already completed above - variables are now available
+    // All channel, stream, and targetUrl variables are already defined
     if (isSubFile) {
       // For sub-files, construct the target URL based on known redirect patterns
       if (stream.url.includes('i.mjh.nz/.r/discovery-hgtv.m3u8')) {
