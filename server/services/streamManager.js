@@ -3066,7 +3066,34 @@ class StreamManager {
         channelId: channel.id 
       });
       
-      const response = await axios.get(streamUrl, {
+      let finalStreamUrl = streamUrl;
+      
+      // For HLS streams, resolve to highest quality variant first
+      if (streamType === 'hls') {
+        logger.info('Resolving HLS stream to highest quality variant', {
+          originalUrl: streamUrl,
+          channelId: channel.id
+        });
+        
+        const streamPreviewService = require('./streamPreviewService');
+        try {
+          finalStreamUrl = await streamPreviewService.resolveHLSStreamUrl(streamUrl, 'high');
+          logger.info('HLS quality resolution successful', {
+            originalUrl: streamUrl,
+            resolvedUrl: finalStreamUrl,
+            channelId: channel.id
+          });
+        } catch (error) {
+          logger.warn('HLS quality resolution failed, using original URL', {
+            originalUrl: streamUrl,
+            error: error.message,
+            channelId: channel.id
+          });
+          // Continue with original URL if quality resolution fails
+        }
+      }
+      
+      const response = await axios.get(finalStreamUrl, {
         timeout: 30000,
         responseType: streamType === 'hls' ? 'text' : 'stream', // Get text for HLS to rewrite URLs
         headers: {
@@ -3256,7 +3283,31 @@ class StreamManager {
       });
 
       // For HLS/DASH, we can try direct streaming first
-      const response = await axios.get(streamUrl, {
+      let finalStreamUrl = streamUrl;
+      
+      // For HLS streams, resolve to highest quality variant first
+      if (streamType === 'hls') {
+        logger.info('Resolving HLS stream to highest quality variant', {
+          originalUrl: streamUrl
+        });
+        
+        const streamPreviewService = require('./streamPreviewService');
+        try {
+          finalStreamUrl = await streamPreviewService.resolveHLSStreamUrl(streamUrl, 'high');
+          logger.info('HLS quality resolution successful', {
+            originalUrl: streamUrl,
+            resolvedUrl: finalStreamUrl
+          });
+        } catch (error) {
+          logger.warn('HLS quality resolution failed, using original URL', {
+            originalUrl: streamUrl,
+            error: error.message
+          });
+          // Continue with original URL if quality resolution fails
+        }
+      }
+      
+      const response = await axios.get(finalStreamUrl, {
         timeout: 30000,
         responseType: 'stream',
         headers: {

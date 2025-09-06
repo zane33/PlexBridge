@@ -253,10 +253,13 @@ router.get('/lineup.json', async (req, res) => {
       AudioCodec: 'AAC',
       Container: 'MPEGTS',
       URL: `${baseURL}/stream/${channel.id}`,
-      // Android TV compatibility fields
+      // FIXED: Correct Plex metadata fields to prevent "type 5" errors
       MediaType: 'LiveTV',
-      ContentType: 4,
-      Live: true
+      ContentType: 1, // Changed from 4 to 1 - Plex treats Live TV as video content
+      Live: true,
+      Type: 'channel', // Explicit type declaration
+      Duration: 0, // Live content has no duration
+      Title: channel.name // Explicit title field for Plex metadata compatibility
     }));
     
     // Detect Android TV clients and optimize lineup

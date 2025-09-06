@@ -478,7 +478,7 @@ class StreamPreviewService {
   }
   
   // Resolve HLS stream URL by following redirects and selecting a variant
-  async resolveHLSStreamUrl(streamUrl, quality = 'medium') {
+  async resolveHLSStreamUrl(streamUrl, quality = 'high') {
     const axios = require('axios');
     
     try {
@@ -547,16 +547,18 @@ class StreamPreviewService {
       // Sort variants by bandwidth
       variants.sort((a, b) => a.bandwidth - b.bandwidth);
       
-      // Select based on quality preference - always prefer highest quality unless explicitly requested
+      // Select based on quality preference - prioritize 1080p for high quality
       if (quality === 'low') {
         selectedVariant = variants[0]; // Lowest bandwidth
       } else if (quality === 'medium') {
-        // For medium, select middle variant (no 720p hunting)
-        const middleIndex = Math.floor(variants.length / 2);
-        selectedVariant = variants[middleIndex];
+        // Find 720p variant or middle if not available
+        const p720Variant = variants.find(v => 
+          v.resolution && (v.resolution.includes('1280x720') || v.resolution.includes('720'))
+        );
+        selectedVariant = p720Variant || variants[Math.floor(variants.length / 2)];
       } else {
-        // Default to highest quality (including quality === 'high' and any other values)
-        selectedVariant = variants[variants.length - 1]; // Highest bandwidth
+        // For 'high' quality, always select the highest available variant (1080p preferred)
+        selectedVariant = variants[variants.length - 1]; // Highest bandwidth/resolution
       }
       
       logger.stream('Selected HLS variant for transcoding', {
@@ -1157,7 +1159,7 @@ class StreamPreviewService {
   }
 
   // Create FFmpeg transcoding process with enhanced configuration
-  async createTranscodingProcess(stream, quality = 'medium', sessionId, preAnalyzedEncrypted = false, preAnalyzedEncryptionInfo = null) {
+  async createTranscodingProcess(stream, quality = 'high', sessionId, preAnalyzedEncrypted = false, preAnalyzedEncryptionInfo = null) {
     try {
       const qualityProfile = config.plexlive?.transcoding?.qualityProfiles?.[quality] || {
         resolution: '1280x720',
