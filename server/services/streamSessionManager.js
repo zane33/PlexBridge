@@ -30,6 +30,52 @@ class StreamSessionManager {
   }
 
   /**
+   * Sanitizes Plex header values for security
+   * Prevents XSS attacks and limits data length
+   * @param {string} headerValue - Raw header value
+   * @returns {string|null} - Sanitized header value or null
+   */
+  sanitizePlexHeader(headerValue) {
+    if (!headerValue || typeof headerValue !== 'string') {
+      return null;
+    }
+    
+    // Remove potential XSS/injection characters and limit length
+    return headerValue
+      .replace(/[<>'"&\x00-\x08\x0B\x0C\x0E-\x1F\x7F-\x9F]/g, '') // Remove dangerous characters
+      .trim()
+      .substring(0, 100); // Limit to 100 characters
+  }
+
+  /**
+   * Extracts and sanitizes Plex headers from request
+   * @param {Object} req - Express request object
+   * @returns {Object} - Sanitized Plex header data
+   */
+  extractPlexHeaders(req) {
+    const headers = {
+      plexUsername: this.sanitizePlexHeader(req.get('X-Plex-Username')),
+      plexDeviceName: this.sanitizePlexHeader(req.get('X-Plex-Device-Name')),
+      plexFriendlyName: this.sanitizePlexHeader(req.get('X-Plex-Friendly-Name')),
+      plexClientName: this.sanitizePlexHeader(req.get('X-Plex-Client-Name')),
+      plexProduct: this.sanitizePlexHeader(req.get('X-Plex-Product')),
+      plexVersion: this.sanitizePlexHeader(req.get('X-Plex-Version')),
+      plexPlatform: this.sanitizePlexHeader(req.get('X-Plex-Platform'))
+    };
+
+    // Log warning if no identification headers found (privacy-aware logging)
+    if (!headers.plexUsername && !headers.plexDeviceName && !headers.plexFriendlyName) {
+      logger.debug('No Plex identification headers found', {
+        clientIP: req.ip,
+        userAgent: req.get('User-Agent')?.substring(0, 200),
+        hasProduct: !!headers.plexProduct
+      });
+    }
+
+    return headers;
+  }
+
+  /**
    * Start a new streaming session with comprehensive tracking
    */
   async startSession(sessionData) {
@@ -43,14 +89,14 @@ class StreamSessionManager {
       channelNumber,
       streamUrl,
       streamType,
-      // Enhanced Plex client tracking fields
-      plex_client_id,
-      plex_client_name,
-      plex_username,
-      plex_device,
-      plex_device_name,
-      unique_client_id,
-      display_name
+      // Plex-specific information
+      plexUsername,
+      plexDeviceName,
+      plexFriendlyName,
+      plexClientName,
+      plexProduct,
+      plexVersion,
+      plexPlatform
     } = sessionData;
 
     try {
@@ -72,6 +118,22 @@ class StreamSessionManager {
       // Resolve client hostname asynchronously
       const hostname = await this.resolveHostname(clientIP);
       
+      // Generate display name from Plex information
+      let displayName = 'Unknown Client';
+      if (plexUsername && plexDeviceName) {
+        displayName = `${plexUsername} (${plexDeviceName})`;
+      } else if (plexUsername) {
+        displayName = plexUsername;
+      } else if (plexDeviceName) {
+        displayName = plexDeviceName;
+      } else if (plexFriendlyName) {
+        displayName = plexFriendlyName;
+      } else if (plexClientName) {
+        displayName = plexClientName;
+      } else if (hostname && hostname !== clientIP) {
+        displayName = hostname;
+      }
+
       // Create session record
       const session = {
         sessionId,
@@ -87,14 +149,15 @@ class StreamSessionManager {
         startTime: Date.now(),
         lastUpdate: Date.now(),
         
-        // Enhanced Plex client information
-        plexClientId: plex_client_id,
-        plexClientName: plex_client_name,
-        plexUsername: plex_username,
-        plexDevice: plex_device,
-        plexDeviceName: plex_device_name,
-        uniqueClientId: unique_client_id,
-        displayName: display_name || 'Unknown Client',
+        // Plex-specific information for dashboard display
+        plexUsername: plexUsername || null,
+        plexDeviceName: plexDeviceName || null,
+        plexFriendlyName: plexFriendlyName || null,
+        plexClientName: plexClientName || null,
+        plexProduct: plexProduct || null,
+        plexVersion: plexVersion || null,
+        plexPlatform: plexPlatform || null,
+        displayName, // Combined user and device name for dashboard
         
         // Performance metrics
         bytesTransferred: 0,

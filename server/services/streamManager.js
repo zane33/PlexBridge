@@ -737,6 +737,9 @@ class StreamManager {
 
       // Start enhanced session tracking
       try {
+        // Extract Plex headers securely
+        const plexHeaders = streamSessionManager.extractPlexHeaders(req);
+        
         await streamSessionManager.startSession({
           sessionId,
           streamId,
@@ -746,7 +749,8 @@ class StreamManager {
           channelName: channelInfo?.name,
           channelNumber: channelInfo?.number,
           streamUrl: streamData.url,
-          streamType: streamData.type
+          streamType: streamData.type,
+          ...plexHeaders // Spread sanitized Plex headers
         });
       } catch (sessionError) {
         logger.warn('Failed to start enhanced session tracking for resilient stream', {
@@ -1032,6 +1036,9 @@ class StreamManager {
 
       // Start enhanced session tracking
       try {
+        // Extract Plex headers securely
+        const plexHeaders = streamSessionManager.extractPlexHeaders(req);
+        
         await streamSessionManager.startSession({
           sessionId,
           streamId,
@@ -1041,7 +1048,8 @@ class StreamManager {
           channelName: channelInfo?.name,
           channelNumber: channelInfo?.number,
           streamUrl: streamData.url,
-          streamType: streamData.type
+          streamType: streamData.type,
+          ...plexHeaders // Spread sanitized Plex headers
         });
       } catch (sessionError) {
         logger.warn('Failed to start enhanced session tracking', {
@@ -2464,6 +2472,9 @@ class StreamManager {
 
       // Start enhanced session tracking
       try {
+        // Extract Plex headers securely
+        const plexHeaders = streamSessionManager.extractPlexHeaders(req);
+        
         await streamSessionManager.startSession({
           sessionId,
           streamId: actualStreamId,
@@ -2473,7 +2484,8 @@ class StreamManager {
           channelName: channel.name,
           channelNumber: channel.number,
           streamUrl: finalStreamUrl,
-          streamType: forceTranscode ? 'plex-mpegts-transcode' : 'plex-mpegts'
+          streamType: forceTranscode ? 'plex-mpegts-transcode' : 'plex-mpegts',
+          ...plexHeaders // Spread sanitized Plex headers
         });
       } catch (sessionError) {
         logger.warn('Failed to start enhanced session tracking for Plex stream', {
@@ -3018,6 +3030,9 @@ class StreamManager {
       const sessionId = `${channel.id}_${clientIdentifier}_${Date.now()}`;
       
       // Start session tracking for direct proxy streams
+      // Extract Plex headers securely
+      const plexHeaders = streamSessionManager.extractPlexHeaders(req);
+      
       await streamSessionManager.startSession({
         sessionId,
         streamId: channel.id,
@@ -3027,7 +3042,8 @@ class StreamManager {
         channelName: channel.name,
         channelNumber: channel.number,
         streamUrl,
-        streamType: `direct-${streamType}`
+        streamType: `direct-${streamType}`,
+        ...plexHeaders // Spread sanitized Plex headers
       });
       
       // Set appropriate content type for stream type
