@@ -72,28 +72,7 @@ class StreamSessionManager {
       // Resolve client hostname asynchronously
       const hostname = await this.resolveHostname(clientIP);
       
-      // ANDROID TV DETECTION: Enhanced client detection from user agent
-      const isAndroidTV = userAgent && (
-        userAgent.toLowerCase().includes('androidtv') || 
-        userAgent.toLowerCase().includes('android tv') ||
-        userAgent.toLowerCase().includes('nexusplayer') ||
-        userAgent.toLowerCase().includes('mibox') ||
-        userAgent.toLowerCase().includes('shield') ||
-        userAgent.toLowerCase().includes('bravia') ||
-        (userAgent.toLowerCase().includes('android') && userAgent.toLowerCase().includes('tv'))
-      );
-      
-      // Detect other client types
-      const isPlexClient = userAgent && (
-        userAgent.toLowerCase().includes('plex') ||
-        userAgent.toLowerCase().includes('pms') ||
-        userAgent.toLowerCase().includes('lavf')
-      );
-      
-      const isAppleTV = userAgent && userAgent.toLowerCase().includes('appletv');
-      const isRoku = userAgent && userAgent.toLowerCase().includes('roku');
-      
-      // Create session record with enhanced client detection
+      // Create session record
       const session = {
         sessionId,
         streamId,
@@ -115,38 +94,7 @@ class StreamSessionManager {
         plexDevice: plex_device,
         plexDeviceName: plex_device_name,
         uniqueClientId: unique_client_id,
-        displayName: this.generateDisplayName(plex_username, plex_device_name, plex_client_name, clientIP),
-        
-        // ANDROID TV ENHANCEMENTS: Client detection and session features
-        isAndroidTV,
-        isPlexClient,
-        isAppleTV,
-        isRoku,
-        clientType: isAndroidTV ? 'Android TV' : 
-                   isAppleTV ? 'Apple TV' :
-                   isRoku ? 'Roku' :
-                   isPlexClient ? 'Plex Client' : 'Standard Client',
-        
-        // Android TV specific session configuration
-        sessionTimeout: isAndroidTV ? 300000 : 30000, // 5 minutes vs 30 seconds
-        bufferingProtection: isAndroidTV,
-        resilientMode: isAndroidTV,
-        
-        // Enhanced session features for dashboard display
-        sessionFeatures: {
-          extendedTimeout: isAndroidTV,
-          errorRecovery: isAndroidTV,
-          segmentFallback: isAndroidTV,
-          consumerRegistration: true,
-          ...(isAndroidTV && {
-            androidTVOptimizations: {
-              timeoutExtension: '300s',
-              bufferingProtection: true,
-              segmentErrorRecovery: true,
-              dummySegmentGeneration: true
-            }
-          })
-        },
+        displayName: display_name || 'Unknown Client',
         
         // Performance metrics
         bytesTransferred: 0,
@@ -337,31 +285,13 @@ class StreamSessionManager {
   /**
    * Get active session by client identifier and stream ID
    * This prevents duplicate sessions for the same client+stream combination
-   * Enhanced with multiple matching strategies for better duplicate detection
    */
   getActiveSessionByClientAndStream(clientIdentifier, streamId) {
     for (const session of this.activeSessions.values()) {
-      if (session.status === 'active') {
-        // Primary match: exact client identifier and stream ID
-        if (session.clientIdentifier === clientIdentifier && 
-            session.streamId === streamId) {
-          return session;
-        }
-        
-        // Secondary match: same unique client ID (handles session ID variations)
-        if (session.uniqueClientId && 
-            session.uniqueClientId === `${clientIdentifier}_${session.clientIP}_${session.sessionId}` &&
-            session.streamId === streamId) {
-          return session;
-        }
-        
-        // Tertiary match: same IP and stream within short time window (Android TV fix)
-        const timeDiff = Date.now() - session.startTime;
-        if (session.clientIP === clientIdentifier && 
-            session.streamId === streamId && 
-            timeDiff < 30000) { // 30 seconds window
-          return session;
-        }
+      if (session.clientIdentifier === clientIdentifier && 
+          session.streamId === streamId &&
+          session.status === 'active') {
+        return session;
       }
     }
     return null;
@@ -669,63 +599,6 @@ class StreamSessionManager {
     const sizes = ['Bytes', 'KB', 'MB', 'GB'];
     const i = Math.floor(Math.log(bytes) / Math.log(k));
     return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
-  }
-
-  /**
-   * Generate a meaningful display name for sessions
-   * Prevents "Plex Client" placeholder from appearing in dashboard
-   */
-  generateDisplayName(username, deviceName, clientName, clientIP) {
-    // Priority order: username > device name > client name > IP
-    if (username && username !== 'null' && username.trim() !== '') {
-      return username.trim();
-    }
-    
-    if (deviceName && deviceName !== 'null' && deviceName !== 'Unknown' && deviceName.trim() !== '') {
-      return deviceName.trim();
-    }
-    
-    if (clientName && 
-        clientName !== 'null' && 
-        clientName !== 'Unknown' && 
-        clientName !== 'Unknown Plex Client' &&
-        clientName !== 'Plex Client' &&
-        clientName.trim() !== '') {
-      return clientName.trim();
-    }
-    
-    // Last resort: use IP address
-    return clientIP || 'Unknown Client';
-  }
-
-  /**
-   * Update display name for existing session if better information becomes available
-   */
-  updateSessionDisplayName(sessionId, username, deviceName, clientName) {
-    const session = this.activeSessions.get(sessionId);
-    if (!session) return false;
-    
-    const newDisplayName = this.generateDisplayName(username, deviceName, clientName, session.clientIP);
-    
-    // Only update if we got a better name (not IP address)
-    if (newDisplayName !== session.clientIP && newDisplayName !== session.displayName) {
-      session.displayName = newDisplayName;
-      session.plexUsername = username || session.plexUsername;
-      session.plexDeviceName = deviceName || session.plexDeviceName;
-      session.plexClientName = clientName || session.plexClientName;
-      
-      // Emit update for real-time dashboard refresh
-      this.emitSessionUpdate('session:display_name_updated', {
-        sessionId,
-        displayName: newDisplayName,
-        plexUsername: username,
-        plexDeviceName: deviceName
-      });
-      
-      return true;
-    }
-    
-    return false;
   }
 
   /**
