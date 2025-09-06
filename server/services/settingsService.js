@@ -352,7 +352,7 @@ class SettingsService {
           medium: { resolution: '1280x720', bitrate: '2500k' },
           high: { resolution: '1920x1080', bitrate: '5000k' }
         },
-        defaultProfile: 'medium'
+        defaultProfile: 'high'
       },
       caching: {
         enabled: true,

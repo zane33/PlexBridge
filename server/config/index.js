@@ -153,7 +153,7 @@ const defaultConfig = {
           bitrate: process.env.HIGH_BITRATE || '5000k'
         }
       },
-      defaultProfile: process.env.DEFAULT_QUALITY_PROFILE || 'medium'
+      defaultProfile: process.env.DEFAULT_QUALITY_PROFILE || 'high'
     },
     caching: {
       enabled: process.env.CACHE_ENABLED !== 'false',

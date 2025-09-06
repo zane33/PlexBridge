@@ -76,7 +76,7 @@ class StreamPreviewService {
   // Enhanced stream preview with database integration
   async handleStreamPreview(req, res) {
     const { streamId } = req.params;
-    const { transcode, quality = 'medium', timeout = 30000 } = req.query;
+    const { transcode, quality = 'high', timeout = 30000 } = req.query;
     
     logger.stream('Stream preview requested', { 
       streamId, 
@@ -547,21 +547,16 @@ class StreamPreviewService {
       // Sort variants by bandwidth
       variants.sort((a, b) => a.bandwidth - b.bandwidth);
       
-      // Select based on quality preference
+      // Select based on quality preference - always prefer highest quality unless explicitly requested
       if (quality === 'low') {
         selectedVariant = variants[0]; // Lowest bandwidth
-      } else if (quality === 'high') {
-        selectedVariant = variants[variants.length - 1]; // Highest bandwidth
+      } else if (quality === 'medium') {
+        // For medium, select middle variant (no 720p hunting)
+        const middleIndex = Math.floor(variants.length / 2);
+        selectedVariant = variants[middleIndex];
       } else {
-        // Medium quality - select middle variant or 720p if available
-        const target720p = variants.find(v => v.resolution === '1280x720');
-        if (target720p) {
-          selectedVariant = target720p;
-        } else {
-          // Select middle variant
-          const middleIndex = Math.floor(variants.length / 2);
-          selectedVariant = variants[middleIndex];
-        }
+        // Default to highest quality (including quality === 'high' and any other values)
+        selectedVariant = variants[variants.length - 1]; // Highest bandwidth
       }
       
       logger.stream('Selected HLS variant for transcoding', {

@@ -101,7 +101,7 @@ const plexliveSettingsSchema = Joi.object({
         bitrate: Joi.string().pattern(/^\d+k$/).default('5000k')
       })
     }).default(),
-    defaultProfile: Joi.string().valid('low', 'medium', 'high').default('medium')
+    defaultProfile: Joi.string().valid('low', 'medium', 'high').default('high')
   }).default(),
   caching: Joi.object({
     enabled: Joi.boolean().default(true),
