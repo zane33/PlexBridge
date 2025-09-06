@@ -201,7 +201,7 @@ router.get('/stream/:channelId/:filename?', async (req, res) => {
     let targetUrl = stream.url;
     
     // CRITICAL FIX: Now that we have channel, stream, and targetUrl, create enhanced session tracking for Plex requests
-    if (false && isPlexRequest && !isSubFile) {  // TEMPORARILY DISABLED FOR DEBUGGING
+    if (isPlexRequest && !isSubFile) {
       const streamSessionManager = require('../services/streamSessionManager');
       
       // Helper function to sanitize headers (needed for enhanced session tracking)
@@ -268,7 +268,7 @@ router.get('/stream/:channelId/:filename?', async (req, res) => {
     }
     
     // Create persistent streaming session for consumer tracking (fixes "Failed to find consumer")
-    if (false && isPlexRequest && !isSubFile) {  // TEMPORARILY DISABLED FOR DEBUGGING
+    if (isPlexRequest && !isSubFile) {
       const sessionManager = getSessionManager();
       
       // Extract the consumer session ID that Plex will use
