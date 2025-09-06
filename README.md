@@ -55,33 +55,6 @@ docker-compose up -d
 - Plex should auto-detect "PlexBridge" as an available tuner
 - Follow the Plex setup wizard to configure channels and EPG
 
-## ⚠️ CRITICAL: Plex Direct Play Configuration
-
-**🚨 WARNING: You MUST disable Direct Play for Live TV streaming to work reliably.**
-
-### Required Plex Settings
-
-Navigate to **Plex Settings → Transcoder** and ensure:
-
-- ❌ **"Enable Direct Play"** must be **UNCHECKED** 
-- ❌ **"Enable Direct Stream"** must be **UNCHECKED**
-
-### Why This Is Critical
-
-Direct Play bypasses Plex's buffering and retry mechanisms, causing:
-- Frequent stream drops (especially Android TV)
-- "Failed to find consumer" errors in Plex logs  
-- Poor error recovery and session management
-- Unreliable streaming on local network clients
-
-**For detailed technical explanation, see: [docs/Direct-Play-Warning.md](docs/Direct-Play-Warning.md)**
-
-### Verification
-
-After configuration, streams should show "Transcode" in Plex dashboard (even with same quality), not "Direct Play".
-
----
-
 ## Configuration
 
 PlexBridge works out-of-the-box with sensible defaults, but offers extensive customization options.
@@ -324,18 +297,10 @@ curl -X POST http://localhost:8080/api/streams/validate \
 ```
 
 **Streams Buffer or Stop Playing**
-- **⚠️ FIRST**: Verify Direct Play is disabled in Plex Settings → Transcoder (see warning above)
-- Check Plex dashboard shows "Transcode" not "Direct Play" for Live TV
 - Check network connectivity to IPTV sources
 - Verify FFmpeg is available: `docker exec plexbridge which ffmpeg`
 - Monitor stream logs: `docker-compose logs -f plexbridge | grep stream`
 - Check concurrent stream limits in settings
-
-**Frequent Android TV Stream Drops**
-- Disable Direct Play in Plex (most common cause)
-- Check for "Failed to find consumer" errors in Plex server logs
-- Verify session persistence in PlexBridge dashboard
-- See [docs/Direct-Play-Warning.md](docs/Direct-Play-Warning.md) for detailed troubleshooting
 
 ### EPG (Program Guide) Issues
 
@@ -435,7 +400,6 @@ PlexBridge implements multiple security layers:
 
 For detailed information, see the complete documentation:
 
-- **[Direct Play Warning](docs/Direct-Play-Warning.md)** - **CRITICAL**: Why Direct Play must be disabled
 - **[Architecture Guide](docs/Architecture.md)** - System design and components
 - **[API Reference](docs/API.md)** - Complete endpoint documentation  
 - **[Networking Guide](docs/Networking.md)** - Network configuration and troubleshooting

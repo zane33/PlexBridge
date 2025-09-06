@@ -516,15 +516,13 @@ function sessionKeepAlive() {
 }
 
 /**
- * Enhanced stream response headers for Plex compatibility and HDHomeRun emulation
- * Fixes Android TV metadata errors: "Unable to find title for item" and "Unknown metadata type"
+ * Enhanced stream response headers for Plex compatibility
  */
 function addStreamHeaders(req, res, sessionId) {
   const manager = getSessionManager();
   const status = manager.getSessionStatus(sessionId);
 
-  // Core session management headers
-  const baseHeaders = {
+  res.set({
     'X-Session-ID': sessionId,
     'X-Session-Status': status.status || 'unknown',
     'X-Has-Consumer': status.hasConsumer ? 'true' : 'false',
@@ -532,30 +530,7 @@ function addStreamHeaders(req, res, sessionId) {
     'Connection': 'keep-alive',
     'Cache-Control': 'no-cache, no-store, must-revalidate',
     'Access-Control-Allow-Origin': '*'
-  };
-
-  // HDHomeRun emulation headers for better Plex compatibility
-  const hdhrHeaders = {
-    // HDHomeRun device emulation
-    'Server': 'PlexBridge/1.0 HDHomeRun',
-    'X-HDHomeRun-Tuner': '0',
-    'X-HDHomeRun-Device': 'PlexBridge',
-    'X-HDHomeRun-Device-Auth': 'none',
-    
-    // Live TV stream headers to prevent metadata errors
-    'Transfer-Encoding': 'chunked',
-    'Accept-Ranges': 'none',
-    'Content-Encoding': 'identity',
-    
-    // Streaming optimization headers
-    'X-Stream-Info': 'live',
-    'X-Tuner-Status': 'active',
-    'X-Content-Available': 'true',
-    'X-Stream-Active': 'true'
-  };
-
-  // Merge all headers
-  res.set({ ...baseHeaders, ...hdhrHeaders });
+  });
 }
 
 module.exports = {

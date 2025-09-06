@@ -1,14 +1,6 @@
-# PlexBridge Documentation
+# PlexTV Documentation
 
-This directory contains comprehensive documentation for the PlexBridge application - an IPTV to Plex Bridge Interface.
-
-## ⚠️ CRITICAL: Start Here First
-
-**🚨 [Direct Play Warning](Direct-Play-Warning.md)** - **MUST READ FOR RELIABLE STREAMING**
-- Why Direct Play MUST be disabled for Live TV
-- Technical explanation of stability issues
-- Performance impact analysis
-- **This configuration is critical for Android TV and local client stability**
+This directory contains comprehensive documentation for the PlexTV application - an IPTV to Plex Bridge Interface.
 
 ## Documentation Structure
 
@@ -73,12 +65,11 @@ PlexTV is a containerized Node.js application that bridges IPTV streams with Ple
 
 ## Getting Started
 
-1. **🚨 READ FIRST**: [Direct Play Warning](Direct-Play-Warning.md) - Critical for streaming stability
-2. Read [Architecture.md](Architecture.md) for system overview
-3. Check [Networking.md](Networking.md) for network requirements
-4. Follow [Docker-Deployment-Guide.md](Docker-Deployment-Guide.md) for installation
-5. Reference [Configuration.md](Configuration.md) for customization
-6. Use [API.md](API.md) for integration details
+1. Read [Architecture.md](Architecture.md) for system overview
+2. Check [Networking.md](Networking.md) for network requirements
+3. Follow [Deployment.md](Deployment.md) for installation
+4. Reference [Configuration.md](Configuration.md) for customization
+5. Use [API.md](API.md) for integration details
 
 ## Support
 
