@@ -261,12 +261,35 @@ router.get('/stream/:channelId/:filename?', async (req, res) => {
       
       // Add session info to response headers for Plex decision making and consumer tracking
       addStreamHeaders(req, res, sessionId);
+      
+      // Enhanced metadata headers for Plex Live TV compatibility
+      // Fix for "Unable to find title for item of type 5" and "Unknown metadata type" errors
       res.set({
         'X-PlexBridge-Session': streamingSession.sessionId,
         'X-Persistent-Session': persistentSession.sessionId,
         'X-Consumer-Session': consumerSessionId,
+        
+        // CRITICAL FIX: Proper Live TV metadata for Plex Android TV
+        'Content-Type': 'video/mp2t',  // MPEG-TS for Live TV streams
         'X-Content-Type': 'live-tv',
-        'X-Media-Type': '4'  // Episode type for Live TV, not 5 (trailer)
+        'X-Media-Type': 'episode',     // Use string instead of number for clarity
+        'X-Plex-Protocol': '1.0',      // HDHomeRun protocol version
+        'X-Plex-Product': 'PlexBridge',
+        'X-Plex-Device-Name': 'PlexBridge',
+        'X-Plex-Provides': 'server',
+        
+        // Stream metadata to fix "codec is unavailable for analysis"
+        'X-Stream-Type': 'live',
+        'X-Video-Codec': 'h264',       // Most common codec for IPTV
+        'X-Audio-Codec': 'aac',        // Most common audio codec
+        'X-Container': 'mpegts',       // Container format
+        
+        // Channel and program information
+        'X-Channel-ID': channelId,
+        'X-Channel-Name': channel ? channel.name : 'Unknown Channel',
+        'X-Channel-Number': channel ? channel.number : '0',
+        'X-Program-Title': channel ? channel.name : 'Live TV',
+        'X-Program-Type': 'live'
       });
       
       // ANDROID TV SESSION RESILIENCE: Prevent premature termination
