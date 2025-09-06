@@ -126,7 +126,7 @@ const defaultConfig = {
       deviceDescription: process.env.SSDP_DEVICE_DESCRIPTION || 'IPTV to Plex Bridge Interface'
     },
     streaming: {
-      maxConcurrentStreams: parseInt(process.env.MAX_CONCURRENT_STREAMS) || 10,
+      maxConcurrentStreams: parseInt(process.env.TUNER_COUNT) || parseInt(process.env.MAX_CONCURRENT_STREAMS) || 5,
       streamTimeout: parseInt(process.env.STREAM_TIMEOUT) || 30000, // 30 seconds (original value)
       reconnectAttempts: parseInt(process.env.RECONNECT_ATTEMPTS) || 3,
       bufferSize: parseInt(process.env.STREAM_BUFFER_SIZE) || 65536,

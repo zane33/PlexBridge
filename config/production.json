@@ -15,7 +15,7 @@
     "friendlyName": "PlexTV"
   },
   "streams": {
-    "maxConcurrent": 10,
+    "maxConcurrent": 5,
     "transcodeEnabled": true,
     "ffmpegPath": "/usr/bin/ffmpeg"
   },
@@ -26,7 +26,7 @@
       "announceInterval": 1800000
     },
     "streaming": {
-      "maxConcurrentStreams": 10,
+      "maxConcurrentStreams": 5,
       "maxConcurrentPerChannel": 3,
       "streamTimeout": 60000,
       "reconnectAttempts": 5,
@@ -67,7 +67,7 @@
     },
     "device": {
       "name": "PlexTV",
-      "tunerCount": 8
+      "tunerCount": 5
     },
     "network": {
       "advertisedHost": null,

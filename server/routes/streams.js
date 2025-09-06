@@ -259,6 +259,40 @@ router.get('/stream/:channelId/:filename?', async (req, res) => {
       // Create streaming session for decision tracking (critical for Android TV)
       const streamingSession = createStreamingSession(channelId, clientInfo);
       
+      // Enhanced session tracking with streamSessionManager for dashboard display
+      const streamSessionManager = require('../services/streamSessionManager');
+      const enhancedSessionData = {
+        sessionId,
+        streamId: channelId,
+        clientIP: req.ip,
+        userAgent,
+        clientIdentifier: plexHeaders.clientIdentifier,
+        channelName: channel?.name,
+        channelNumber: channel?.number,
+        streamUrl: targetUrl,
+        streamType: stream?.type || 'hls',
+        // Enhanced Plex tracking fields for dashboard
+        plexClientId: plexHeaders.clientIdentifier,
+        plexClientName: plexHeaders.clientName,
+        plexUsername: plexHeaders.username,
+        plexDevice: plexHeaders.device,
+        plexDeviceName: plexHeaders.deviceName,
+        uniqueClientId: clientInfo.unique_client_id,
+        displayName: clientInfo.display_name
+      };
+      
+      try {
+        await streamSessionManager.startSession(enhancedSessionData);
+        logger.info('Enhanced session created for dashboard tracking', {
+          sessionId,
+          plexUsername: plexHeaders.username,
+          deviceName: plexHeaders.deviceName,
+          isAndroidTV
+        });
+      } catch (sessionError) {
+        logger.warn('Could not create enhanced session, continuing with basic tracking:', sessionError);
+      }
+      
       // Add session info to response headers for Plex decision making and consumer tracking
       addStreamHeaders(req, res, sessionId);
       res.set({

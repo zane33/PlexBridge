@@ -422,6 +422,7 @@ function StreamingMonitor({
                 <TableHead>
                   <TableRow>
                     <TableCell>Client</TableCell>
+                    <TableCell>Device & User</TableCell>
                     <TableCell>Channel</TableCell>
                     <TableCell>Duration</TableCell>
                     <TableCell>Bitrate</TableCell>
@@ -436,7 +437,7 @@ function StreamingMonitor({
                         <Box sx={{ display: 'flex', alignItems: 'center' }}>
                           <Avatar 
                             sx={{ 
-                              bgcolor: 'primary.main', 
+                              bgcolor: session.isAndroidTV ? 'success.main' : 'primary.main', 
                               width: 32, 
                               height: 32, 
                               mr: 2,
@@ -452,7 +453,33 @@ function StreamingMonitor({
                             <Typography variant="caption" color="text.secondary">
                               {session.hostname || 'Resolving...'}
                             </Typography>
+                            {session.isAndroidTV && (
+                              <Chip
+                                label="Android TV"
+                                size="small"
+                                sx={{
+                                  height: '16px',
+                                  fontSize: '0.65rem',
+                                  bgcolor: 'success.light',
+                                  color: 'success.dark',
+                                  mt: 0.5
+                                }}
+                              />
+                            )}
                           </Box>
+                        </Box>
+                      </TableCell>
+                      <TableCell>
+                        <Box>
+                          <Typography variant="body2" fontWeight="bold">
+                            {session.plexDeviceName || session.plexDevice || session.deviceName || session.clientType || 'Unknown Device'}
+                          </Typography>
+                          {(session.plexUsername || session.plexUser) && (
+                            <Typography variant="caption" color="text.secondary" sx={{ display: 'flex', alignItems: 'center' }}>
+                              <PersonPinIcon sx={{ fontSize: 12, mr: 0.5 }} />
+                              {session.plexUsername || session.plexUser}
+                            </Typography>
+                          )}
                         </Box>
                       </TableCell>
                       <TableCell>

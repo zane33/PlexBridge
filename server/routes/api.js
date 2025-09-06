@@ -1594,18 +1594,20 @@ router.get('/streams/active', async (req, res) => {
     }
     
     logger.info('Getting active streams...');
-    const activeStreams = await streamManager.getActiveStreams();
+    const streamSessionManager = require('../services/streamSessionManager');
+    const activeSessions = streamSessionManager.getActiveSessions();
+    const activeStreams = activeSessions || [];
     logger.info('Getting streams by channel...');
     const streamsByChannel = streamManager.getStreamsByChannel();
     logger.info('Getting concurrency metrics...');
-    const concurrencyMetrics = streamManager.getConcurrencyMetrics(maxConcurrentStreams);
+    const capacityMetrics = streamSessionManager.getCapacityMetrics(maxConcurrentStreams);
     logger.info('Active streams endpoint data prepared successfully');
     
     res.json({
       streams: activeStreams, // Dashboard expects "streams" property
       activeStreams, // Keep for backward compatibility
       streamsByChannel,
-      metrics: concurrencyMetrics,
+      metrics: capacityMetrics,
       timestamp: new Date().toISOString()
     });
   } catch (error) {

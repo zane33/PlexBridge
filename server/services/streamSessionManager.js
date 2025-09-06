@@ -72,7 +72,28 @@ class StreamSessionManager {
       // Resolve client hostname asynchronously
       const hostname = await this.resolveHostname(clientIP);
       
-      // Create session record
+      // ANDROID TV DETECTION: Enhanced client detection from user agent
+      const isAndroidTV = userAgent && (
+        userAgent.toLowerCase().includes('androidtv') || 
+        userAgent.toLowerCase().includes('android tv') ||
+        userAgent.toLowerCase().includes('nexusplayer') ||
+        userAgent.toLowerCase().includes('mibox') ||
+        userAgent.toLowerCase().includes('shield') ||
+        userAgent.toLowerCase().includes('bravia') ||
+        (userAgent.toLowerCase().includes('android') && userAgent.toLowerCase().includes('tv'))
+      );
+      
+      // Detect other client types
+      const isPlexClient = userAgent && (
+        userAgent.toLowerCase().includes('plex') ||
+        userAgent.toLowerCase().includes('pms') ||
+        userAgent.toLowerCase().includes('lavf')
+      );
+      
+      const isAppleTV = userAgent && userAgent.toLowerCase().includes('appletv');
+      const isRoku = userAgent && userAgent.toLowerCase().includes('roku');
+      
+      // Create session record with enhanced client detection
       const session = {
         sessionId,
         streamId,
@@ -95,6 +116,37 @@ class StreamSessionManager {
         plexDeviceName: plex_device_name,
         uniqueClientId: unique_client_id,
         displayName: display_name || 'Unknown Client',
+        
+        // ANDROID TV ENHANCEMENTS: Client detection and session features
+        isAndroidTV,
+        isPlexClient,
+        isAppleTV,
+        isRoku,
+        clientType: isAndroidTV ? 'Android TV' : 
+                   isAppleTV ? 'Apple TV' :
+                   isRoku ? 'Roku' :
+                   isPlexClient ? 'Plex Client' : 'Standard Client',
+        
+        // Android TV specific session configuration
+        sessionTimeout: isAndroidTV ? 300000 : 30000, // 5 minutes vs 30 seconds
+        bufferingProtection: isAndroidTV,
+        resilientMode: isAndroidTV,
+        
+        // Enhanced session features for dashboard display
+        sessionFeatures: {
+          extendedTimeout: isAndroidTV,
+          errorRecovery: isAndroidTV,
+          segmentFallback: isAndroidTV,
+          consumerRegistration: true,
+          ...(isAndroidTV && {
+            androidTVOptimizations: {
+              timeoutExtension: '300s',
+              bufferingProtection: true,
+              segmentErrorRecovery: true,
+              dummySegmentGeneration: true
+            }
+          })
+        },
         
         // Performance metrics
         bytesTransferred: 0,
