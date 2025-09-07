@@ -12,6 +12,7 @@ const { v4: uuidv4 } = require('uuid');
 const segmentHandler = require('../services/segmentHandler');
 const hlsQualitySelector = require('../services/hlsQualitySelector');
 const androidTVSessionManager = require('../services/androidTVSessionManager');
+const hlsSegmentResolver = require('../services/hlsSegmentResolver');
 
 // Apply session keep-alive middleware to all stream endpoints
 router.use(sessionKeepAlive());
@@ -433,13 +434,45 @@ router.get('/stream/:channelId/:filename?', async (req, res) => {
     // Determine the target URL
     let targetUrl = stream.url;
     if (isSubFile) {
-      // For sub-files, construct the target URL based on known redirect patterns
-      if (stream.url.includes('i.mjh.nz/.r/discovery-hgtv.m3u8')) {
+      // CRITICAL FIX: Use HLS Segment Resolver for proper segment URL resolution
+      // This fixes Android TV 404 errors by dynamically resolving segment URLs from playlists
+      if (filename.endsWith('.ts') || filename.endsWith('.m4s') || filename.endsWith('.mp4')) {
+        try {
+          // Use the HLS segment resolver to get the actual segment URL
+          targetUrl = await hlsSegmentResolver.resolveSegmentUrl(stream.url, filename, {
+            userAgent: req.get('User-Agent')
+          });
+          
+          logger.info('Resolved HLS segment URL dynamically', {
+            originalUrl: stream.url,
+            segmentFilename: filename,
+            resolvedUrl: targetUrl.substring(0, 80) + '...',
+            isAndroidTV
+          });
+        } catch (resolveError) {
+          logger.error('Failed to resolve HLS segment URL, using fallback', {
+            error: resolveError.message,
+            streamUrl: stream.url,
+            filename
+          });
+          
+          // Fallback to old logic temporarily
+          if (stream.url.includes('i.mjh.nz/.r/discovery-hgtv.m3u8')) {
+            // HGTV redirects to https://mediapackage-hgtv-source.fullscreen.nz/index.m3u8
+            targetUrl = `https://mediapackage-hgtv-source.fullscreen.nz/${filename}`;
+            logger.info('Using hardcoded HGTV target URL', { targetUrl, filename });
+          } else {
+            // Try to construct based on base URL
+            const baseUrl = stream.url.replace(/\/[^\/]*\.m3u8.*$/, '/');
+            targetUrl = baseUrl + filename;
+          }
+        }
+      } else if (stream.url.includes('i.mjh.nz/.r/discovery-hgtv.m3u8')) {
         // HGTV redirects to https://mediapackage-hgtv-source.fullscreen.nz/index.m3u8
         targetUrl = `https://mediapackage-hgtv-source.fullscreen.nz/${filename}`;
         logger.info('Using hardcoded HGTV target URL', { targetUrl, filename });
       } else {
-        // For other streams, try to resolve redirect using curl-like approach
+        // For other sub-files (like .m3u8 variants), try to resolve redirect using curl-like approach
         try {
           const axios = require('axios');
           

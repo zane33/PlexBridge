@@ -130,8 +130,8 @@ class SegmentHandler {
    */
   async streamSegment(segmentUrl, res, options = {}) {
     const isAndroidTV = options.androidTV || false;
-    const maxRetries = options.maxRetries || this.maxRetries;
-    const timeout = options.timeout || 10000;
+    const maxRetries = isAndroidTV ? 5 : (options.maxRetries || this.maxRetries); // More retries for Android TV
+    const timeout = isAndroidTV ? 15000 : (options.timeout || 10000); // Longer timeout for Android TV
     
     try {
       // Enhanced options for Android TV
