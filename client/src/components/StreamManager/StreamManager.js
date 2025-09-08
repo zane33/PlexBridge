@@ -165,15 +165,17 @@ function StreamManager() {
 
   const formValidation = useMemo(() => {
     const isM3UPlaylist = formData.type === 'm3u_playlist';
+    // Channel is always optional - allows orphaned streams in both creation and editing
+    const requireChannel = false;
     return {
       nameError: !formData.name.trim(),
       urlError: !formData.url.trim(),
-      channelError: !isM3UPlaylist && !formData.channel_id,
+      channelError: requireChannel,
       nameHelperText: !formData.name.trim() ? "Stream name is required" : "",
       urlHelperText: !formData.url.trim() ? "Stream URL is required" : "",
-      channelHelperText: !isM3UPlaylist && !formData.channel_id ? "Channel selection is required" : ""
+      channelHelperText: requireChannel ? "Channel selection is required" : ""
     };
-  }, [formData.name, formData.url, formData.channel_id, formData.type]);
+  }, [formData.name, formData.url, formData.channel_id, formData.type, editingStream]);
 
   useEffect(() => {
     fetchStreams();
@@ -1491,12 +1493,14 @@ function StreamManager() {
             <Grid item xs={12} sm={4}>
               <FormControl fullWidth variant="outlined" error={formValidation.channelError}>
                 <InputLabel>
-                  {formData.type === 'm3u_playlist' ? 'Channel (Optional for M3U)' : 'Channel *'}
+                  {formData.type === 'm3u_playlist' ? 'Channel (Optional for M3U)' : 'Channel (Optional)'}
                 </InputLabel>
                 <Select
                   value={formData.channel_id}
                   onChange={(e) => handleInputChange('channel_id', e.target.value)}
-                  label={formData.type === 'm3u_playlist' ? 'Channel (Optional for M3U)' : 'Channel *'}
+                  label={
+                    formData.type === 'm3u_playlist' ? 'Channel (Optional for M3U)' : 'Channel (Optional)'
+                  }
                   disabled={saving || formData.type === 'm3u_playlist'}
                 >
                   {formData.type === 'm3u_playlist' ? (
