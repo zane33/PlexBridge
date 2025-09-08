@@ -2405,13 +2405,13 @@ class StreamManager {
 
       // ===== ADD SESSION TRACKING FOR PLEX STREAMS =====
       const streamSessionManager = require('./streamSessionManager');
-      const clientIdentifier = this.generateClientIdentifier(req);
+      const sessionClientIdentifier = this.generateClientIdentifier(req);
       
       // Check for existing session to prevent duplicates
-      const existingSession = streamSessionManager.getActiveSessionByClientAndStream(clientIdentifier, channel.id);
+      const existingSession = streamSessionManager.getActiveSessionByClientAndStream(sessionClientIdentifier, channel.id);
       
       logger.info('Plex duplicate session check', {
-        clientIdentifier,
+        clientIdentifier: sessionClientIdentifier,
         channelId: channel.id,
         existingSession: existingSession ? existingSession.sessionId : 'none',
         userAgent: req.get('User-Agent'),
@@ -2423,14 +2423,14 @@ class StreamManager {
         logger.info('Found existing Plex session - ending it to prevent duplicates', {
           existingSessionId: existingSession.sessionId,
           channelId: channel.id,
-          clientIdentifier
+          clientIdentifier: sessionClientIdentifier
         });
         
         // End the existing session and create a new one (Plex likely reconnected)
         await streamSessionManager.endSession(existingSession.sessionId, 'plex_reconnect');
       }
       
-      sessionId = `plex_${channel.id}_${clientIdentifier}_${Date.now()}`;
+      sessionId = `plex_${channel.id}_${sessionClientIdentifier}_${Date.now()}`;
       
       // Create session info for tracking
       const streamInfo = {
@@ -2440,7 +2440,7 @@ class StreamManager {
         startTime: Date.now(),
         clientIP: req.ip,
         userAgent: req.get('User-Agent'),
-        clientIdentifier,
+        clientIdentifier: sessionClientIdentifier,
         url: finalStreamUrl,
         type: forceTranscode ? 'plex-mpegts-transcode' : 'plex-mpegts',
         channelName: channel.name,
@@ -2486,10 +2486,10 @@ class StreamManager {
       this.channelStreams.get(channel.id).add(sessionId);
       
       // Track client sessions
-      if (!this.clientSessions.has(clientIdentifier)) {
-        this.clientSessions.set(clientIdentifier, new Map());
+      if (!this.clientSessions.has(sessionClientIdentifier)) {
+        this.clientSessions.set(sessionClientIdentifier, new Map());
       }
-      this.clientSessions.get(clientIdentifier).set(channel.id, sessionId);
+      this.clientSessions.get(sessionClientIdentifier).set(channel.id, sessionId);
 
       // Get actual stream ID from streams table for foreign key constraint
       const database = require('./database');
@@ -2516,7 +2516,7 @@ class StreamManager {
           streamId: actualStreamId,
           clientIP: req.ip,
           userAgent: req.get('User-Agent'),
-          clientIdentifier,
+          clientIdentifier: sessionClientIdentifier,
           channelName: channel.name,
           channelNumber: channel.number,
           streamUrl: finalStreamUrl,
@@ -2794,7 +2794,7 @@ class StreamManager {
           channelNumber: channel.number,
           clientIP: req.ip,
           userAgent: req.get('User-Agent'),
-          clientIdentifier,
+          clientIdentifier: sessionClientIdentifier,
           streamUrl: finalStreamUrl,
           streamType: 'plex-mpegts',
           startTime: Date.now(),
@@ -3001,8 +3001,6 @@ class StreamManager {
       await new Promise(resolve => setTimeout(resolve, 2000));
 
       // Read and serve the HLS playlist
-      const fs = require('fs');
-      const path = require('path');
       const playlistPath = path.join('data/cache', `plex_web_${sessionId}.m3u8`);
       
       // Set up interval to update playlist
