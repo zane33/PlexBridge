@@ -1812,13 +1812,49 @@ class StreamManager {
         channelId: channel?.id, 
         channelName: channel?.name 
       });
-      logger.info('Starting Plex-compatible MPEG-TS stream', {
+      
+      // CRITICAL: Detect Plex Web Client specifically
+      const userAgent = req.get('User-Agent') || '';
+      const clientIdentifier = req.headers['x-plex-client-identifier'] || '';
+      const clientName = req.headers['x-plex-client-name'] || '';
+      const product = req.headers['x-plex-product'] || '';
+      
+      // Check if this is a Plex Web Client (browser-based) request
+      const isPlexWebClient = (
+        product.toLowerCase().includes('plex web') ||
+        clientName.toLowerCase().includes('chrome') ||
+        clientName.toLowerCase().includes('firefox') ||
+        clientName.toLowerCase().includes('safari') ||
+        clientName.toLowerCase().includes('edge') ||
+        (userAgent.includes('Chrome') && clientIdentifier) ||
+        (userAgent.includes('Firefox') && clientIdentifier) ||
+        (userAgent.includes('Safari') && clientIdentifier)
+      );
+      
+      logger.info('Starting Plex-compatible stream', {
         channelId: channel.id,
         channelName: channel.name,
         channelNumber: channel.number,
         streamUrl,
-        clientIP: req.ip
+        clientIP: req.ip,
+        isPlexWebClient,
+        clientName,
+        product,
+        userAgent: userAgent.substring(0, 100)
       });
+      
+      // If this is a Plex Web Client, use HLS transcoding instead of raw MPEG-TS
+      if (isPlexWebClient) {
+        logger.info('Detected Plex Web Client - using HLS transcoding for browser compatibility', {
+          channelId: channel.id,
+          clientName,
+          product
+        });
+        
+        // Web clients need HLS segments, not raw MPEG-TS
+        // Use a specialized handler for web client streaming
+        return await this.proxyPlexWebClientStream(streamUrl, channel, stream, req, res);
+      }
 
       // Resolve redirects for the stream URL before passing to FFmpeg
       let finalStreamUrl = streamUrl;
@@ -2835,6 +2871,252 @@ class StreamManager {
       if (!res.headersSent) {
         // Send 503 with no body for Plex compatibility
         res.status(503).end();
+      }
+    }
+  }
+
+  // Special handler for Plex Web Client (browser-based) streaming
+  async proxyPlexWebClientStream(streamUrl, channel, stream, req, res) {
+    try {
+      const sessionId = `plex_web_${channel.id}_${Date.now()}`;
+      const clientIdentifier = req.headers['x-plex-client-identifier'] || `web_${req.ip}`;
+      
+      logger.info('Starting Plex Web Client HLS stream', {
+        channelId: channel.id,
+        channelName: channel.name,
+        channelNumber: channel.number,
+        streamUrl,
+        sessionId,
+        clientIP: req.ip
+      });
+
+      // Resolve redirects first
+      let finalStreamUrl = streamUrl;
+      try {
+        const axios = require('axios');
+        if (streamUrl.includes('mjh.nz') || streamUrl.includes('')) {
+          const response = await axios.head(streamUrl, {
+            maxRedirects: 0,
+            timeout: 10000,
+            validateStatus: (status) => status >= 200 && status < 400,
+            headers: { 'User-Agent': 'PlexBridge/1.0' }
+          });
+          if (response.status === 302 && response.headers.location) {
+            finalStreamUrl = response.headers.location;
+            logger.info('Resolved redirect for web client', {
+              originalUrl: streamUrl,
+              finalUrl: finalStreamUrl
+            });
+          }
+        }
+      } catch (redirectError) {
+        logger.warn('Failed to resolve redirect, using original URL', {
+          error: redirectError.message
+        });
+      }
+
+      // Store active stream
+      const streamInfo = {
+        streamId: channel.id,
+        sessionId,
+        startTime: Date.now(),
+        clientIP: req.ip,
+        userAgent: req.get('User-Agent'),
+        clientIdentifier,
+        channelName: channel.name,
+        channelNumber: channel.number,
+        isPlexWebStream: true
+      };
+      
+      this.activeStreams.set(sessionId, streamInfo);
+
+      // Ensure cache directory exists for HLS segments
+      const fs = require('fs');
+      const path = require('path');
+      const cacheDir = path.join('data', 'cache');
+      if (!fs.existsSync(cacheDir)) {
+        fs.mkdirSync(cacheDir, { recursive: true });
+      }
+      
+      // Web clients need properly formatted HLS with segments
+      // Use FFmpeg to create HLS output with longer segments for stability
+      const ffmpegArgs = [
+        '-hide_banner',
+        '-loglevel', 'error',
+        '-reconnect', '1',
+        '-reconnect_at_eof', '1',
+        '-reconnect_streamed', '1',
+        '-reconnect_delay_max', '2',
+        '-analyzeduration', '10000000',
+        '-probesize', '10000000',
+        '-i', finalStreamUrl,
+        
+        // Video settings - copy if possible, transcode if needed
+        '-c:v', 'copy',
+        '-c:a', 'copy',
+        
+        // HLS output settings optimized for Plex Web
+        '-f', 'hls',
+        '-hls_time', '10',           // 10 second segments (longer for stability)
+        '-hls_list_size', '6',       // Keep 6 segments in playlist (1 minute buffer)
+        '-hls_wrap', '10',           // Wrap segment numbering
+        '-hls_delete_threshold', '1', // Delete old segments
+        '-hls_flags', 'delete_segments+append_list+omit_endlist',
+        '-hls_segment_type', 'mpegts',
+        '-hls_segment_filename', `data/cache/plex_web_${sessionId}_%03d.ts`,
+        
+        // Output playlist
+        `data/cache/plex_web_${sessionId}.m3u8`
+      ];
+
+      // If it's an HLS input, add protocol whitelist
+      if (finalStreamUrl.includes('.m3u8')) {
+        ffmpegArgs.splice(ffmpegArgs.indexOf('-i'), 0,
+          '-allowed_extensions', 'ALL',
+          '-protocol_whitelist', 'file,http,https,tcp,tls,pipe,crypto'
+        );
+      }
+
+      const { spawn } = require('child_process');
+      const ffmpegProcess = spawn(config.streams.ffmpegPath, ffmpegArgs);
+      
+      streamInfo.process = ffmpegProcess;
+      
+      logger.info('FFmpeg HLS transcoding started for web client', {
+        sessionId,
+        pid: ffmpegProcess.pid,
+        channelId: channel.id
+      });
+
+      // Set proper headers for HLS streaming
+      res.set({
+        'Content-Type': 'application/vnd.apple.mpegurl',
+        'Access-Control-Allow-Origin': '*',
+        'Cache-Control': 'no-cache, no-store, must-revalidate',
+        'Connection': 'keep-alive',
+        'X-Plex-Web-Stream': 'true'
+      });
+
+      // Wait a moment for FFmpeg to create the initial playlist
+      await new Promise(resolve => setTimeout(resolve, 2000));
+
+      // Read and serve the HLS playlist
+      const fs = require('fs');
+      const path = require('path');
+      const playlistPath = path.join('data/cache', `plex_web_${sessionId}.m3u8`);
+      
+      // Set up interval to update playlist
+      const playlistInterval = setInterval(async () => {
+        try {
+          if (!fs.existsSync(playlistPath)) {
+            logger.warn('HLS playlist not found', { sessionId, playlistPath });
+            return;
+          }
+          
+          const playlistContent = fs.readFileSync(playlistPath, 'utf8');
+          
+          // Rewrite segment URLs to be accessible via PlexBridge
+          const rewrittenPlaylist = playlistContent.replace(
+            /plex_web_[^.]+\.ts/g,
+            (match) => `/api/streams/segment/${sessionId}/${match}`
+          );
+          
+          if (!res.headersSent && !res.finished) {
+            res.write(rewrittenPlaylist);
+          } else {
+            clearInterval(playlistInterval);
+          }
+          
+        } catch (error) {
+          logger.error('Error reading HLS playlist', {
+            sessionId,
+            error: error.message
+          });
+        }
+      }, 1000); // Update every second
+
+      // Handle FFmpeg errors
+      ffmpegProcess.stderr.on('data', (data) => {
+        const errorOutput = data.toString();
+        logger.debug('FFmpeg HLS output', { sessionId, data: errorOutput });
+        
+        if (errorOutput.includes('fatal') || errorOutput.includes('error')) {
+          logger.error('FFmpeg HLS error for web client', {
+            sessionId,
+            channelId: channel.id,
+            error: errorOutput
+          });
+        }
+      });
+
+      ffmpegProcess.on('close', (code) => {
+        logger.info('FFmpeg HLS process closed', {
+          sessionId,
+          channelId: channel.id,
+          exitCode: code
+        });
+        
+        clearInterval(playlistInterval);
+        this.cleanupStream(sessionId, 'process_closed');
+        
+        // Clean up HLS files
+        try {
+          const files = fs.readdirSync('data/cache');
+          files.forEach(file => {
+            if (file.includes(`plex_web_${sessionId}`)) {
+              fs.unlinkSync(path.join('data/cache', file));
+            }
+          });
+        } catch (cleanupError) {
+          logger.warn('Error cleaning up HLS files', {
+            sessionId,
+            error: cleanupError.message
+          });
+        }
+      });
+
+      // Handle client disconnect
+      req.on('close', () => {
+        logger.info('Plex Web Client disconnected', {
+          sessionId,
+          channelId: channel.id
+        });
+        
+        clearInterval(playlistInterval);
+        if (ffmpegProcess && !ffmpegProcess.killed) {
+          ffmpegProcess.kill('SIGTERM');
+        }
+        this.cleanupStream(sessionId, 'client_disconnect');
+      });
+
+      // Track session with enhanced monitoring
+      if (streamSessionManager) {
+        streamSessionManager.startSession({
+          sessionId,
+          streamId: channel.id,
+          clientIP: req.ip,
+          userAgent: req.get('User-Agent'),
+          clientIdentifier,
+          channelName: channel.name,
+          channelNumber: channel.number,
+          streamUrl: finalStreamUrl,
+          streamType: 'plex-web-hls',
+          isWebClient: true
+        });
+      }
+
+    } catch (error) {
+      logger.error('Plex Web Client stream error', {
+        channelId: channel.id,
+        error: error.message,
+        stack: error.stack
+      });
+      
+      if (!res.headersSent) {
+        res.status(503).json({
+          error: 'Failed to start web client stream',
+          details: error.message
+        });
       }
     }
   }

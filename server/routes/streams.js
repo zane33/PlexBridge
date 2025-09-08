@@ -880,6 +880,69 @@ router.get('/streams/preview/:streamId', async (req, res) => {
   }
 });
 
+// HLS segment endpoint for Plex Web Client streaming
+router.get('/api/streams/segment/:sessionId/:filename', async (req, res) => {
+  try {
+    const { sessionId, filename } = req.params;
+    const fs = require('fs');
+    const path = require('path');
+    
+    logger.debug('HLS segment request', { sessionId, filename });
+    
+    // Validate the filename to prevent directory traversal
+    if (filename.includes('..') || filename.includes('/') || filename.includes('\\')) {
+      logger.warn('Invalid segment filename', { sessionId, filename });
+      return res.status(400).send('Invalid filename');
+    }
+    
+    // Construct the segment path
+    const segmentPath = path.join('data/cache', filename);
+    
+    // Check if the file exists
+    if (!fs.existsSync(segmentPath)) {
+      logger.warn('HLS segment not found', { sessionId, filename, segmentPath });
+      return res.status(404).send('Segment not found');
+    }
+    
+    // Get file stats for content length
+    const stats = fs.statSync(segmentPath);
+    
+    // Set proper headers for MPEG-TS segment
+    res.set({
+      'Content-Type': 'video/mp2t',
+      'Content-Length': stats.size,
+      'Access-Control-Allow-Origin': '*',
+      'Cache-Control': 'no-cache, no-store, must-revalidate',
+      'Accept-Ranges': 'bytes'
+    });
+    
+    // Stream the file
+    const stream = fs.createReadStream(segmentPath);
+    stream.pipe(res);
+    
+    stream.on('error', (error) => {
+      logger.error('Error streaming HLS segment', {
+        sessionId,
+        filename,
+        error: error.message
+      });
+      if (!res.headersSent) {
+        res.status(500).send('Error streaming segment');
+      }
+    });
+    
+  } catch (error) {
+    logger.error('HLS segment endpoint error', {
+      sessionId: req.params.sessionId,
+      filename: req.params.filename,
+      error: error.message
+    });
+    if (!res.headersSent) {
+      res.status(500).send('Internal server error');
+    }
+  }
+});
+
 // HLS conversion endpoint for .ts streams
 router.get('/streams/convert/hls/:streamId', async (req, res) => {
   try {
