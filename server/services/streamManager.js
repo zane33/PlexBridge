@@ -2011,7 +2011,7 @@ class StreamManager {
           } catch (playlistError) {
             logger.warn('Failed to process playlist with beacons for Plex, using original URL', {
               channelId: channel.id,
-              error: playlistError.message
+              error: playlistError.message.replace(/[?&]([^=]+)=[^&]*/g, '[REDACTED]')
             });
           }
         } else {
@@ -2992,7 +2992,7 @@ class StreamManager {
             }
           } catch (playlistError) {
             logger.warn('Failed to process playlist with beacons, using original URL', {
-              error: playlistError.message
+              error: playlistError.message.replace(/[?&]([^=]+)=[^&]*/g, '[REDACTED]')
             });
           }
         }
@@ -3382,6 +3382,9 @@ class StreamManager {
     const axios = require('axios');
     const { PassThrough } = require('stream');
     
+    // CRITICAL FIX: Declare sessionId at function scope to avoid ReferenceError in catch block
+    let sessionId;
+    
     try {
       logger.info('Starting web-compatible stream with channel context', {
         channelId: channel.id,
@@ -3394,7 +3397,7 @@ class StreamManager {
       // Create session for bandwidth tracking
       const streamSessionManager = require('./streamSessionManager');
       const clientIdentifier = this.generateClientIdentifier(req);
-      const sessionId = `${channel.id}_${clientIdentifier}_${Date.now()}`;
+      sessionId = `${channel.id}_${clientIdentifier}_${Date.now()}`;
       
       // Start session tracking for direct proxy streams
       // Extract Plex headers securely
@@ -3596,9 +3599,17 @@ class StreamManager {
       }
 
     } catch (error) {
-      // End session on error
+      // End session on error - only if sessionId was successfully created
       if (sessionId) {
-        await streamSessionManager.endSession(sessionId, 'error');
+        try {
+          const streamSessionManager = require('./streamSessionManager');
+          await streamSessionManager.endSession(sessionId, 'error');
+        } catch (sessionEndError) {
+          logger.warn('Failed to end session during error cleanup', {
+            sessionId,
+            error: sessionEndError.message
+          });
+        }
       }
       
       // If direct streaming fails, fall back to transcoding
@@ -4350,15 +4361,92 @@ class StreamManager {
       }
     }
     
-    // IPv6 checks
+    // IPv6 checks - Comprehensive private range validation
     if (ip === 6) {
-      if (hostname === '::1') return true; // Loopback
-      if (hostname.toLowerCase().startsWith('fe80::')) return true; // Link-local
-      if (hostname.toLowerCase().startsWith('fc00::')) return true; // Unique local
-      if (hostname.toLowerCase().startsWith('fd00::')) return true; // Unique local
+      const lower = hostname.toLowerCase();
+      if (lower === '::1') return true; // Loopback
+      if (lower.startsWith('fe80:')) return true; // Link-local (full range)
+      if (lower.startsWith('fc00:')) return true; // Unique local
+      if (lower.startsWith('fd00:')) return true; // Unique local  
+      if (lower.startsWith('2001:db8:')) return true; // Documentation range
+      if (lower.startsWith('::ffff:')) { // IPv4-mapped IPv6
+        const ipv4Match = lower.match(/::ffff:(\d+\.\d+\.\d+\.\d+)/);
+        if (ipv4Match) {
+          const embeddedIPv4 = ipv4Match[1];
+          // Recursively validate embedded IPv4
+          return this.isPrivateOrLocalAddress(embeddedIPv4);
+        }
+      }
+      if (lower.startsWith('64:ff9b::')) { // IPv4-embedded IPv6
+        return true; // Well-known prefix for IPv4/IPv6 translation
+      }
+      if (lower.startsWith('2001:10:')) return true; // Orchid v2
+      if (lower.startsWith('2001:20:')) return true; // ORCHIDv2
     }
     
     return false;
+  }
+
+  /**
+   * Enhanced playlist cleanup with size-based protection against memory leaks
+   * Prevents unbounded memory growth under high concurrency
+   */
+  cleanupExpiredPlaylists() {
+    const MAX_CACHE_SIZE = 100;
+    const MAX_AGE = 5 * 60 * 1000; // 5 minutes
+    const now = Date.now();
+
+    try {
+      // Size-based cleanup - force cleanup if cache is too large
+      if (this.cleanedPlaylists && this.cleanedPlaylists.size >= MAX_CACHE_SIZE) {
+        logger.warn('Playlist cache size limit reached, performing forced cleanup', {
+          currentSize: this.cleanedPlaylists.size,
+          maxSize: MAX_CACHE_SIZE
+        });
+
+        // Sort entries by timestamp and remove oldest entries
+        const entries = Array.from(this.cleanedPlaylists.entries())
+          .sort(([,a], [,b]) => a.timestamp - b.timestamp);
+        
+        const targetSize = Math.floor(MAX_CACHE_SIZE * 0.7); // Remove 30% when cleanup triggered
+        const toDelete = entries.slice(0, entries.length - targetSize);
+        toDelete.forEach(([id]) => this.cleanedPlaylists.delete(id));
+
+        logger.info('Forced playlist cleanup completed', {
+          entriesRemoved: toDelete.length,
+          newSize: this.cleanedPlaylists.size
+        });
+      }
+
+      // Age-based cleanup - remove expired entries
+      if (this.cleanedPlaylists && this.cleanedPlaylists.size > 0) {
+        const expiredIds = [];
+        for (const [id, data] of this.cleanedPlaylists) {
+          if (now - data.timestamp > MAX_AGE) {
+            expiredIds.push(id);
+          }
+        }
+        
+        if (expiredIds.length > 0) {
+          expiredIds.forEach(id => this.cleanedPlaylists.delete(id));
+          logger.debug('Expired playlist cleanup completed', {
+            expiredCount: expiredIds.length,
+            remainingSize: this.cleanedPlaylists.size
+          });
+        }
+      }
+    } catch (cleanupError) {
+      logger.error('Playlist cleanup failed - fallback to emergency cleanup', {
+        error: cleanupError.message,
+        cacheSize: this.cleanedPlaylists?.size || 0
+      });
+      
+      // Emergency cleanup - clear all if cleanup fails
+      if (this.cleanedPlaylists && this.cleanedPlaylists.size > MAX_CACHE_SIZE * 2) {
+        this.cleanedPlaylists.clear();
+        logger.warn('Emergency playlist cache clear performed');
+      }
+    }
   }
 
   /**
@@ -4376,11 +4464,22 @@ class StreamManager {
     try {
       const axios = require('axios');
       
-      // Security: Block internal/local URLs
+      // Security: Validate URL scheme and block internal/local URLs  
       const urlObj = new URL(playlistUrl);
+      
+      // Validate URL scheme
+      const allowedProtocols = ['http:', 'https:'];
+      if (!allowedProtocols.includes(urlObj.protocol)) {
+        logger.warn('Blocked request with unsupported protocol', { 
+          protocol: urlObj.protocol,
+          url: playlistUrl.split('?')[0] 
+        });
+        throw new Error(`Unsupported protocol: ${urlObj.protocol}`);
+      }
+      
       if (this.isPrivateOrLocalAddress(urlObj.hostname)) {
         logger.warn('Blocked request to internal IP address', { 
-          url: playlistUrl,
+          url: playlistUrl.split('?')[0],
           hostname: urlObj.hostname 
         });
         throw new Error('Internal IP addresses not allowed');
@@ -4471,15 +4570,8 @@ class StreamManager {
           originalUrl: playlistUrl
         });
         
-        // Clean up old playlists (older than 5 minutes) - safe iteration
-        const now = Date.now();
-        const expiredIds = [];
-        for (const [id, data] of this.cleanedPlaylists) {
-          if (now - data.timestamp > 5 * 60 * 1000) {
-            expiredIds.push(id);
-          }
-        }
-        expiredIds.forEach(id => this.cleanedPlaylists.delete(id));
+        // Enhanced playlist cleanup with size-based protection against memory leaks
+        this.cleanupExpiredPlaylists();
         
         // Return proxy URL for cleaned playlist
         const settings = await this.loadSettings();
@@ -4507,9 +4599,13 @@ class StreamManager {
       return playlistUrl;
 
     } catch (error) {
+      // Sanitize error logging to prevent credential exposure
+      const sanitizedUrl = playlistUrl ? playlistUrl.split('?')[0] : 'unknown';
+      const sanitizedError = error.message ? error.message.replace(/[?&]([^=]+)=[^&]*/g, '[REDACTED]') : 'unknown';
+      
       logger.warn('Failed to process playlist with beacons', {
-        url: playlistUrl,
-        error: error.message,
+        url: sanitizedUrl,
+        error: sanitizedError,
         channelId
       });
       return playlistUrl; // Fallback to original URL
