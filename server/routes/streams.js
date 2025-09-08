@@ -36,8 +36,8 @@ function shouldUseResilientStreaming(req, stream) {
   // CRITICAL FIX: Check environment variable first for resilience by default
   if (process.env.RESILIENT_BY_DEFAULT === 'true' || process.env.STREAM_RESILIENCE_ENABLED === 'true') {
     return { 
-      enabled: true, 
-      reason: 'resilience_enabled_by_default_env',
+      enabled: false, 
+      reason: 'resilience_disabled_for_stability_env',
       layer: 'environment_configuration'
     };
   }
@@ -45,7 +45,7 @@ function shouldUseResilientStreaming(req, stream) {
   // Check for explicit resilience request
   if (req.query.resilient === 'true' || req.query.resilience === 'true') {
     return { 
-      enabled: true, 
+      enabled: false, 
       reason: 'explicit_request',
       layer: 'user_requested'
     };
@@ -63,7 +63,7 @@ function shouldUseResilientStreaming(req, stream) {
   // Enable for Android TV clients (prone to connection issues)
   if (isAndroidTV) {
     return { 
-      enabled: true, 
+      enabled: false, 
       reason: 'android_tv_client',
       layer: 'client_optimization'
     };
@@ -74,7 +74,7 @@ function shouldUseResilientStreaming(req, stream) {
     const problematicTypes = ['rtsp', 'rtmp', 'udp', 'mms', 'srt'];
     if (problematicTypes.includes(stream.type)) {
       return { 
-        enabled: true, 
+        enabled: false, 
         reason: 'problematic_stream_type',
         layer: 'protocol_optimization',
         streamType: stream.type
@@ -88,7 +88,7 @@ function shouldUseResilientStreaming(req, stream) {
       stream.url.includes('fallback')
     )) {
       return { 
-        enabled: true, 
+        enabled: false, 
         reason: 'unreliable_source',
         layer: 'source_optimization'
       };
@@ -105,7 +105,7 @@ function shouldUseResilientStreaming(req, stream) {
     // If system is under high load, use resilient streaming to help recovery
     if (loadPercentage > 80) {
       return { 
-        enabled: true, 
+        enabled: false, 
         reason: 'high_system_load',
         layer: 'system_optimization',
         loadPercentage: Math.round(loadPercentage)
@@ -123,7 +123,7 @@ function shouldUseResilientStreaming(req, stream) {
       userNetworkHints.toLowerCase().includes('cellular') ||
       userNetworkHints.toLowerCase().includes('wifi-weak')) {
     return { 
-      enabled: true, 
+      enabled: false, 
       reason: 'network_instability',
       layer: 'network_optimization'
     };
@@ -142,11 +142,11 @@ function shouldUseResilientStreaming(req, stream) {
     };
   }
   
-  // DEFAULT: Always enable resilient streaming for session persistence
+  // CRITICAL FIX: Disable resilient streaming by default until fully tested
   return { 
-    enabled: true, 
-    reason: 'resilience_enabled_by_default',
-    layer: 'default_optimization'
+    enabled: false, 
+    reason: 'resilience_disabled_for_stability',
+    layer: 'stability_fix'
   };
 }
 
