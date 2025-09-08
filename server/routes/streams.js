@@ -141,6 +141,88 @@ router.get('/stream/:channelId/:filename?', async (req, res) => {
                         userAgent.toLowerCase().includes('shield') ||
                         userAgent.toLowerCase().includes('android');
     
+    // Get channel and stream info early for targetUrl resolution
+    // Get channel info from database - first try as channel ID
+    let channel = await database.get('SELECT * FROM channels WHERE id = ?', [channelId]);
+    let stream = null;
+    
+    if (channel) {
+      // Found channel, get associated stream
+      stream = await database.get('SELECT * FROM streams WHERE channel_id = ?', [channelId]);
+      if (!stream) {
+        logger.warn('Stream not found for channel', { 
+          channelId, 
+          channelName: channel.name,
+          channelNumber: channel.number,
+          filename,
+          clientIP: req.ip 
+        });
+        return res.status(404).send('Stream not found for channel');
+      }
+    } else {
+      // No channel found, try as stream ID directly
+      stream = await database.get('SELECT * FROM streams WHERE id = ?', [channelId]);
+      if (stream && stream.channel_id) {
+        // Found stream, get associated channel
+        channel = await database.get('SELECT * FROM channels WHERE id = ?', [stream.channel_id]);
+      }
+      
+      if (!stream) {
+        logger.warn('Neither channel nor stream found', { channelId, filename, clientIP: req.ip });
+        return res.status(404).send('Channel not found');
+      }
+      
+      // Log that we're using stream ID access
+      logger.info('Stream accessed directly by stream ID', { 
+        streamId: channelId, 
+        streamName: stream.name,
+        channelId: stream.channel_id,
+        channelName: channel ? channel.name : 'Unknown'
+      });
+    }
+    
+    // Determine the target URL early for session creation
+    let targetUrl = stream.url;
+    
+    // CRITICAL FIX: Process beacon URLs at the initial URL resolution stage
+    // This ensures beacon URLs are processed for ALL requests (Plex, web, mobile)
+    if (!isSubFile && streamManager.isBeaconTrackingUrl(targetUrl)) {
+      try {
+        logger.info('Detected beacon tracking URL, processing...', {
+          channelId,
+          originalUrl: targetUrl.substring(0, 100) + '...',
+          isPlexRequest,
+          userAgent: req.get('User-Agent')
+        });
+        
+        // Process the beacon URL to extract the clean streaming URL
+        const processedUrl = await streamManager.processPlaylistWithBeacons(targetUrl, req, channelId);
+        
+        if (processedUrl && processedUrl !== targetUrl) {
+          targetUrl = processedUrl;
+          logger.info('Successfully processed beacon URL', {
+            channelId,
+            originalLength: stream.url.length,
+            processedLength: targetUrl.length,
+            hasBeaconParams: stream.url.includes('bcn=') || stream.url.includes('redirect_url='),
+            isPlexRequest
+          });
+        } else {
+          logger.warn('Beacon URL processing returned same URL', {
+            channelId,
+            originalUrl: stream.url.substring(0, 100) + '...'
+          });
+        }
+      } catch (beaconError) {
+        logger.error('Failed to process beacon URL, using original', {
+          channelId,
+          error: beaconError.message,
+          originalUrl: stream.url.substring(0, 100) + '...'
+        });
+        // Continue with original URL if beacon processing fails
+      }
+    }
+
     // Generate or extract session ID for persistent session management
     let sessionId = req.headers['x-session-id'] || 
                    req.query.sessionId || 
@@ -392,47 +474,6 @@ router.get('/stream/:channelId/:filename?', async (req, res) => {
       filename
     });
     
-    // Get channel info from database - first try as channel ID
-    let channel = await database.get('SELECT * FROM channels WHERE id = ?', [channelId]);
-    let stream = null;
-    
-    if (channel) {
-      // Found channel, get associated stream
-      stream = await database.get('SELECT * FROM streams WHERE channel_id = ?', [channelId]);
-      if (!stream) {
-        logger.warn('Stream not found for channel', { 
-          channelId, 
-          channelName: channel.name,
-          channelNumber: channel.number,
-          filename,
-          clientIP: req.ip 
-        });
-        return res.status(404).send('Stream not found for channel');
-      }
-    } else {
-      // No channel found, try as stream ID directly
-      stream = await database.get('SELECT * FROM streams WHERE id = ?', [channelId]);
-      if (stream && stream.channel_id) {
-        // Found stream, get associated channel
-        channel = await database.get('SELECT * FROM channels WHERE id = ?', [stream.channel_id]);
-      }
-      
-      if (!stream) {
-        logger.warn('Neither channel nor stream found', { channelId, filename, clientIP: req.ip });
-        return res.status(404).send('Channel not found');
-      }
-      
-      // Log that we're using stream ID access
-      logger.info('Stream accessed directly by stream ID', { 
-        streamId: channelId, 
-        streamName: stream.name,
-        channelId: stream.channel_id,
-        channelName: channel ? channel.name : 'Unknown'
-      });
-    }
-    
-    // Determine the target URL
-    let targetUrl = stream.url;
     if (isSubFile) {
       // CRITICAL FIX: Use HLS Segment Resolver for proper segment URL resolution
       // This fixes Android TV 404 errors by dynamically resolving segment URLs from playlists
