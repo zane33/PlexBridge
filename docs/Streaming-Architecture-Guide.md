@@ -229,6 +229,102 @@ environment:
   - FFMPEG_PATH=/usr/bin/ffmpeg     # FFmpeg binary location
 ```
 
+## Stream Resilience System
+
+**Added:** September 2025 - **Status:** ✅ Production Ready
+
+PlexBridge now includes a comprehensive Stream Resilience System that prevents Plex client crashes when upstream IPTV feeds experience quality degradation or H.264 corruption.
+
+### Problem Solved
+Prior to this implementation, Plex clients would crash after 7 seconds when encountering H.264 corruption errors such as:
+- "non-existing PPS 0 referenced" 
+- "decode_slice_header error"
+- H.264 parameter set corruption
+- Bitstream integrity issues
+
+### Multi-Layer Recovery Architecture
+
+The resilience system provides four layers of recovery:
+
+1. **FFmpeg-Level Recovery (1-8 seconds)**: Built-in reconnection with H.264 error tolerance
+2. **Process-Level Recovery (2-8 seconds)**: FFmpeg process restart with enhanced buffers
+3. **Session-Level Recovery (5-15 seconds)**: Session recreation with profile switching
+4. **Smart Buffering (Continuous)**: Maintains client connection during all recovery layers
+
+### Resilience Profiles
+
+#### H.264 Corruption Resilient Profile
+Used automatically when corruption is detected:
+
+```bash
+# Maximum error tolerance flags
+-err_detect ignore_err              # Ignore all decoder errors
+-fflags discardcorrupt             # Discard corrupt packets
+-skip_frame noref                  # Skip non-reference frames if corrupted
+-reconnect_delay_max 15            # Extended reconnect tolerance
+-bsf:v h264_mp4toannexb,extract_extradata  # Enhanced parameter set handling
+```
+
+#### Stream Continuity Profile  
+Prioritizes uptime over quality:
+
+```bash
+# Maximum reconnection tolerance
+-reconnect_delay_max 30            # Up to 30 second delays
+-skip_frame nonkey                 # Skip all but keyframes if needed
+-ec 3                              # Maximum error concealment
+-rtbufsize 5M                      # Large input buffers
+```
+
+### Configuration
+
+Enable and configure resilience via environment variables:
+
+```bash
+# Core resilience settings
+STREAM_RESILIENCE_ENABLED=true
+STREAM_RESILIENCE_LEVEL=maximum     # standard|enhanced|maximum|corruption_tolerant|continuity_priority
+H264_CORRUPTION_TOLERANCE=maximum   # ignore|basic|maximum
+ERROR_RECOVERY_MODE=smart          # smart|aggressive|conservative
+CONTINUOUS_BUFFERING=true
+```
+
+### Integration with Streaming Flow
+
+The resilience system seamlessly integrates into the existing streaming architecture:
+
+```
+Plex Request → StreamManager → StreamResilienceService → FFmpeg Profiles
+                     ↓                    ↓                      ↓
+              Active Monitoring → Corruption Detection → Automatic Recovery
+                     ↓                    ↓                      ↓
+              Event Logging → Profile Switching → Continuous Output
+```
+
+### Benefits
+
+- **Zero Client Crashes**: Streams continue despite upstream corruption
+- **Automatic Recovery**: No manual intervention required
+- **Quality Adaptation**: Graceful degradation when needed
+- **Monitoring**: Detailed logging of resilience events
+- **Configurable**: Adjustable resilience levels per deployment
+
+### Monitoring
+
+Monitor resilience events in real-time:
+
+```bash
+# View resilience-related log entries
+tail -f /data/logs/streams-$(date +%Y-%m-%d).log | grep -i "resilience\|corruption\|recovery"
+
+# Example log output:
+[INFO] Stream resilience: H.264 corruption detected, switching to resilient profile
+[WARN] Stream recovery: Layer 1 failed, escalating to process restart
+[INFO] Stream recovery: Successfully recovered after 3.2 seconds
+```
+
+For complete details, see: [Stream Resilience Guide](Stream-Resilience-Guide.md)
+
 ## Critical Implementation Details
 
 ### 1. URL Rewriting for HLS Streams

@@ -16,6 +16,11 @@ This directory contains comprehensive documentation for the PlexTV application -
   - FFmpeg configurations and optimizations
   - Critical implementation details and fixes
   - Performance tuning and troubleshooting
+- **[Stream-Resilience-Guide.md](Stream-Resilience-Guide.md)** - 🛡️ **NEW: Stream resilience and H.264 corruption handling**
+  - Multi-layer recovery system for upstream issues
+  - H.264 corruption detection and recovery
+  - Prevents Plex client crashes from feed quality degradation
+  - Configurable resilience levels and monitoring
 - **[Plex-Metadata-System.md](Plex-Metadata-System.md)** - 🆕 **Metadata handling to prevent crashes**
   - Complete metadata endpoint documentation
   - Session and consumer management
