@@ -34,6 +34,16 @@ class StreamResilienceService extends EventEmitter {
         corruptionRetryLimit: 3      // Max retries specifically for H.264 corruption
       },
       
+      // Upstream session handling configuration
+      upstream: {
+        maxReconnectAttempts: 15,    // Max attempts for upstream disconnections
+        reconnectDelayMs: 1000,      // Initial delay for upstream reconnection
+        backoffFactor: 1.2,          // Gentler backoff for upstream issues
+        maxDelayMs: 10000,           // Maximum delay between attempts (10s)
+        permanentFailureThreshold: 5, // Consecutive failures before marking permanent
+        authFailureMaxAttempts: 3    // Max attempts for auth failures
+      },
+      
       // Layer 2: Process restart
       process: {
         restartDelayMs: 2000,        // Initial restart delay
@@ -84,6 +94,8 @@ class StreamResilienceService extends EventEmitter {
         ffmpegRetries: 0,
         processRestarts: 0,
         sessionRecreations: 0,
+        upstreamReconnects: 0,        // Track upstream reconnection attempts
+        consecutiveUpstreamFailures: 0, // Track consecutive failures for permanent detection
         
         // Current process and streams
         currentProcess: null,
@@ -224,8 +236,17 @@ class StreamResilienceService extends EventEmitter {
       // Update health status
       resilienceState.isHealthy = true;
       
-      // If recovering, switch back to live stream
+      // If recovering, switch back to live stream and reset upstream counters
       if (resilienceState.isRecovering) {
+        // Reset upstream reconnection counters on successful data flow
+        if (resilienceState.lastRecoveryReason === 'upstream_disconnection') {
+          resilienceState.upstreamReconnects = 0;
+          resilienceState.consecutiveUpstreamFailures = 0;
+          logger.info('Upstream reconnection successful - counters reset', {
+            streamId: resilienceState.streamId,
+            recoveryDuration: Date.now() - resilienceState.recoveryStartTime
+          });
+        }
         this.completeRecovery(resilienceState);
       }
       
@@ -933,16 +954,53 @@ class StreamResilienceService extends EventEmitter {
   }
 
   /**
-   * Handle upstream disconnection with immediate reconnection attempt
+   * Handle upstream disconnection with intelligent reconnection strategy
    */
   async handleUpstreamDisconnection(resilienceState, errorText) {
     const { streamId } = resilienceState;
+    
+    // Increment upstream reconnection counter
+    resilienceState.upstreamReconnects++;
+    
+    // Check if we've exceeded maximum upstream reconnection attempts
+    if (resilienceState.upstreamReconnects > this.config.upstream.maxReconnectAttempts) {
+      logger.warn('Maximum upstream reconnection attempts exceeded - falling back to normal error handling', {
+        streamId,
+        upstreamReconnects: resilienceState.upstreamReconnects,
+        maxAttempts: this.config.upstream.maxReconnectAttempts,
+        upstreamError: errorText.trim()
+      });
+      
+      // Reset counter and fall back to normal error handling
+      resilienceState.upstreamReconnects = 0;
+      await this.handleFFmpegFailure(resilienceState, new Error(`Upstream disconnection: ${errorText.trim()}`));
+      return;
+    }
+    
+    // Check for authentication failures (limit attempts more strictly)
+    const isAuthFailure = errorText.toLowerCase().includes('auth') || 
+                          errorText.toLowerCase().includes('401') || 
+                          errorText.toLowerCase().includes('403');
+                          
+    if (isAuthFailure && resilienceState.upstreamReconnects > this.config.upstream.authFailureMaxAttempts) {
+      logger.error('Authentication failure - upstream reconnection limited', {
+        streamId,
+        upstreamReconnects: resilienceState.upstreamReconnects,
+        maxAuthAttempts: this.config.upstream.authFailureMaxAttempts,
+        upstreamError: errorText.trim()
+      });
+      
+      // Don't reset counter for auth failures - they're likely permanent
+      await this.handleFFmpegFailure(resilienceState, new Error(`Upstream auth failure: ${errorText.trim()}`));
+      return;
+    }
     
     logger.info('Handling upstream disconnection - maintaining session continuity', {
       streamId,
       upstreamError: errorText.trim(),
       action: 'seamless_reconnection',
-      retryAttempt: resilienceState.ffmpegRetries + 1
+      upstreamAttempt: resilienceState.upstreamReconnects,
+      totalAttempts: `${resilienceState.upstreamReconnects}/${this.config.upstream.maxReconnectAttempts}`
     });
 
     // Mark as recovering but don't change status to failed
@@ -950,16 +1008,23 @@ class StreamResilienceService extends EventEmitter {
     resilienceState.recoveryStartTime = Date.now();
     resilienceState.lastRecoveryReason = 'upstream_disconnection';
 
-    // Emit recovery event
+    // Emit recovery event with upstream-specific details
     this.emit('stream:recovery_started', {
       streamId,
       reason: 'upstream_disconnection',
-      layer: 'seamless_reconnection',
-      attempt: resilienceState.ffmpegRetries + 1
+      layer: 'upstream_reconnection',
+      attempt: resilienceState.upstreamReconnects,
+      maxAttempts: this.config.upstream.maxReconnectAttempts
     });
 
-    // Use shorter delay for upstream disconnections (they should reconnect quickly)
-    const reconnectDelay = Math.min(1000, this.config.ffmpeg.reconnectDelayMs * Math.pow(this.config.ffmpeg.reconnectBackoffFactor, resilienceState.ffmpegRetries));
+    // Calculate backoff delay with upstream-specific configuration
+    const reconnectDelay = Math.min(
+      this.config.upstream.reconnectDelayMs * Math.pow(
+        this.config.upstream.backoffFactor,
+        resilienceState.upstreamReconnects - 1
+      ),
+      this.config.upstream.maxDelayMs
+    );
     
     setTimeout(async () => {
       // Only proceed if stream hasn't been stopped
@@ -971,17 +1036,22 @@ class StreamResilienceService extends EventEmitter {
         logger.info('Upstream reconnection delay completed - relying on FFmpeg reconnection', {
           streamId,
           reconnectDelay,
-          ffmpegRetries: resilienceState.ffmpegRetries
+          upstreamAttempt: resilienceState.upstreamReconnects,
+          nextAttemptIn: reconnectDelay
         });
         
-        // Reset recovery state - FFmpeg should handle this internally
-        this.completeRecovery(resilienceState);
+        // Don't complete recovery yet - wait for actual data to confirm success
+        // The data handler will call completeRecovery when data starts flowing
         
       } catch (error) {
         logger.error('Failed to handle upstream disconnection', {
           streamId,
+          upstreamAttempt: resilienceState.upstreamReconnects,
           error: error.message
         });
+        
+        // Increment consecutive failure counter
+        resilienceState.consecutiveUpstreamFailures++;
         
         // Fall back to normal FFmpeg failure handling
         await this.handleFFmpegFailure(resilienceState, error);
@@ -1000,13 +1070,23 @@ class StreamResilienceService extends EventEmitter {
       .filter(state => state.isRecovering).length;
 
     const totalRetries = Array.from(this.activeStreams.values())
-      .reduce((sum, state) => sum + state.ffmpegRetries + state.processRestarts + state.sessionRecreations, 0);
+      .reduce((sum, state) => sum + state.ffmpegRetries + state.processRestarts + state.sessionRecreations + state.upstreamReconnects, 0);
+      
+    const upstreamReconnectStats = Array.from(this.activeStreams.values())
+      .reduce((stats, state) => ({
+        total: stats.total + state.upstreamReconnects,
+        active: stats.active + (state.upstreamReconnects > 0 ? 1 : 0),
+        consecutiveFailures: Math.max(stats.consecutiveFailures, state.consecutiveUpstreamFailures)
+      }), { total: 0, active: 0, consecutiveFailures: 0 });
 
     return {
       activeStreams: activeStreamsCount,
       healthyStreams: healthyStreamsCount,
       recoveringStreams: recoveringStreamsCount,
       totalRetries,
+      
+      // Upstream reconnection statistics
+      upstreamReconnections: upstreamReconnectStats,
       
       // Service uptime
       serviceUptime: Date.now() - (this.serviceStartTime || Date.now()),
