@@ -1,6 +1,16 @@
 /**
  * FFmpeg Profiles for PlexBridge
  * Optimized configurations for different streaming scenarios
+ * 
+ * RESILIENCE PROFILES FOR H.264 CORRUPTION HANDLING:
+ * - h264CorruptionResilient: Maximum error tolerance for PPS/SPS corruption
+ * - streamContinuity: Prioritizes uninterrupted streaming over quality
+ * 
+ * ERROR HANDLING CAPABILITIES:
+ * - Handles "non-existing PPS 0 referenced" errors
+ * - Manages "decode_slice_header error" situations
+ * - Tolerates upstream bitstream corruption
+ * - Maintains stream continuity during quality degradation
  */
 
 module.exports = {
@@ -139,13 +149,152 @@ module.exports = {
       // If source needs transcoding, use high quality transcoding
       return this.transcodingHighQuality.args;
     }
+  },
+
+  // H.264 Corruption Resilient - Maximum error tolerance for corrupted streams
+  h264CorruptionResilient: {
+    name: 'H.264 Corruption Resilient',
+    description: 'Maximum error tolerance for streams with H.264 corruption (PPS/SPS errors)',
+    args: [
+      '-hide_banner',
+      '-loglevel', 'error',
+      
+      // AGGRESSIVE RECONNECTION FOR UPSTREAM ISSUES
+      '-reconnect', '1',
+      '-reconnect_at_eof', '1', 
+      '-reconnect_streamed', '1',
+      '-reconnect_delay_max', '15',      // Allow longer reconnect delays
+      '-reconnect_on_network_error', '1',
+      '-reconnect_on_http_error', '4xx,5xx',
+      
+      // MAXIMUM ERROR TOLERANCE FOR H.264 CORRUPTION
+      '-err_detect', 'ignore_err',       // Ignore all decoder errors
+      '-fflags', '+genpts+igndts+discardcorrupt+nobuffer', // Discard corrupt packets
+      '-skip_frame', 'noref',            // Skip non-reference frames if corrupted
+      '-thread_type', 'slice',           // Use slice-based threading for better error isolation
+      '-threads', '1',                   // Single thread to avoid race conditions
+      
+      // LENIENT STREAM ANALYSIS TO AVOID EARLY TERMINATION
+      '-analyzeduration', '1000000',     // 1 second analysis (reduced from default)
+      '-probesize', '2000000',           // 2MB probe size (reasonable but not excessive)
+      '-max_analyze_duration', '2000000', // Max 2 seconds for analysis
+      
+      // INPUT BUFFERING FOR UPSTREAM INSTABILITY  
+      '-rtbufsize', '2M',                // 2MB read buffer
+      '-buffer_size', '2097152',         // 2MB internal buffer
+      
+      // DECODER ERROR RECOVERY
+      '-ec', '2',                        // Error concealment: favor speed over accuracy
+      '-strict', '-2',                   // Allow experimental/non-standard features
+      
+      '-i', '[URL]',
+      
+      // COPY CODECS TO AVOID RE-ENCODING CORRUPTION
+      '-c:v', 'copy',
+      '-c:a', 'copy',
+      '-map', '0:v:0?',                  // Best video stream, optional
+      '-map', '0:a:0?',                  // Best audio stream, optional
+      
+      // H.264 BITSTREAM FILTERING FOR ANDROID TV COMPATIBILITY
+      '-bsf:v', 'h264_mp4toannexb,extract_extradata', // Extract and convert parameter sets
+      
+      // MPEG-TS OUTPUT WITH ERROR TOLERANCE
+      '-f', 'mpegts',
+      '-mpegts_copyts', '1',
+      '-avoid_negative_ts', 'make_zero',
+      '-max_delay', '10000000',          // 10 second max delay tolerance
+      '-max_muxing_queue_size', '9999',  // Large mux queue
+      '-flush_packets', '1',
+      '-muxdelay', '0',
+      '-muxpreload', '0',
+      
+      // CONTINUOUS OUTPUT DESPITE ERRORS
+      '-copyts',                         // Copy timestamps exactly
+      '-start_at_zero',                  // Start timestamps at zero
+      '-flags', '+global_header+low_delay+bitexact',
+      
+      'pipe:1'
+    ]
+  },
+
+  // Stream Continuity Mode - Prioritizes uninterrupted output over quality
+  streamContinuity: {
+    name: 'Stream Continuity Mode', 
+    description: 'Prioritizes continuous streaming over quality, maximum upstream fault tolerance',
+    args: [
+      '-hide_banner',
+      '-loglevel', 'fatal',              // Only fatal errors (reduces log noise)
+      
+      // MAXIMUM RECONNECTION TOLERANCE
+      '-reconnect', '1',
+      '-reconnect_at_eof', '1',
+      '-reconnect_streamed', '1', 
+      '-reconnect_delay_max', '30',      // Up to 30 second reconnect delays
+      '-reconnect_on_network_error', '1',
+      '-reconnect_on_http_error', '4xx,5xx',
+      
+      // IGNORE ALL NON-FATAL ERRORS
+      '-err_detect', 'ignore_err',
+      '-fflags', '+genpts+igndts+discardcorrupt+nobuffer+flush_packets',
+      '-skip_frame', 'nonkey',           // Skip all but keyframes if needed
+      '-threads', '1',                   // Single thread for stability
+      
+      // MINIMAL ANALYSIS TO AVOID GETTING STUCK ON BAD STREAMS
+      '-analyzeduration', '500000',      // 0.5 second analysis only
+      '-probesize', '1000000',           // 1MB probe size
+      '-max_analyze_duration', '1000000',
+      
+      // LARGE BUFFERS FOR UPSTREAM INSTABILITY
+      '-rtbufsize', '5M',                // 5MB read buffer
+      '-buffer_size', '5242880',         // 5MB internal buffer
+      
+      // MAXIMUM ERROR CONCEALMENT
+      '-ec', '3',                        // Maximum error concealment
+      '-strict', '-2',
+      '-xerror',                         // Exit on error (will trigger restart)
+      
+      '-i', '[URL]',
+      
+      // COPY EVERYTHING POSSIBLE
+      '-c', 'copy',                      // Copy all streams
+      '-map', '0',                       // Map all streams
+      
+      // RELAXED BITSTREAM FILTERING
+      '-bsf:v', 'h264_mp4toannexb',     // Basic conversion only
+      
+      // MPEG-TS WITH MAXIMUM TOLERANCE
+      '-f', 'mpegts', 
+      '-mpegts_copyts', '1',
+      '-avoid_negative_ts', 'disabled',  // Don't adjust timestamps
+      '-max_delay', '30000000',          // 30 second max delay
+      '-max_muxing_queue_size', '16384', // Very large mux queue
+      '-muxdelay', '0',
+      '-muxpreload', '0',
+      '-flush_packets', '0',             // Don't force packet flushing
+      
+      // PRESERVE EVERYTHING
+      '-copyts',
+      '-copytb', '1',                    // Copy timebase
+      '-flags', '+global_header',
+      
+      'pipe:1'
+    ]
   }
 };
 
-// Function to select best profile based on client and stream
-module.exports.selectProfile = function(userAgent, streamUrl, streamType) {
+// Function to select best profile based on client, stream, and resilience requirements
+module.exports.selectProfile = function(userAgent, streamUrl, streamType, resilienceLevel = 'standard') {
   const isAndroidTV = userAgent && userAgent.toLowerCase().includes('android');
   const isHLS = streamUrl && streamUrl.includes('.m3u8');
+  
+  // Override profile selection based on resilience requirements
+  if (resilienceLevel === 'maximum' || resilienceLevel === 'corruption_tolerant') {
+    return module.exports.h264CorruptionResilient;
+  }
+  
+  if (resilienceLevel === 'continuity_priority') {
+    return module.exports.streamContinuity;
+  }
   
   if (isAndroidTV) {
     return module.exports.androidTVOptimized;
@@ -157,4 +306,17 @@ module.exports.selectProfile = function(userAgent, streamUrl, streamType) {
   
   // Default to high quality copy
   return module.exports.highQualityCopy;
+};
+
+// Get profile by resilience level
+module.exports.getResilienceProfile = function(level) {
+  const profiles = {
+    'standard': module.exports.highQualityCopy,
+    'enhanced': module.exports.androidTVOptimized, 
+    'maximum': module.exports.h264CorruptionResilient,
+    'corruption_tolerant': module.exports.h264CorruptionResilient,
+    'continuity_priority': module.exports.streamContinuity
+  };
+  
+  return profiles[level] || module.exports.highQualityCopy;
 };

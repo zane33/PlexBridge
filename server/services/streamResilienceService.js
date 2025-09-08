@@ -2,6 +2,8 @@ const { spawn } = require('child_process');
 const { PassThrough } = require('stream');
 const logger = require('../utils/logger');
 const EventEmitter = require('events');
+const ffmpegProfiles = require('../config/ffmpegProfiles');
+const config = require('../config');
 
 /**
  * Enhanced Stream Resilience Service
@@ -22,12 +24,14 @@ class StreamResilienceService extends EventEmitter {
     
     // Resilience configuration
     this.config = {
-      // Layer 1: FFmpeg reconnection
+      // Layer 1: FFmpeg reconnection with H.264 error tolerance
       ffmpeg: {
         reconnectDelayMs: 1000,      // Initial reconnect delay
-        maxReconnectAttempts: 5,     // Max FFmpeg-level reconnects
-        reconnectBackoffFactor: 1.5, // Exponential backoff
-        networkTimeoutMs: 10000      // Network timeout
+        maxReconnectAttempts: 8,     // Increased for H.264 corruption (was 5)
+        reconnectBackoffFactor: 1.3, // Reduced backoff for faster recovery
+        networkTimeoutMs: 15000,     // Increased timeout for slow recovery (was 10000)
+        h264ErrorTolerance: 'maximum', // H.264 corruption tolerance level
+        corruptionRetryLimit: 3      // Max retries specifically for H.264 corruption
       },
       
       // Layer 2: Process restart
@@ -787,6 +791,31 @@ class StreamResilienceService extends EventEmitter {
     };
   }
 
+  /**
+   * Check if error text indicates H.264 corruption
+   */
+  isH264CorruptionError(errorText) {
+    const h264CorruptionErrors = [
+      'non-existing pps',
+      'decode_slice_header error', 
+      'no frame!',
+      'pps 0 referenced',
+      'sps 0 referenced',
+      'mmco: unref short failure',
+      'error while decoding mb',
+      'concealing errors',
+      'slice header damaged',
+      'invalid nal unit',
+      'corrupted frame',
+      'reference picture missing',
+      'decode error',
+      'parser error'
+    ];
+
+    const lowerError = errorText.toLowerCase();
+    return h264CorruptionErrors.some(error => lowerError.includes(error));
+  }
+  
   /**
    * Check if error text indicates a connection issue
    */

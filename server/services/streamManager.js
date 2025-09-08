@@ -1996,6 +1996,24 @@ class StreamManager {
               error: beaconError.message
             });
           }
+        }
+        // Handle HLS playlists that may contain beacon segments for Plex
+        else if (streamUrl.includes('.m3u8') && streamUrl.includes('amagi.tv')) {
+          try {
+            finalStreamUrl = await this.processPlaylistWithBeacons(streamUrl, null, channel.id);
+            if (finalStreamUrl !== streamUrl) {
+              logger.info('Processed HLS playlist with beacon segments for Plex stream', {
+                channelId: channel.id,
+                originalUrl: streamUrl,
+                processedPlaylist: true
+              });
+            }
+          } catch (playlistError) {
+            logger.warn('Failed to process playlist with beacons for Plex, using original URL', {
+              channelId: channel.id,
+              error: playlistError.message
+            });
+          }
         } else {
           // For other streams, use HEAD request
           const response = await axios.head(streamUrl, {
@@ -2951,6 +2969,22 @@ class StreamManager {
             finalUrl: finalStreamUrl,
             beacon: true
           });
+        }
+        // Handle HLS playlists that may contain beacon segments
+        else if (streamUrl.includes('.m3u8') && streamUrl.includes('amagi.tv')) {
+          try {
+            finalStreamUrl = await this.processPlaylistWithBeacons(streamUrl, req);
+            if (finalStreamUrl !== streamUrl) {
+              logger.info('Processed HLS playlist with beacon segments for web client', {
+                originalUrl: streamUrl,
+                processedPlaylist: true
+              });
+            }
+          } catch (playlistError) {
+            logger.warn('Failed to process playlist with beacons, using original URL', {
+              error: playlistError.message
+            });
+          }
         }
       } catch (redirectError) {
         logger.warn('Failed to resolve redirect/beacon URL, using original URL', {
@@ -4268,6 +4302,230 @@ class StreamManager {
     } catch (error) {
       logger.warn('Failed to process beacon URL, using original', {
         url: beaconUrl,
+        error: error.message
+      });
+      return beaconUrl;
+    }
+  }
+
+  /**
+   * Process HLS playlist that may contain beacon tracking URLs in segments
+   * @param {string} playlistUrl - The playlist URL to process
+   * @param {object} req - Express request object (for web clients)
+   * @param {string} channelId - Channel ID for logging (for Plex clients)
+   * @returns {string} - Processed playlist URL or cleaned playlist content
+   */
+  async processPlaylistWithBeacons(playlistUrl, req = null, channelId = null) {
+    if (!playlistUrl || typeof playlistUrl !== 'string') {
+      throw new Error('Invalid playlist URL provided');
+    }
+
+    try {
+      const axios = require('axios');
+      
+      // Security: Block internal/local URLs
+      const urlObj = new URL(playlistUrl);
+      if (urlObj.hostname === 'localhost' || 
+          urlObj.hostname === '127.0.0.1' || 
+          urlObj.hostname.startsWith('192.168.') ||
+          urlObj.hostname.startsWith('10.') ||
+          urlObj.hostname.startsWith('172.16.')) {
+        logger.warn('Blocked request to internal IP address', { url: playlistUrl });
+        throw new Error('Internal IP addresses not allowed');
+      }
+
+      // Fetch the original playlist
+      logger.debug('Fetching playlist for beacon processing', {
+        url: playlistUrl,
+        channelId
+      });
+
+      const response = await axios.get(playlistUrl, {
+        timeout: 10000,
+        maxContentLength: 2 * 1024 * 1024, // 2MB limit
+        headers: {
+          'User-Agent': 'PlexBridge/1.0 FFmpeg-compatible',
+          'Accept': 'application/vnd.apple.mpegurl,application/x-mpegURL,*/*'
+        }
+      });
+
+      const originalPlaylist = response.data;
+      if (typeof originalPlaylist !== 'string' || !originalPlaylist.includes('#EXTM3U')) {
+        logger.warn('Invalid playlist format received', {
+          url: playlistUrl,
+          contentType: response.headers['content-type']
+        });
+        return playlistUrl; // Return original URL if not a valid playlist
+      }
+
+      // Process playlist lines
+      const lines = originalPlaylist.split('\n');
+      const processedLines = [];
+      let hasBeaconSegments = false;
+
+      for (let i = 0; i < lines.length; i++) {
+        const line = lines[i].trim();
+        
+        // Check if this line is a segment URL with beacon tracking
+        if (line && !line.startsWith('#') && this.isBeaconTrackingUrl(line)) {
+          hasBeaconSegments = true;
+          
+          try {
+            // Try to extract the actual stream URL from the beacon URL
+            const cleanUrl = await this.extractCleanUrlFromBeacon(line);
+            processedLines.push(cleanUrl);
+            
+            logger.debug('Cleaned beacon segment URL', {
+              original: line.substring(0, 100) + '...',
+              cleaned: cleanUrl.substring(0, 100) + '...',
+              channelId
+            });
+          } catch (beaconError) {
+            logger.warn('Failed to clean beacon segment, using original', {
+              error: beaconError.message,
+              channelId
+            });
+            processedLines.push(line);
+          }
+        } else {
+          // Keep non-segment lines as-is (comments, metadata, clean URLs)
+          processedLines.push(line);
+        }
+      }
+
+      if (hasBeaconSegments) {
+        const cleanedPlaylist = processedLines.join('\n');
+        
+        // For web clients, serve the cleaned playlist directly
+        if (req) {
+          // Set up playlist response headers
+          req.res.set({
+            'Content-Type': 'application/vnd.apple.mpegurl',
+            'Cache-Control': 'no-cache, no-store, must-revalidate',
+            'Access-Control-Allow-Origin': '*'
+          });
+          
+          // Send cleaned playlist content
+          req.res.send(cleanedPlaylist);
+          return null; // Indicate that response was sent
+        } 
+        
+        // For Plex/FFmpeg, we need to serve the cleaned playlist via a proxy endpoint
+        // Store the cleaned playlist and return a proxy URL
+        const playlistId = `cleaned_${channelId}_${Date.now()}`;
+        this.cleanedPlaylists = this.cleanedPlaylists || new Map();
+        this.cleanedPlaylists.set(playlistId, {
+          content: cleanedPlaylist,
+          timestamp: Date.now(),
+          originalUrl: playlistUrl
+        });
+        
+        // Clean up old playlists (older than 5 minutes)
+        const now = Date.now();
+        for (const [id, data] of this.cleanedPlaylists) {
+          if (now - data.timestamp > 5 * 60 * 1000) {
+            this.cleanedPlaylists.delete(id);
+          }
+        }
+        
+        // Return proxy URL for cleaned playlist
+        const settings = await this.loadSettings();
+        const advertisedHost = settings?.plexlive?.network?.advertisedHost || 
+                              process.env.ADVERTISED_HOST || 
+                              'localhost';
+        const httpPort = process.env.HTTP_PORT || 3000;
+        
+        const proxyUrl = `http://${advertisedHost}:${httpPort}/stream/playlist/${playlistId}`;
+        logger.info('Created cleaned playlist proxy for Plex', {
+          originalUrl: playlistUrl,
+          proxyUrl,
+          channelId,
+          segmentsCleaned: hasBeaconSegments
+        });
+        
+        return proxyUrl;
+      }
+
+      // No beacon segments found, return original URL
+      logger.debug('No beacon segments found in playlist', {
+        url: playlistUrl,
+        channelId
+      });
+      return playlistUrl;
+
+    } catch (error) {
+      logger.warn('Failed to process playlist with beacons', {
+        url: playlistUrl,
+        error: error.message,
+        channelId
+      });
+      return playlistUrl; // Fallback to original URL
+    }
+  }
+
+  /**
+   * Extract clean URL from a beacon tracking URL
+   * @param {string} beaconUrl - Beacon URL to process
+   * @returns {string} - Clean URL extracted from redirect_url parameter or processed URL
+   */
+  async extractCleanUrlFromBeacon(beaconUrl) {
+    try {
+      const urlObj = new URL(beaconUrl);
+      
+      // Method 1: Check for direct redirect_url parameter
+      const redirectUrl = urlObj.searchParams.get('redirect_url');
+      if (redirectUrl) {
+        const decodedUrl = decodeURIComponent(redirectUrl);
+        logger.debug('Extracted redirect_url from beacon', {
+          original: beaconUrl.substring(0, 50) + '...',
+          extracted: decodedUrl
+        });
+        return decodedUrl;
+      }
+      
+      // Method 2: Try to construct clean URL by removing beacon path and parameters
+      if (urlObj.pathname.includes('/beacon/')) {
+        // Remove beacon tracking path and parameters
+        const pathParts = urlObj.pathname.split('/');
+        const beaconIndex = pathParts.findIndex(part => part === 'beacon');
+        
+        if (beaconIndex > 0 && pathParts.length > beaconIndex + 2) {
+          // Reconstruct path without beacon tracking
+          const cleanPath = pathParts.slice(0, beaconIndex).join('/') + '/' + 
+                            pathParts.slice(beaconIndex + 2).join('/');
+          
+          const cleanUrl = `${urlObj.protocol}//${urlObj.hostname}${cleanPath}`;
+          
+          logger.debug('Constructed clean URL from beacon pattern', {
+            original: beaconUrl.substring(0, 50) + '...',
+            constructed: cleanUrl
+          });
+          
+          return cleanUrl;
+        }
+      }
+      
+      // Method 3: Remove tracking parameters but keep base structure
+      const cleanParams = new URLSearchParams();
+      for (const [key, value] of urlObj.searchParams) {
+        if (StreamManager.BEACON_PATTERNS.ESSENTIAL_PARAMS.has(key) || 
+            !StreamManager.BEACON_PATTERNS.TRACKING_PARAMS.has(key)) {
+          cleanParams.append(key, value);
+        }
+      }
+      
+      const processedUrl = `${urlObj.protocol}//${urlObj.hostname}${urlObj.pathname}${cleanParams.toString() ? '?' + cleanParams.toString() : ''}`;
+      
+      logger.debug('Processed beacon URL by removing tracking parameters', {
+        original: beaconUrl.substring(0, 50) + '...',
+        processed: processedUrl.substring(0, 50) + '...'
+      });
+      
+      return processedUrl;
+      
+    } catch (error) {
+      logger.warn('Failed to extract clean URL from beacon, using original', {
+        url: beaconUrl.substring(0, 50) + '...',
         error: error.message
       });
       return beaconUrl;

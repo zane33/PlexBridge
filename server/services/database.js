@@ -526,7 +526,18 @@ class DatabaseService {
         ['plexlive.streaming.upstreamMonitoring.bufferThresholdMB', '5', 'Buffer size threshold in MB for upstream issues'],
         ['plexlive.streaming.upstreamMonitoring.reconnectTimeoutSec', '30', 'Maximum time to wait for upstream reconnection'],
         ['plexlive.streaming.adaptiveBuffering.enabled', 'true', 'Enable adaptive buffering based on upstream quality'],
-        ['plexlive.streaming.adaptiveBuffering.maxBufferMB', '10', 'Maximum buffer size for unstable upstream sources']
+        ['plexlive.streaming.adaptiveBuffering.maxBufferMB', '10', 'Maximum buffer size for unstable upstream sources'],
+        
+        // Stream resilience configuration for H.264 corruption handling
+        ['plexlive.streaming.resilience.enabled', 'true', 'Enable advanced stream resilience and error recovery'],
+        ['plexlive.streaming.resilience.level', 'standard', 'Resilience level: standard, enhanced, maximum, corruption_tolerant, continuity_priority'],
+        ['plexlive.streaming.resilience.h264CorruptionTolerance', 'maximum', 'H.264 corruption tolerance: ignore, basic, maximum'],
+        ['plexlive.streaming.resilience.errorRecoveryMode', 'smart', 'Error recovery mode: smart, aggressive, conservative'],
+        ['plexlive.streaming.resilience.continuousBuffering', 'true', 'Maintain continuous buffering during upstream issues'],
+        ['plexlive.streaming.resilience.maxCorruptionRetries', '3', 'Maximum retry attempts specifically for H.264 corruption'],
+        ['plexlive.streaming.resilience.corruptionRecoveryDelay', '2000', 'Delay in milliseconds before retrying after H.264 corruption'],
+        ['plexlive.streaming.resilience.seamlessFailoverMs', '3000', 'Time to maintain seamless output during failover (ms)'],
+        ['plexlive.streaming.resilience.bufferSizeDuringCorruption', '25000', 'Buffer size in milliseconds during H.264 corruption events']
       ];
 
       const insertSetting = this.db.prepare(`

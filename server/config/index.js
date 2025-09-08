@@ -69,7 +69,17 @@ const defaultConfig = {
     autoDetectFormat: process.env.AUTO_DETECT_FORMAT !== 'false',
     timeout: parseInt(process.env.STREAM_TIMEOUT) || 300000, // 5 minutes for live streaming
     reconnectAttempts: parseInt(process.env.RECONNECT_ATTEMPTS) || 3,
-    bufferSize: parseInt(process.env.STREAM_BUFFER_SIZE) || 65536
+    bufferSize: parseInt(process.env.STREAM_BUFFER_SIZE) || 65536,
+    
+    // Stream resilience configuration for H.264 corruption handling
+    resilience: {
+      enabled: process.env.STREAM_RESILIENCE_ENABLED !== 'false',
+      level: process.env.STREAM_RESILIENCE_LEVEL || 'standard', // standard, enhanced, maximum, corruption_tolerant, continuity_priority
+      h264CorruptionTolerance: process.env.H264_CORRUPTION_TOLERANCE || 'maximum', // ignore, basic, maximum
+      errorRecoveryMode: process.env.ERROR_RECOVERY_MODE || 'smart', // smart, aggressive, conservative
+      continuousBuffering: process.env.CONTINUOUS_BUFFERING === 'true',
+      upstreamMonitoring: process.env.UPSTREAM_MONITORING !== 'false'
+    }
   },
   protocols: {
     rtsp: {
