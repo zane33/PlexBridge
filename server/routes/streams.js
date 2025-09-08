@@ -19,6 +19,7 @@ router.use(sessionKeepAlive());
 
 /**
  * Determine if resilient streaming should be used based on request and stream characteristics
+ * CRITICAL FIX: Always enable resilience by default to prevent session termination
  */
 function shouldUseResilientStreaming(req, stream) {
   const userAgent = req.get('User-Agent') || '';
@@ -32,12 +33,30 @@ function shouldUseResilientStreaming(req, stream) {
                       userAgent.toLowerCase().includes('pms') ||
                       userAgent.toLowerCase().includes('lavf');
   
+  // CRITICAL FIX: Check environment variable first for resilience by default
+  if (process.env.RESILIENT_BY_DEFAULT === 'true' || process.env.STREAM_RESILIENCE_ENABLED === 'true') {
+    return { 
+      enabled: true, 
+      reason: 'resilience_enabled_by_default_env',
+      layer: 'environment_configuration'
+    };
+  }
+  
   // Check for explicit resilience request
   if (req.query.resilient === 'true' || req.query.resilience === 'true') {
     return { 
       enabled: true, 
       reason: 'explicit_request',
       layer: 'user_requested'
+    };
+  }
+  
+  // Check for explicit disable (only way to disable when env is set)
+  if (req.query.resilient === 'false' || req.query.resilience === 'false') {
+    return { 
+      enabled: false, 
+      reason: 'explicitly_disabled',
+      layer: 'user_override'
     };
   }
   
@@ -110,10 +129,24 @@ function shouldUseResilientStreaming(req, stream) {
     };
   }
   
-  // Default: don't use resilient streaming
+  // CRITICAL FIX: Default to enabled unless explicitly disabled in config
+  const config = require('../config');
+  
+  // Only disable if explicitly set to false in config AND not overridden by env
+  if (config.streams?.resilience?.enabled === false && 
+      process.env.RESILIENT_BY_DEFAULT !== 'true' &&
+      process.env.STREAM_RESILIENCE_ENABLED !== 'true') {
+    return { 
+      enabled: false, 
+      reason: 'resilience_disabled_in_config'
+    };
+  }
+  
+  // DEFAULT: Always enable resilient streaming for session persistence
   return { 
-    enabled: false, 
-    reason: 'standard_streaming_sufficient'
+    enabled: true, 
+    reason: 'resilience_enabled_by_default',
+    layer: 'default_optimization'
   };
 }
 

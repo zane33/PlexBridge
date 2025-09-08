@@ -86,6 +86,22 @@ services:
       - HEALTH_CHECK_INTERVAL=60000       # Check health every minute
       - DB_HEALTH_CHECK_INTERVAL=60000    # Database health check interval
       
+      # Stream resilience configuration for H.264 corruption and upstream issues
+      - STREAM_RESILIENCE_ENABLED=true        # Enable stream resilience system
+      - STREAM_RESILIENCE_LEVEL=maximum       # Use maximum resilience for production stability
+      - H264_CORRUPTION_TOLERANCE=maximum     # Handle H.264 corruption gracefully
+      - ERROR_RECOVERY_MODE=smart             # Smart error recovery with multi-layer attempts
+      - CONTINUOUS_BUFFERING=true             # Maintain buffering during recovery
+      - UPSTREAM_MONITORING=true              # Monitor upstream for proactive recovery
+      
+      # Critical session persistence settings
+      - STREAM_MAX_RECOVERY_ATTEMPTS=10       # Maximum recovery attempts before giving up
+      - STREAM_RECOVERY_DELAY=2000            # Delay between recovery attempts (ms)
+      - SESSION_KEEP_ALIVE=true               # Keep sessions alive during errors
+      - AUTO_UPGRADE_TO_RESILIENT=true        # Auto upgrade struggling streams
+      - RESILIENT_BY_DEFAULT=true             # Use resilient streaming by default
+      - SESSION_TIMEOUT_GRACE=30000           # Grace period before terminating (ms)
+      
       # Device identification
       - DEVICE_UUID=plextv-local-stable-uuid-001
       - DEVICE_NAME=PlexBridge Local

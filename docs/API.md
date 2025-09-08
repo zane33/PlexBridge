@@ -1,13 +1,39 @@
 # PlexBridge API Documentation
 
-## API Overview
+## Overview
 
-PlexBridge provides a comprehensive REST API for managing channels, streams, EPG data, and system configuration. The API follows RESTful conventions with full input validation and structured error responses.
+PlexBridge provides a comprehensive REST API for managing IPTV streams, channels, Electronic Program Guide (EPG), and system monitoring. The API follows RESTful conventions and returns JSON responses.
 
-**Base URL**: `http://localhost:8080`  
+**Base URL**: `http://{HOST}:{PORT}/api`  
 **Content-Type**: `application/json`  
 **Rate Limiting**: 1000 requests per 15 minutes per IP address  
-**Validation**: Joi schema validation on all inputs  
+**Validation**: Joi schema validation on all inputs
+
+## Authentication
+
+Currently, the API does not require authentication. All endpoints are publicly accessible.
+
+## Response Format
+
+All API responses follow a consistent JSON structure:
+
+**Success Response:**
+```json
+{
+  "data": [...], // The requested data
+  "message": "Success message",
+  "timestamp": "2025-09-08T20:30:00.000Z"
+}
+```
+
+**Error Response:**
+```json
+{
+  "error": "Error description",
+  "code": "ERROR_CODE",
+  "timestamp": "2025-09-08T20:30:00.000Z"
+}
+```  
 **Caching**: Redis-backed response caching with automatic invalidation
 
 ## Authentication & Security
@@ -643,6 +669,192 @@ Get EPG grid data for time range.
 - `start`: Start time (default: now)
 - `end`: End time (default: 4 hours from now)
 - `channels`: Comma-separated channel IDs
+
+## Additional API Endpoints (Production)
+
+### Stream Management (Extended)
+
+#### POST /api/streams/import
+Import M3U playlist channels.
+
+**Request Body**:
+```json
+{
+  "url": "http://example.com/playlist.m3u",
+  "channels": [
+    {
+      "name": "Channel Name",
+      "url": "http://stream.url",
+      "selected": true
+    }
+  ]
+}
+```
+
+#### POST /api/streams/validate-m3u
+Validate M3U playlist URL.
+
+#### POST /api/streams/m3u-stats  
+Get M3U playlist statistics.
+
+#### GET /api/streams/active
+Get currently active streaming sessions.
+
+#### DELETE /api/streams/active/:sessionId
+Stop specific streaming session.
+
+#### DELETE /api/streams/active/client/:clientId  
+Stop all streams for a client.
+
+#### DELETE /api/streams/active/channel/:streamId
+Stop all streams for a channel.
+
+#### DELETE /api/streams/sessions/cleanup
+Cleanup old and orphaned streaming sessions.
+
+**Response**:
+```json
+{
+  "message": "Stream sessions cleanup completed",
+  "orphanedSessionsDeleted": 0,
+  "oldSessionsDeleted": 166,
+  "totalDeleted": 166
+}
+```
+
+### EPG Management (Extended)
+
+#### POST /api/epg/initialize
+Initialize EPG system.
+
+#### GET /api/epg/secondary-genres
+Get secondary genre classifications.
+
+#### GET /api/epg/channels
+Get EPG channel mappings.
+
+#### GET /api/epg/sources/:id/channels
+Get channels for specific EPG source.
+
+#### POST /api/epg/debug-parse/:id
+Debug EPG source parsing.
+
+#### POST /api/epg/sources/:id/refresh
+Refresh specific EPG source.
+
+#### GET /api/epg/programs
+Get EPG program data.
+
+**Query Parameters**:
+- `channel_id`: Filter by channel
+- `start`: Start time filter
+- `end`: End time filter
+- `limit`: Result limit
+- `offset`: Pagination offset
+
+#### GET /api/epg/mapping-suggestions
+Get EPG mapping suggestions.
+
+#### GET /api/debug/epg
+Debug EPG system status.
+
+### System Information
+
+#### GET /api/server/info
+Get server information.
+
+**Response**:
+```json
+{
+  "name": "PlexBridge",
+  "version": "1.0.0", 
+  "description": "IPTV to Plex Bridge Interface",
+  "nodeVersion": "v20.19.5",
+  "environment": "production",
+  "uptime": 1359.40,
+  "startTime": "2025-09-08T20:10:00.000Z"
+}
+```
+
+### Logs Management
+
+#### GET /api/logs/download
+Download log files.
+
+**Query Parameters**:
+- `date`: Specific date (YYYY-MM-DD)
+
+#### GET /api/logs/files
+Get available log files list.
+
+#### DELETE /api/logs/cleanup
+Cleanup old log files.
+
+### Settings Management (Extended)
+
+#### GET /api/settings/:category
+Get settings for specific category.
+
+**Categories**: `server`, `streaming`, `database`, `cache`, `epg`, `logging`
+
+#### POST /api/settings/reset
+Reset settings to defaults.
+
+#### GET /api/settings/metadata
+Get settings metadata and schemas.
+
+### Backup & Restore
+
+#### GET /api/backup/export
+Export system configuration.
+
+**Response**: ZIP file download
+
+#### POST /api/backup/import
+Import system configuration.
+
+**Request**: Multipart form data with backup file
+
+#### POST /api/backup/validate
+Validate backup file format.
+
+### Bulk Operations
+
+#### PUT /api/channels/bulk-update
+Bulk update multiple channels.
+
+**Request Body**:
+```json
+{
+  "updates": [
+    {
+      "id": "channel-uuid",
+      "enabled": false,
+      "number": 200
+    }
+  ]
+}
+```
+
+## Health Check
+
+### GET /health
+System health check endpoint.
+
+**Response**:
+```json
+{
+  "status": "healthy",
+  "timestamp": "2025-09-08T20:30:00.000Z",
+  "uptime": 1359.40,
+  "services": {
+    "database": {"status": "healthy"},
+    "cache": {"status": "healthy"},
+    "ssdp": {"status": "running"}
+  },
+  "version": "1.0.0"
+}
+```
 
 ## Error Responses
 

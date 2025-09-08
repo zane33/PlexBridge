@@ -1527,8 +1527,99 @@ class StreamManager {
       logger.debug('Cleared Android TV reset timer', { sessionId, reason });
     }
     
-    // End enhanced session tracking first
-    if (stream) {
+    // CRITICAL FIX: Enhanced session persistence during errors
+    // Only terminate sessions for intentional disconnects, keep alive during all errors
+    const errorReasons = [
+      'ffmpeg_error', 'process_closed', 'stream_failed', 'timeout',
+      'response_invalid', 'restart_error', 'restart_failed', 
+      'response_invalid_during_restart', 'response_closed'
+    ];
+    
+    const shouldMaintainSession = errorReasons.includes(reason) || 
+                                 process.env.SESSION_KEEP_ALIVE === 'true';
+    
+    if (stream && shouldMaintainSession) {
+      // Track error count for automatic resilience upgrade
+      if (!stream.errorCount) {
+        stream.errorCount = 0;
+      }
+      stream.errorCount++;
+      stream.lastErrorTime = Date.now();
+      stream.lastErrorReason = reason;
+      
+      // Check if we should upgrade to resilient streaming
+      const shouldUpgrade = (stream.errorCount >= 2 || process.env.AUTO_UPGRADE_TO_RESILIENT === 'true') 
+                          && !stream.isResilient;
+      
+      if (shouldUpgrade) {
+        logger.info('Stream experiencing errors - upgrading to resilient streaming', {
+          sessionId,
+          reason,
+          errorCount: stream.errorCount,
+          streamUrl: stream.url,
+          streamType: stream.type
+        });
+        
+        // Mark for upgrade (will be handled by periodic checker)
+        stream.needsResilienceUpgrade = true;
+        this.activeStreams.set(sessionId, stream);
+        
+        // Don't cleanup - maintain session for resilience upgrade
+        return;
+      }
+      
+      logger.info('Stream error detected - maintaining session and attempting recovery', {
+        sessionId,
+        reason,
+        errorCount: stream.errorCount,
+        streamUrl: stream.url,
+        streamType: stream.type,
+        isResilient: stream.isResilient
+      });
+        
+        // Mark session as requiring recovery instead of terminating
+        streamSessionManager.updateSessionMetrics(sessionId, { errorIncrement: 1 });
+        
+        // Attempt recovery with grace period
+        const maxRecoveryAttempts = parseInt(process.env.STREAM_MAX_RECOVERY_ATTEMPTS) || 10;
+        const recoveryDelay = parseInt(process.env.STREAM_RECOVERY_DELAY) || 2000;
+        
+        if (!stream.recoveryAttempts) {
+          stream.recoveryAttempts = 0;
+        }
+        
+        if (stream.recoveryAttempts < maxRecoveryAttempts) {
+          stream.recoveryAttempts++;
+          logger.info('Scheduling stream recovery attempt', {
+            sessionId,
+            attempt: stream.recoveryAttempts,
+            maxAttempts: maxRecoveryAttempts,
+            delay: recoveryDelay
+          });
+          
+          // Schedule recovery attempt
+          setTimeout(() => {
+            if (this.activeStreams.has(sessionId)) {
+              logger.info('Executing recovery for stream', { sessionId });
+              // Mark stream for recovery - will be handled by periodic checker
+              stream.needsRecovery = true;
+              this.activeStreams.set(sessionId, stream);
+            }
+          }, recoveryDelay);
+          
+          // Don't cleanup - maintain session for recovery
+          return;
+        } else {
+          logger.warn('Max recovery attempts reached, forcing resilience upgrade', {
+            sessionId,
+            attempts: stream.recoveryAttempts
+          });
+          stream.needsResilienceUpgrade = true;
+          this.activeStreams.set(sessionId, stream);
+          return;
+        }
+    } else if (stream) {
+      // For resilient streams, let the resilience service handle termination
       streamSessionManager.endSession(sessionId, reason).catch(error => {
         logger.warn('Failed to end enhanced session tracking', {
           sessionId,
@@ -4684,6 +4775,120 @@ class StreamManager {
 
 // Create singleton instance
 const streamManager = new StreamManager();
+
+// Stream recovery system - monitor sessions and upgrade to resilient when needed
+setInterval(() => {
+  const streamResilienceService = require('./streamResilienceService');
+  
+  for (const [sessionId, stream] of streamManager.activeStreams) {
+    // Check for streams marked for resilience upgrade
+    if (stream.needsResilienceUpgrade && !stream.isResilient) {
+      logger.info('Upgrading stream to resilient based on error detection', {
+        sessionId,
+        errorCount: stream.errorCount,
+        recoveryAttempts: stream.recoveryAttempts,
+        streamUrl: stream.url,
+        streamType: stream.type
+      });
+      
+      try {
+        // Upgrade to resilient stream
+        streamManager.upgradeToResilientStream(sessionId, stream);
+        stream.needsResilienceUpgrade = false;
+      } catch (error) {
+        logger.error('Failed to upgrade stream to resilient', {
+          sessionId,
+          error: error.message
+        });
+      }
+    }
+    
+    // Check for streams needing recovery
+    if (stream.needsRecovery && !stream.isResilient) {
+      logger.info('Stream marked for recovery - upgrading to resilient', {
+        sessionId,
+        streamUrl: stream.url
+      });
+      
+      try {
+        streamManager.upgradeToResilientStream(sessionId, stream);
+        stream.needsRecovery = false;
+      } catch (error) {
+        logger.error('Failed to recover stream', {
+          sessionId,
+          error: error.message
+        });
+      }
+    }
+    
+    // Check if non-resilient stream is experiencing repeated errors
+    if (!stream.isResilient && stream.errorCount && stream.errorCount >= 2) {
+      logger.info('Non-resilient stream experiencing repeated errors - upgrading to resilient', {
+        sessionId,
+        errorCount: stream.errorCount,
+        streamUrl: stream.url,
+        streamType: stream.type
+      });
+      
+      try {
+        // Upgrade to resilient stream
+        streamManager.upgradeToResilientStream(sessionId, stream);
+      } catch (error) {
+        logger.error('Failed to upgrade stream to resilient', {
+          sessionId,
+          error: error.message
+        });
+      }
+    }
+  }
+}, 10 * 1000); // Check every 10 seconds for faster recovery
+
+// Add upgrade method to StreamManager class
+StreamManager.prototype.upgradeToResilientStream = async function(sessionId, stream) {
+  const streamResilienceService = require('./streamResilienceService');
+  
+  logger.info('Upgrading regular stream to resilient stream', {
+    sessionId,
+    streamUrl: stream.url,
+    errorCount: stream.errorCount
+  });
+  
+  try {
+    // Start resilient stream with same parameters
+    const resilientOutputStream = await streamResilienceService.startResilientStream(
+      `resilient_upgrade_${sessionId}`,
+      stream.url,
+      {
+        streamType: stream.type,
+        auth: stream.auth,
+        clientInfo: {
+          userAgent: stream.userAgent || 'Unknown',
+          clientIP: stream.clientIP || '127.0.0.1',
+          clientIdentifier: stream.clientIdentifier || sessionId
+        },
+        enhancedResilience: true,
+        plexOptimizations: true
+      }
+    );
+    
+    // Mark as resilient
+    stream.isResilient = true;
+    stream.resilienceUpgradeTime = Date.now();
+    this.activeStreams.set(sessionId, stream);
+    
+    logger.info('Successfully upgraded stream to resilient', {
+      sessionId,
+      upgradeTime: stream.resilienceUpgradeTime
+    });
+    
+  } catch (error) {
+    logger.error('Failed to upgrade stream to resilient', {
+      sessionId,
+      error: error.message
+    });
+    throw error;
+  }
+};
 
 // Periodic cleanup of stale sessions (every 5 minutes)
 setInterval(() => {
