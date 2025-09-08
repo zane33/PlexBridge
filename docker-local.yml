@@ -45,6 +45,8 @@ services:
       - ./data:/host-data
       # Server code bind mount for development
       - ./server:/app/server
+      # Client code bind mount for development (to get validation fix)
+      - ./client:/app/client
     environment:
       # Application environment
       - NODE_ENV=production
