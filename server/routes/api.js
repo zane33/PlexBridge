@@ -23,7 +23,7 @@ const channelSchema = Joi.object({
 });
 
 const streamSchema = Joi.object({
-  channel_id: Joi.string().required(),
+  channel_id: Joi.string().allow(null, '').optional(), // Allow null for orphaned streams
   name: Joi.string().required().max(255),
   url: Joi.string().uri().required(),
   type: Joi.string().valid('hls', 'dash', 'rtsp', 'rtmp', 'udp', 'http', 'mms', 'srt').required(),

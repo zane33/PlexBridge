@@ -481,7 +481,9 @@ function StreamManager() {
       return;
     }
     
-    if (!isM3UPlaylist && !formData.channel_id) {
+    // Allow orphaned streams (streams without a channel_id) to be edited
+    // Only require channel_id for new streams, not for editing existing orphaned streams
+    if (!isM3UPlaylist && !formData.channel_id && !editingStream) {
       enqueueSnackbar('Please select a channel for this stream', { variant: 'error' });
       return;
     }
@@ -490,8 +492,8 @@ function StreamManager() {
     try {
       // COMPLETE FIX: Properly format ALL fields according to Joi schema expectations
       const data = {
-        // Required string fields
-        channel_id: formData.channel_id || '',
+        // Don't include channel_id if it's empty (for orphaned streams)
+        ...(formData.channel_id && { channel_id: formData.channel_id }),
         name: formData.name.trim(),
         url: formData.url.trim(),
         type: formData.type || 'hls',
