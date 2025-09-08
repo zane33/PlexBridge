@@ -62,6 +62,9 @@ class DatabaseService {
       // Start health check monitoring
       this.startHealthMonitoring();
       
+      // Test write permissions immediately
+      await this.verifyWritePermissions();
+      
       logger.info('Real database initialized successfully with production settings');
       return this.db;
     } catch (error) {
@@ -86,9 +89,37 @@ class DatabaseService {
       
       const stmt = this.db.prepare(sql);
       const result = stmt.run(...params);
+      
+      // Enhanced logging for save operations (avoid database logging to prevent loops)
+      if (sql.toLowerCase().includes('insert') || sql.toLowerCase().includes('update')) {
+        console.log('Database save operation successful:', {
+          sql: sql.substring(0, 100),
+          affectedRows: result.changes,
+          lastInsertRowid: result.lastInsertRowid
+        });
+      }
+      
       return Promise.resolve(result);
     } catch (err) {
-      logger.error('Database run error:', { sql: sql.substring(0, 100), error: err.message });
+      // Enhanced error logging with file permissions check
+      const errorDetails = {
+        sql: sql.substring(0, 100),
+        error: err.message,
+        code: err.code,
+        errno: err.errno,
+        isWriteOperation: sql.toLowerCase().includes('insert') || sql.toLowerCase().includes('update') || sql.toLowerCase().includes('delete')
+      };
+      
+      // Check for permission errors specifically (use console.error to avoid logging loops)
+      if (err.message.includes('SQLITE_READONLY') || err.message.includes('SQLITE_CANTOPEN') || err.message.includes('attempt to write a readonly database')) {
+        console.error('🚨 CRITICAL: Database file permission error detected!', {
+          ...errorDetails,
+          dbPath: this.dbPath,
+          suggestion: 'Check database file permissions - likely owned by Docker user (1001) but accessed by different user'
+        });
+      } else {
+        console.error('Database run error:', errorDetails);
+      }
       
       // Attempt reconnection on certain errors
       if (this.isConnectionError(err)) {
@@ -549,8 +580,10 @@ class DatabaseService {
            message.includes('SQLITE_LOCKED') ||
            message.includes('SQLITE_CANTOPEN') ||
            message.includes('SQLITE_CORRUPT') ||
+           message.includes('SQLITE_READONLY') ||
            message.includes('database is locked') ||
-           message.includes('no such table');
+           message.includes('no such table') ||
+           message.includes('attempt to write a readonly database');
   }
 
   // Reconnect to database
@@ -674,6 +707,39 @@ class DatabaseService {
       'plexlive.localization.locale': 'Default locale for the application'
     };
     return descriptions[key] || `Setting for ${key}`;
+  }
+
+  // Verify write permissions
+  async verifyWritePermissions() {
+    try {
+      console.log('🔍 Verifying database write permissions...');
+      
+      // Test write by creating and deleting a test record
+      const testId = 'write-test-' + Date.now();
+      
+      await this.run(
+        'INSERT INTO settings (key, value, description) VALUES (?, ?, ?)',
+        [testId, 'test-value', 'Write permission test']
+      );
+      
+      const testRecord = await this.get('SELECT * FROM settings WHERE key = ?', [testId]);
+      
+      if (!testRecord) {
+        throw new Error('Write test failed - record not found after insert');
+      }
+      
+      await this.run('DELETE FROM settings WHERE key = ?', [testId]);
+      
+      console.log('✅ Database write permissions verified successfully');
+      
+    } catch (error) {
+      console.error('🚨 CRITICAL: Database write permission verification failed!', {
+        error: error.message,
+        dbPath: this.dbPath,
+        suggestion: 'Run: sudo chown -R $(whoami):$(whoami) ' + path.dirname(this.dbPath)
+      });
+      throw new Error(`Database write permissions failed: ${error.message}`);
+    }
   }
 
   // Health check
