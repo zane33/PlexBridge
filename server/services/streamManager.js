@@ -26,6 +26,21 @@ const ANDROID_TV_CONFIG = {
 };
 
 class StreamManager {
+  // Static constants for beacon detection and processing
+  static BEACON_PATTERNS = {
+    TOKEN_PATH: /\/[a-f0-9]{64,}/,
+    TRACKING_PARAMS: new Set([
+      'redirect_url', 'bcn', 'seg_id', 'user_id', 'seen-ad', 
+      'media_type', 'ca', 'cid', 'dur', 'tracking_id',
+      'session_id', 'beacon_id', 'analytics_id'
+    ]),
+    ESSENTIAL_PARAMS: new Set(['quality', 'bitrate', 'format', 'protocol']),
+    BEACON_DOMAINS: ['amagi.tv', 'cloudfront.net', 'fastly.com', 'akamai.net', 'tracking.', 'analytics.', 'beacon.', 'telemetry.'],
+    MIN_TRACKING_PARAMS: 2,
+    MIN_QUERY_LENGTH: 100,
+    MAX_PATH_LENGTH: 100
+  };
+
   constructor() {
     this.activeStreams = new Map();
     this.streamProcesses = new Map();
@@ -1964,6 +1979,23 @@ class StreamManager {
               headers: response.headers
             });
           }
+        }
+        // Handle beacon tracking URLs (generic detection) for Plex
+        else if (this.isBeaconTrackingUrl(streamUrl)) {
+          try {
+            finalStreamUrl = await this.processBeaconUrl(streamUrl);
+            logger.info('Processed beacon tracking URL for Plex stream', {
+              channelId: channel.id,
+              originalUrl: streamUrl,
+              finalUrl: finalStreamUrl,
+              beacon: true
+            });
+          } catch (beaconError) {
+            logger.warn('Failed to process beacon URL, using original', {
+              channelId: channel.id,
+              error: beaconError.message
+            });
+          }
         } else {
           // For other streams, use HEAD request
           const response = await axios.head(streamUrl, {
@@ -2890,10 +2922,12 @@ class StreamManager {
         clientIP: req.ip
       });
 
-      // Resolve redirects first
+      // Resolve redirects and handle beacon URLs first
       let finalStreamUrl = streamUrl;
       try {
         const axios = require('axios');
+        
+        // Handle traditional redirects (mjh.nz, etc.)
         if (streamUrl.includes('mjh.nz') || streamUrl.includes('')) {
           const response = await axios.head(streamUrl, {
             maxRedirects: 0,
@@ -2909,8 +2943,17 @@ class StreamManager {
             });
           }
         }
+        // Handle beacon tracking URLs (generic detection)
+        else if (this.isBeaconTrackingUrl(streamUrl)) {
+          finalStreamUrl = await this.processBeaconUrl(streamUrl);
+          logger.info('Processed beacon tracking URL for web client', {
+            originalUrl: streamUrl,
+            finalUrl: finalStreamUrl,
+            beacon: true
+          });
+        }
       } catch (redirectError) {
-        logger.warn('Failed to resolve redirect, using original URL', {
+        logger.warn('Failed to resolve redirect/beacon URL, using original URL', {
           error: redirectError.message
         });
       }
@@ -4026,6 +4069,209 @@ class StreamManager {
         serviceUptime: serviceStats.serviceUptime
       }
     };
+  }
+
+  /**
+   * Detect if a URL is a beacon tracking URL that requires special processing
+   * @param {string} url - The URL to check
+   * @returns {boolean} - True if URL contains beacon tracking patterns
+   */
+  isBeaconTrackingUrl(url) {
+    if (!url || typeof url !== 'string' || url.length === 0) {
+      return false;
+    }
+    
+    try {
+      const urlObj = new URL(url);
+      
+      // Check for beacon indicators in the path
+      if (urlObj.pathname.includes('/beacon/')) {
+        return true;
+      }
+      
+      // Check for tracking parameters that indicate beacon URLs
+      let trackingParamCount = 0;
+      for (const param of StreamManager.BEACON_PATTERNS.TRACKING_PARAMS) {
+        if (urlObj.searchParams.has(param)) {
+          trackingParamCount++;
+        }
+      }
+      
+      if (trackingParamCount >= StreamManager.BEACON_PATTERNS.MIN_TRACKING_PARAMS) {
+        return true;
+      }
+      
+      // Check for encoded redirect URLs in query parameters
+      const queryString = urlObj.search;
+      if (queryString.includes('redirect_url=') || 
+          queryString.includes('location=') ||
+          queryString.includes('target_url=')) {
+        return true;
+      }
+      
+      // Check for common beacon hosting patterns
+      const hasBeaconDomain = StreamManager.BEACON_PATTERNS.BEACON_DOMAINS.some(domain => 
+        urlObj.hostname.includes(domain)
+      );
+      
+      // Complex query string with beacon domain indicates tracking
+      if (hasBeaconDomain && urlObj.search.length > StreamManager.BEACON_PATTERNS.MIN_QUERY_LENGTH) {
+        return true;
+      }
+      
+      // Check for Amagi TV specific patterns
+      if (urlObj.hostname.includes('amagi.tv')) {
+        // Amagi URLs with complex path structures and encoded tokens
+        const pathLength = urlObj.pathname.length;
+        const hasComplexPath = pathLength > StreamManager.BEACON_PATTERNS.MAX_PATH_LENGTH;
+        const hasPlaylistPath = urlObj.pathname.includes('/playlist/');
+        const hasTokenPath = StreamManager.BEACON_PATTERNS.TOKEN_PATH.test(urlObj.pathname);
+        
+        if (hasPlaylistPath && (hasComplexPath || hasTokenPath)) {
+          return true;
+        }
+      }
+      
+      return false;
+    } catch (error) {
+      logger.warn('Error checking if URL is beacon tracking URL', {
+        url,
+        error: error.message
+      });
+      return false;
+    }
+  }
+
+  /**
+   * Process a beacon tracking URL to extract the actual stream URL
+   * @param {string} beaconUrl - The beacon URL to process
+   * @returns {string} - The processed stream URL
+   */
+  async processBeaconUrl(beaconUrl) {
+    if (!beaconUrl || typeof beaconUrl !== 'string' || beaconUrl.length === 0) {
+      throw new Error('Invalid beacon URL provided');
+    }
+    
+    try {
+      const urlObj = new URL(beaconUrl);
+      
+      // Method 1: Check for direct redirect_url parameter
+      const redirectUrl = urlObj.searchParams.get('redirect_url');
+      if (redirectUrl) {
+        const decodedUrl = decodeURIComponent(redirectUrl);
+        logger.debug('Found redirect_url in beacon URL', {
+          original: beaconUrl,
+          extracted: decodedUrl
+        });
+        return decodedUrl;
+      }
+      
+      // Method 2: Check for location parameter
+      const locationUrl = urlObj.searchParams.get('location');
+      if (locationUrl) {
+        const decodedUrl = decodeURIComponent(locationUrl);
+        logger.debug('Found location parameter in beacon URL', {
+          original: beaconUrl,
+          extracted: decodedUrl
+        });
+        return decodedUrl;
+      }
+      
+      // Method 3: Try to fetch the playlist and look for actual stream segments
+      const axios = require('axios');
+      try {
+        // Security: Block internal/local URLs
+        if (urlObj.hostname === 'localhost' || 
+            urlObj.hostname === '127.0.0.1' || 
+            urlObj.hostname.startsWith('192.168.') ||
+            urlObj.hostname.startsWith('10.') ||
+            urlObj.hostname.startsWith('172.16.')) {
+          logger.warn('Blocked request to internal IP address', { url: beaconUrl });
+          throw new Error('Internal IP addresses not allowed');
+        }
+        
+        const response = await axios.get(beaconUrl, {
+          timeout: 5000, // Reduced from 10000
+          maxContentLength: 1024 * 1024, // 1MB limit
+          maxBodyLength: 1024 * 1024,
+          headers: {
+            'User-Agent': 'PlexBridge/1.0 FFmpeg-compatible',
+            'Accept': 'application/vnd.apple.mpegurl,application/x-mpegURL,*/*'
+          }
+        });
+        
+        const playlist = response.data;
+        
+        // Look for the base URL pattern to construct clean stream URL
+        if (typeof playlist === 'string' && playlist.includes('#EXTM3U')) {
+          // Extract base URL from the beacon URL
+          const pathParts = urlObj.pathname.split('/');
+          const basePathIndex = pathParts.findIndex(part => part === 'beacon');
+          
+          if (basePathIndex > 0) {
+            // Reconstruct URL without beacon tracking
+            const basePath = pathParts.slice(0, basePathIndex).join('/');
+            const streamPath = pathParts.slice(basePathIndex + 2).join('/');
+            
+            const cleanUrl = `${urlObj.protocol}//${urlObj.hostname}${basePath}/${streamPath}`;
+            
+            logger.debug('Constructed clean URL from beacon pattern', {
+              original: beaconUrl,
+              constructed: cleanUrl
+            });
+            
+            // Test if the clean URL works
+            try {
+              const testResponse = await axios.head(cleanUrl, { 
+                timeout: 3000, // Reduced timeout for test
+                maxRedirects: 3
+              });
+              if (testResponse.status === 200) {
+                return cleanUrl;
+              }
+            } catch (testError) {
+              logger.debug('Clean URL test failed, using original', {
+                cleanUrl,
+                error: testError.message
+              });
+            }
+          }
+        }
+        
+      } catch (fetchError) {
+        logger.debug('Could not fetch beacon URL playlist', {
+          url: beaconUrl,
+          error: fetchError.message
+        });
+      }
+      
+      // Method 4: Remove tracking parameters but keep the base structure
+      const cleanParams = new URLSearchParams();
+      
+      // Keep essential parameters, remove tracking ones
+      for (const [key, value] of urlObj.searchParams) {
+        if (StreamManager.BEACON_PATTERNS.ESSENTIAL_PARAMS.has(key) || 
+            !StreamManager.BEACON_PATTERNS.TRACKING_PARAMS.has(key)) {
+          cleanParams.append(key, value);
+        }
+      }
+      
+      const processedUrl = `${urlObj.protocol}//${urlObj.hostname}${urlObj.pathname}${cleanParams.toString() ? '?' + cleanParams.toString() : ''}`;
+      
+      logger.debug('Processed beacon URL by removing tracking parameters', {
+        original: beaconUrl,
+        processed: processedUrl
+      });
+      
+      return processedUrl;
+      
+    } catch (error) {
+      logger.warn('Failed to process beacon URL, using original', {
+        url: beaconUrl,
+        error: error.message
+      });
+      return beaconUrl;
+    }
   }
 }
 
