@@ -470,6 +470,8 @@ function StreamManager() {
         ...formData,
         name: formData.name.trim(),
         url: formData.url.trim(),
+        // Convert boolean enhanced_encoding to number (0 or 1) for API
+        enhanced_encoding: formData.enhanced_encoding ? 1 : 0,
       };
       
       console.log('Submitting stream data:', data);
