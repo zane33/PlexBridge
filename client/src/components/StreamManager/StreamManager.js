@@ -470,8 +470,16 @@ function StreamManager() {
         ...formData,
         name: formData.name.trim(),
         url: formData.url.trim(),
-        // Convert boolean enhanced_encoding to number (0 or 1) for API
+        // Convert boolean fields to numbers (0 or 1) for API validation
         enhanced_encoding: formData.enhanced_encoding ? 1 : 0,
+        monitoring_enabled: formData.monitoring_enabled ? 1 : 0,
+        // Ensure numeric fields are properly typed
+        reliability_score: Number(formData.reliability_score || 1.0),
+        failure_count: Number(formData.failure_count || 0),
+        // Ensure arrays and objects are properly stringified for API
+        backup_urls: JSON.stringify(formData.backup_urls || []),
+        headers: JSON.stringify(formData.headers || {}),
+        protocol_options: JSON.stringify(formData.protocol_options || {}),
       };
       
       console.log('Submitting stream data:', data);
