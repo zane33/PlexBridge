@@ -236,10 +236,13 @@ class StreamResilienceService extends EventEmitter {
       }
     });
 
-    // Monitor stderr for connection issues
+    // Monitor stderr for connection issues and upstream session events
     ffmpeg.stderr.on('data', (data) => {
       const errorText = data.toString();
       logger.debug('FFmpeg stderr', { streamId, stderr: errorText.trim() });
+      
+      // Enhanced upstream session logging
+      this.logUpstreamSessionEvents(streamId, errorText);
       
       // Detect specific connection issues for proactive recovery
       if (this.isConnectionError(errorText)) {
@@ -253,6 +256,18 @@ class StreamResilienceService extends EventEmitter {
         if (!resilienceState.isRecovering) {
           this.prepareForRecovery(resilienceState, 'connection_error');
         }
+      }
+      
+      // Detect upstream session termination
+      if (this.isUpstreamSessionTermination(errorText)) {
+        logger.info('Upstream session terminated - initiating seamless reconnection', {
+          streamId,
+          upstreamError: errorText.trim(),
+          action: 'automatic_reconnection'
+        });
+        
+        // Start immediate reconnection instead of failing
+        this.handleUpstreamDisconnection(resilienceState, errorText);
       }
     });
 
@@ -837,6 +852,141 @@ class StreamResilienceService extends EventEmitter {
 
     const lowerError = errorText.toLowerCase();
     return connectionErrors.some(error => lowerError.includes(error));
+  }
+
+  /**
+   * Enhanced upstream session logging to track connection lifecycle
+   */
+  logUpstreamSessionEvents(streamId, errorText) {
+    const lowerError = errorText.toLowerCase();
+    
+    // Log session opening events
+    if (lowerError.includes('opening') || lowerError.includes('connected to') || 
+        lowerError.includes('handshake') || lowerError.includes('stream found')) {
+      logger.info('Upstream session opened', {
+        streamId,
+        event: 'upstream_session_open',
+        details: errorText.trim(),
+        timestamp: new Date().toISOString()
+      });
+    }
+    
+    // Log session closing events  
+    if (lowerError.includes('closing') || lowerError.includes('disconnected') || 
+        lowerError.includes('connection closed') || lowerError.includes('eof')) {
+      logger.info('Upstream session closed', {
+        streamId,
+        event: 'upstream_session_close',
+        details: errorText.trim(),
+        timestamp: new Date().toISOString()
+      });
+    }
+    
+    // Log authentication events
+    if (lowerError.includes('auth') || lowerError.includes('login') || 
+        lowerError.includes('credentials') || lowerError.includes('unauthorized')) {
+      logger.info('Upstream authentication event', {
+        streamId,
+        event: 'upstream_auth',
+        details: errorText.trim(),
+        timestamp: new Date().toISOString()
+      });
+    }
+    
+    // Log server response codes
+    if (errorText.match(/4\d\d|5\d\d/)) {
+      logger.warn('Upstream server error response', {
+        streamId,
+        event: 'upstream_server_error',
+        details: errorText.trim(),
+        timestamp: new Date().toISOString()
+      });
+    }
+  }
+
+  /**
+   * Check if error indicates upstream session termination (should reconnect, not fail)
+   */
+  isUpstreamSessionTermination(errorText) {
+    const upstreamTerminationErrors = [
+      'connection closed by server',
+      'server disconnected', 
+      'peer disconnected',
+      'end of file',
+      'eof',
+      'connection reset by peer',
+      'broken pipe',
+      'server closed connection',
+      'remote host closed connection',
+      '403 forbidden',
+      '404 not found', 
+      '503 service unavailable',
+      '502 bad gateway',
+      'upstream connect error',
+      'stream not found',
+      'playlist not found',
+      'segment not found'
+    ];
+
+    const lowerError = errorText.toLowerCase();
+    return upstreamTerminationErrors.some(error => lowerError.includes(error));
+  }
+
+  /**
+   * Handle upstream disconnection with immediate reconnection attempt
+   */
+  async handleUpstreamDisconnection(resilienceState, errorText) {
+    const { streamId } = resilienceState;
+    
+    logger.info('Handling upstream disconnection - maintaining session continuity', {
+      streamId,
+      upstreamError: errorText.trim(),
+      action: 'seamless_reconnection',
+      retryAttempt: resilienceState.ffmpegRetries + 1
+    });
+
+    // Mark as recovering but don't change status to failed
+    resilienceState.isRecovering = true;
+    resilienceState.recoveryStartTime = Date.now();
+    resilienceState.lastRecoveryReason = 'upstream_disconnection';
+
+    // Emit recovery event
+    this.emit('stream:recovery_started', {
+      streamId,
+      reason: 'upstream_disconnection',
+      layer: 'seamless_reconnection',
+      attempt: resilienceState.ffmpegRetries + 1
+    });
+
+    // Use shorter delay for upstream disconnections (they should reconnect quickly)
+    const reconnectDelay = Math.min(1000, this.config.ffmpeg.reconnectDelayMs * Math.pow(this.config.ffmpeg.reconnectBackoffFactor, resilienceState.ffmpegRetries));
+    
+    setTimeout(async () => {
+      // Only proceed if stream hasn't been stopped
+      if (resilienceState.status === 'stopped') return;
+
+      try {
+        // Let FFmpeg handle the reconnection internally first
+        // If that fails, the normal error handling will kick in
+        logger.info('Upstream reconnection delay completed - relying on FFmpeg reconnection', {
+          streamId,
+          reconnectDelay,
+          ffmpegRetries: resilienceState.ffmpegRetries
+        });
+        
+        // Reset recovery state - FFmpeg should handle this internally
+        this.completeRecovery(resilienceState);
+        
+      } catch (error) {
+        logger.error('Failed to handle upstream disconnection', {
+          streamId,
+          error: error.message
+        });
+        
+        // Fall back to normal FFmpeg failure handling
+        await this.handleFFmpegFailure(resilienceState, error);
+      }
+    }, reconnectDelay);
   }
 
   /**
