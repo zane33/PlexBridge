@@ -6,10 +6,11 @@
 3. [Protocol Detection and Handling](#protocol-detection-and-handling)
 4. [Plex Integration Details](#plex-integration-details)
 5. [FFmpeg Configuration](#ffmpeg-configuration)
-6. [Critical Implementation Details](#critical-implementation-details)
-7. [Metadata Handling](#metadata-handling-critical-for-stability)
-8. [Performance Optimizations](#performance-optimizations)
-9. [Troubleshooting Guide](#troubleshooting-guide)
+6. [Stream Resilience System](#stream-resilience-system)
+7. [Critical Implementation Details](#critical-implementation-details)
+8. [Metadata Handling](#metadata-handling-critical-for-stability)
+9. [Performance Optimizations](#performance-optimizations)
+10. [Troubleshooting Guide](#troubleshooting-guide)
 
 ## Overview
 
