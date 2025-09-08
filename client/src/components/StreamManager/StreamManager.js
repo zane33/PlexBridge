@@ -360,24 +360,46 @@ function StreamManager() {
   const handleEdit = (stream) => {
     setEditingStream(stream);
     setValidationResult(null);
+    
+    // COMPLETE FIX: Properly parse ALL fields from database format
+    const parseJsonField = (field, defaultValue = {}) => {
+      if (!field) return defaultValue;
+      if (typeof field === 'string') {
+        try {
+          return JSON.parse(field);
+        } catch {
+          return defaultValue;
+        }
+      }
+      return field;
+    };
+    
     setFormData({
+      // String fields
       channel_id: stream.channel_id || '',
       name: stream.name || '',
       url: stream.url || '',
       type: stream.type || 'hls',
-      backup_urls: stream.backup_urls ? JSON.parse(stream.backup_urls) : [],
       auth_username: stream.auth_username || '',
       auth_password: stream.auth_password || '',
-      headers: stream.headers ? JSON.parse(stream.headers) : {},
-      protocol_options: stream.protocol_options ? JSON.parse(stream.protocol_options) : {},
-      enabled: stream.enabled !== 0,
-      // CRITICAL FIX: Preserve enhanced encoding fields when editing
-      enhanced_encoding: stream.enhanced_encoding === 1,
       enhanced_encoding_profile: stream.enhanced_encoding_profile || 'standard-reliability',
-      reliability_score: stream.reliability_score !== undefined ? stream.reliability_score : 1.0,
+      
+      // Arrays and objects - parse if they're JSON strings
+      backup_urls: Array.isArray(stream.backup_urls) ? stream.backup_urls : parseJsonField(stream.backup_urls, []),
+      headers: typeof stream.headers === 'object' ? stream.headers : parseJsonField(stream.headers),
+      protocol_options: typeof stream.protocol_options === 'object' ? stream.protocol_options : parseJsonField(stream.protocol_options),
+      
+      // Boolean fields - database stores as 0/1 or true/false
+      enabled: stream.enabled === 1 || stream.enabled === true,
+      enhanced_encoding: stream.enhanced_encoding === 1 || stream.enhanced_encoding === true,
+      monitoring_enabled: stream.monitoring_enabled === 1 || stream.monitoring_enabled === true,
+      
+      // Numeric fields
+      reliability_score: parseFloat(stream.reliability_score) || 1.0,
+      failure_count: parseInt(stream.failure_count) || 0,
+      
+      // Date field
       last_failure: stream.last_failure || null,
-      failure_count: stream.failure_count || 0,
-      monitoring_enabled: stream.monitoring_enabled === 1,
     });
     setDialogOpen(true);
   };
@@ -466,31 +488,58 @@ function StreamManager() {
 
     setSaving(true);
     try {
+      // COMPLETE FIX: Properly format ALL fields according to Joi schema expectations
       const data = {
-        ...formData,
+        // Required string fields
+        channel_id: formData.channel_id || '',
         name: formData.name.trim(),
         url: formData.url.trim(),
-        // Convert boolean fields to numbers (0 or 1) for API validation
+        type: formData.type || 'hls',
+        
+        // Optional string fields that can be null or empty
+        auth_username: formData.auth_username || null,
+        auth_password: formData.auth_password || null,
+        enhanced_encoding_profile: formData.enhanced_encoding_profile || 'standard-reliability',
+        
+        // Boolean field (API expects boolean, not number)
+        enabled: Boolean(formData.enabled),
+        
+        // Number fields that need to be converted from boolean to 0/1
         enhanced_encoding: formData.enhanced_encoding ? 1 : 0,
         monitoring_enabled: formData.monitoring_enabled ? 1 : 0,
-        // Ensure numeric fields are properly typed
-        reliability_score: Number(formData.reliability_score || 1.0),
-        failure_count: Number(formData.failure_count || 0),
-        // Ensure arrays and objects are properly stringified for API
-        backup_urls: JSON.stringify(formData.backup_urls || []),
-        headers: JSON.stringify(formData.headers || {}),
-        protocol_options: JSON.stringify(formData.protocol_options || {}),
+        
+        // Numeric fields that should stay as numbers
+        reliability_score: parseFloat(formData.reliability_score) || 1.0,
+        failure_count: parseInt(formData.failure_count) || 0,
+        
+        // Arrays and objects - API expects actual arrays/objects, NOT JSON strings
+        backup_urls: Array.isArray(formData.backup_urls) ? formData.backup_urls : [],
+        headers: (formData.headers && typeof formData.headers === 'object') ? formData.headers : {},
+        protocol_options: (formData.protocol_options && typeof formData.protocol_options === 'object') ? formData.protocol_options : {},
+        
+        // Date field that can be null
+        last_failure: formData.last_failure || null,
       };
       
       console.log('Submitting stream data:', data);
-      console.log('Original formData:', formData);
+      console.log('Data types check:', {
+        channel_id: typeof data.channel_id,
+        enabled: typeof data.enabled,
+        enhanced_encoding: typeof data.enhanced_encoding,
+        monitoring_enabled: typeof data.monitoring_enabled,
+        backup_urls: Array.isArray(data.backup_urls),
+        headers: typeof data.headers,
+        protocol_options: typeof data.protocol_options,
+        reliability_score: typeof data.reliability_score,
+        failure_count: typeof data.failure_count,
+      });
 
       if (editingStream) {
         await api.put(`/api/streams/${editingStream.id}`, data);
-        enqueueSnackbar('Stream updated successfully! 🎉', { variant: 'success' });
+        enqueueSnackbar('Stream updated successfully', { variant: 'success' });
       } else {
         await api.post('/api/streams', data);
-        enqueueSnackbar('Stream created successfully! 🎉', { variant: 'success' });
+        enqueueSnackbar('Stream created successfully', { variant: 'success' });
       }
 
       setDialogOpen(false);
