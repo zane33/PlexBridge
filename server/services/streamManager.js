@@ -2973,8 +2973,18 @@ class StreamManager {
         // Handle HLS playlists that may contain beacon segments
         else if (streamUrl.includes('.m3u8') && streamUrl.includes('amagi.tv')) {
           try {
-            finalStreamUrl = await this.processPlaylistWithBeacons(streamUrl, req);
-            if (finalStreamUrl !== streamUrl) {
+            const result = await this.processPlaylistWithBeacons(streamUrl, req);
+            
+            // Handle direct response for web clients
+            if (result && result.type === 'direct_response') {
+              res.set(result.headers);
+              res.send(result.content);
+              return;
+            }
+            
+            // Handle proxy URL for other cases
+            if (result && result !== streamUrl) {
+              finalStreamUrl = result;
               logger.info('Processed HLS playlist with beacon segments for web client', {
                 originalUrl: streamUrl,
                 processedPlaylist: true
@@ -4215,12 +4225,11 @@ class StreamManager {
       const axios = require('axios');
       try {
         // Security: Block internal/local URLs
-        if (urlObj.hostname === 'localhost' || 
-            urlObj.hostname === '127.0.0.1' || 
-            urlObj.hostname.startsWith('192.168.') ||
-            urlObj.hostname.startsWith('10.') ||
-            urlObj.hostname.startsWith('172.16.')) {
-          logger.warn('Blocked request to internal IP address', { url: beaconUrl });
+        if (this.isPrivateOrLocalAddress(urlObj.hostname)) {
+          logger.warn('Blocked request to internal IP address', { 
+            url: beaconUrl,
+            hostname: urlObj.hostname 
+          });
           throw new Error('Internal IP addresses not allowed');
         }
         
@@ -4309,6 +4318,50 @@ class StreamManager {
   }
 
   /**
+   * Check if a hostname is a private or local address
+   * @param {string} hostname - The hostname to check
+   * @returns {boolean} - True if hostname is private/local
+   */
+  isPrivateOrLocalAddress(hostname) {
+    if (!hostname) return true;
+    
+    // Handle localhost
+    if (hostname === 'localhost') return true;
+    
+    const net = require('net');
+    const ip = net.isIP(hostname);
+    
+    if (!ip) return false; // Not an IP address, allow
+    
+    // IPv4 checks
+    if (ip === 4) {
+      if (hostname === '127.0.0.1') return true;
+      if (hostname.startsWith('192.168.')) return true;
+      if (hostname.startsWith('10.')) return true;
+      if (hostname.startsWith('169.254.')) return true; // Link-local
+      
+      // Check 172.16.0.0/12 range (172.16.0.0 to 172.31.255.255)
+      if (hostname.startsWith('172.')) {
+        const parts = hostname.split('.');
+        if (parts.length === 4) {
+          const secondOctet = parseInt(parts[1]);
+          if (secondOctet >= 16 && secondOctet <= 31) return true;
+        }
+      }
+    }
+    
+    // IPv6 checks
+    if (ip === 6) {
+      if (hostname === '::1') return true; // Loopback
+      if (hostname.toLowerCase().startsWith('fe80::')) return true; // Link-local
+      if (hostname.toLowerCase().startsWith('fc00::')) return true; // Unique local
+      if (hostname.toLowerCase().startsWith('fd00::')) return true; // Unique local
+    }
+    
+    return false;
+  }
+
+  /**
    * Process HLS playlist that may contain beacon tracking URLs in segments
    * @param {string} playlistUrl - The playlist URL to process
    * @param {object} req - Express request object (for web clients)
@@ -4325,12 +4378,11 @@ class StreamManager {
       
       // Security: Block internal/local URLs
       const urlObj = new URL(playlistUrl);
-      if (urlObj.hostname === 'localhost' || 
-          urlObj.hostname === '127.0.0.1' || 
-          urlObj.hostname.startsWith('192.168.') ||
-          urlObj.hostname.startsWith('10.') ||
-          urlObj.hostname.startsWith('172.16.')) {
-        logger.warn('Blocked request to internal IP address', { url: playlistUrl });
+      if (this.isPrivateOrLocalAddress(urlObj.hostname)) {
+        logger.warn('Blocked request to internal IP address', { 
+          url: playlistUrl,
+          hostname: urlObj.hostname 
+        });
         throw new Error('Internal IP addresses not allowed');
       }
 
@@ -4396,18 +4448,17 @@ class StreamManager {
       if (hasBeaconSegments) {
         const cleanedPlaylist = processedLines.join('\n');
         
-        // For web clients, serve the cleaned playlist directly
+        // For web clients, return structured data for direct response
         if (req) {
-          // Set up playlist response headers
-          req.res.set({
-            'Content-Type': 'application/vnd.apple.mpegurl',
-            'Cache-Control': 'no-cache, no-store, must-revalidate',
-            'Access-Control-Allow-Origin': '*'
-          });
-          
-          // Send cleaned playlist content
-          req.res.send(cleanedPlaylist);
-          return null; // Indicate that response was sent
+          return {
+            type: 'direct_response',
+            content: cleanedPlaylist,
+            headers: {
+              'Content-Type': 'application/vnd.apple.mpegurl',
+              'Cache-Control': 'no-cache, no-store, must-revalidate',
+              'Access-Control-Allow-Origin': '*'
+            }
+          };
         } 
         
         // For Plex/FFmpeg, we need to serve the cleaned playlist via a proxy endpoint
@@ -4420,13 +4471,15 @@ class StreamManager {
           originalUrl: playlistUrl
         });
         
-        // Clean up old playlists (older than 5 minutes)
+        // Clean up old playlists (older than 5 minutes) - safe iteration
         const now = Date.now();
+        const expiredIds = [];
         for (const [id, data] of this.cleanedPlaylists) {
           if (now - data.timestamp > 5 * 60 * 1000) {
-            this.cleanedPlaylists.delete(id);
+            expiredIds.push(id);
           }
         }
+        expiredIds.forEach(id => this.cleanedPlaylists.delete(id));
         
         // Return proxy URL for cleaned playlist
         const settings = await this.loadSettings();

@@ -880,6 +880,56 @@ router.get('/streams/preview/:streamId', async (req, res) => {
   }
 });
 
+// Cleaned playlist proxy endpoint for beacon URL processing
+router.get('/stream/playlist/:playlistId', async (req, res) => {
+  try {
+    const { playlistId } = req.params;
+    
+    logger.debug('Cleaned playlist request', { playlistId });
+    
+    // Get cleaned playlist from StreamManager
+    const cleanedPlaylists = streamManager.cleanedPlaylists;
+    if (!cleanedPlaylists || !cleanedPlaylists.has(playlistId)) {
+      logger.warn('Cleaned playlist not found or expired', { playlistId });
+      return res.status(404).send('Playlist not found or expired');
+    }
+    
+    const playlistData = cleanedPlaylists.get(playlistId);
+    const now = Date.now();
+    
+    // Check if playlist has expired (older than 5 minutes)
+    if (now - playlistData.timestamp > 5 * 60 * 1000) {
+      cleanedPlaylists.delete(playlistId);
+      logger.warn('Cleaned playlist expired', { playlistId });
+      return res.status(404).send('Playlist expired');
+    }
+    
+    // Set appropriate headers for HLS playlist
+    res.set({
+      'Content-Type': 'application/vnd.apple.mpegurl',
+      'Cache-Control': 'no-cache, no-store, must-revalidate',
+      'Access-Control-Allow-Origin': '*',
+      'Access-Control-Allow-Headers': 'Range, Content-Type, Authorization'
+    });
+    
+    logger.info('Serving cleaned playlist', {
+      playlistId,
+      originalUrl: playlistData.originalUrl,
+      contentLength: playlistData.content.length
+    });
+    
+    res.send(playlistData.content);
+    
+  } catch (error) {
+    logger.error('Error serving cleaned playlist', {
+      playlistId: req.params.playlistId,
+      error: error.message,
+      stack: error.stack
+    });
+    res.status(500).send('Internal server error');
+  }
+});
+
 // HLS segment endpoint for Plex Web Client streaming
 router.get('/api/streams/segment/:sessionId/:filename', async (req, res) => {
   try {
