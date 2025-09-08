@@ -49,9 +49,9 @@ services:
         max-size: "10m"
         max-file: "3"
     network_mode: "host"
-    #ports:
-      #- "3000:3000"
-      # - "1900:1900/udp"
+    ports:
+      - "3000:3000"
+      - "1900:1900/udp"
     volumes:
       # Use named volume for data persistence (Portainer compatible)
       - plextv_data:/data

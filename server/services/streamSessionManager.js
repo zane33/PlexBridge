@@ -496,10 +496,54 @@ class StreamSessionManager {
   }
 
   /**
+   * Get stream ID from channel ID
+   * Fixes foreign key constraint issue where channelId was being used instead of streamId
+   */
+  async getStreamIdFromChannelId(channelId) {
+    try {
+      const result = await database.get('SELECT id FROM streams WHERE channel_id = ? LIMIT 1', [channelId]);
+      return result ? result.id : null;
+    } catch (error) {
+      logger.error('Failed to get stream ID from channel ID', {
+        channelId,
+        error: error.message
+      });
+      return null;
+    }
+  }
+
+  /**
    * Persist session to database
    */
   async persistSession(session) {
     try {
+      // CRITICAL FIX: Ensure we have a valid streamId for foreign key constraint
+      // If streamId looks like a channelId, convert it to the actual streamId
+      let actualStreamId = session.streamId;
+      
+      // Check if the streamId exists in the streams table
+      const streamExists = await database.get('SELECT id FROM streams WHERE id = ?', [session.streamId]);
+      if (!streamExists) {
+        // Try to find the stream by channel_id (handles case where channelId was passed as streamId)
+        const streamFromChannel = await this.getStreamIdFromChannelId(session.streamId);
+        if (streamFromChannel) {
+          actualStreamId = streamFromChannel;
+          logger.warn('Fixed streamId foreign key constraint by converting channelId to streamId', {
+            sessionId: session.sessionId,
+            originalStreamId: session.streamId,
+            correctedStreamId: actualStreamId
+          });
+        } else {
+          // If still no valid streamId, log error but don't crash - set to null to avoid constraint failure
+          actualStreamId = null;
+          logger.error('Cannot find valid streamId for session persistence - skipping database persistence', {
+            sessionId: session.sessionId,
+            invalidStreamId: session.streamId
+          });
+          return; // Skip persistence rather than crash
+        }
+      }
+
       await database.run(`
         INSERT INTO stream_sessions (
           id, stream_id, client_ip, client_hostname, user_agent, client_identifier,
@@ -510,7 +554,7 @@ class StreamSessionManager {
         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `, [
         session.sessionId,
-        session.streamId,
+        actualStreamId,
         session.clientIP,
         session.clientHostname,
         session.userAgent,
