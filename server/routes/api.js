@@ -32,7 +32,14 @@ const streamSchema = Joi.object({
   auth_password: Joi.string().allow(null, '').max(255),
   headers: Joi.object().default({}),
   protocol_options: Joi.object().default({}),
-  enabled: Joi.boolean().default(true)
+  enabled: Joi.boolean().default(true),
+  // CRITICAL FIX: Add enhanced encoding fields to prevent web UI corruption
+  enhanced_encoding: Joi.number().integer().min(0).max(1).default(0),
+  enhanced_encoding_profile: Joi.string().allow(null, '').max(100).default('standard-reliability'),
+  reliability_score: Joi.number().min(0).max(1).default(1.0),
+  last_failure: Joi.date().allow(null).default(null),
+  failure_count: Joi.number().integer().min(0).default(0),
+  monitoring_enabled: Joi.number().integer().min(0).max(1).default(0)
 });
 
 // Define genre options for each primary category
@@ -453,9 +460,11 @@ router.post('/streams', validate(streamSchema), async (req, res) => {
     const id = uuidv4();
     const data = req.validatedBody;
 
+    // CRITICAL FIX: Include enhanced_encoding fields in INSERT to prevent data corruption
     await database.run(`
-      INSERT INTO streams (id, channel_id, name, url, type, backup_urls, auth_username, auth_password, headers, protocol_options, enabled)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO streams (id, channel_id, name, url, type, backup_urls, auth_username, auth_password, headers, protocol_options, enabled,
+                         enhanced_encoding, enhanced_encoding_profile, reliability_score, last_failure, failure_count, monitoring_enabled)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `, [
       id,
       data.channel_id,
@@ -467,7 +476,14 @@ router.post('/streams', validate(streamSchema), async (req, res) => {
       data.auth_password || null,
       JSON.stringify(data.headers || {}),
       JSON.stringify(data.protocol_options || {}),
-      data.enabled ? 1 : 0  // Convert boolean to integer for SQLite
+      data.enabled ? 1 : 0,  // Convert boolean to integer for SQLite
+      // Enhanced encoding fields with proper defaults
+      data.enhanced_encoding !== undefined ? (data.enhanced_encoding ? 1 : 0) : 0,
+      data.enhanced_encoding_profile || 'standard-reliability',
+      data.reliability_score !== undefined ? data.reliability_score : 1.0,
+      data.last_failure || null,
+      data.failure_count !== undefined ? data.failure_count : 0,
+      data.monitoring_enabled !== undefined ? (data.monitoring_enabled ? 1 : 0) : 0
     ]);
 
     const stream = await database.get('SELECT * FROM streams WHERE id = ?', [id]);
@@ -502,10 +518,13 @@ router.put('/streams/:id', validate(streamSchema), async (req, res) => {
   try {
     const data = req.validatedBody;
     
+    // CRITICAL FIX: Include enhanced_encoding fields in UPDATE to prevent data corruption
     const result = await database.run(`
       UPDATE streams 
       SET channel_id = ?, name = ?, url = ?, type = ?, backup_urls = ?, 
-          auth_username = ?, auth_password = ?, headers = ?, protocol_options = ?, enabled = ?
+          auth_username = ?, auth_password = ?, headers = ?, protocol_options = ?, enabled = ?,
+          enhanced_encoding = ?, enhanced_encoding_profile = ?, reliability_score = ?, 
+          last_failure = ?, failure_count = ?, monitoring_enabled = ?
       WHERE id = ?
     `, [
       data.channel_id,
@@ -518,6 +537,13 @@ router.put('/streams/:id', validate(streamSchema), async (req, res) => {
       JSON.stringify(data.headers || {}),
       JSON.stringify(data.protocol_options || {}),
       data.enabled ? 1 : 0,  // Convert boolean to integer for SQLite
+      // Enhanced encoding fields - preserve existing values if not provided
+      data.enhanced_encoding !== undefined ? (data.enhanced_encoding ? 1 : 0) : 0,
+      data.enhanced_encoding_profile || 'standard-reliability',
+      data.reliability_score !== undefined ? data.reliability_score : 1.0,
+      data.last_failure || null,
+      data.failure_count !== undefined ? data.failure_count : 0,
+      data.monitoring_enabled !== undefined ? (data.monitoring_enabled ? 1 : 0) : 0,
       req.params.id
     ]);
 

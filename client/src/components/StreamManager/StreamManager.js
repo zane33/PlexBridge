@@ -131,6 +131,13 @@ function StreamManager() {
     headers: {},
     protocol_options: {},
     enabled: true,
+    // CRITICAL FIX: Add enhanced encoding fields to prevent web UI corruption
+    enhanced_encoding: false,
+    enhanced_encoding_profile: 'standard-reliability',
+    reliability_score: 1.0,
+    last_failure: null,
+    failure_count: 0,
+    monitoring_enabled: false,
   });
   const { enqueueSnackbar } = useSnackbar();
   const theme = useTheme();
@@ -339,6 +346,13 @@ function StreamManager() {
       headers: {},
       protocol_options: {},
       enabled: true,
+      // CRITICAL FIX: Initialize enhanced encoding fields
+      enhanced_encoding: false,
+      enhanced_encoding_profile: 'standard-reliability',
+      reliability_score: 1.0,
+      last_failure: null,
+      failure_count: 0,
+      monitoring_enabled: false,
     });
     setDialogOpen(true);
   };
@@ -357,6 +371,13 @@ function StreamManager() {
       headers: stream.headers ? JSON.parse(stream.headers) : {},
       protocol_options: stream.protocol_options ? JSON.parse(stream.protocol_options) : {},
       enabled: stream.enabled !== 0,
+      // CRITICAL FIX: Preserve enhanced encoding fields when editing
+      enhanced_encoding: stream.enhanced_encoding === 1,
+      enhanced_encoding_profile: stream.enhanced_encoding_profile || 'standard-reliability',
+      reliability_score: stream.reliability_score !== undefined ? stream.reliability_score : 1.0,
+      last_failure: stream.last_failure || null,
+      failure_count: stream.failure_count || 0,
+      monitoring_enabled: stream.monitoring_enabled === 1,
     });
     setDialogOpen(true);
   };
@@ -1606,6 +1627,32 @@ function StreamManager() {
                               </Typography>
                               <Typography variant="caption" color="text.secondary">
                                 Enables enhanced transcoding with optimized headers for IPTV providers (recommended for  Sports,  Sports, etc.)
+                              </Typography>
+                            </Box>
+                          }
+                        />
+                      </Box>
+                    </Grid>
+                    
+                    {/* CRITICAL FIX: Add enhanced encoding control to prevent web UI corruption */}
+                    <Grid item xs={12}>
+                      <Box sx={{ mt: 2, mb: 1 }}>
+                        <FormControlLabel
+                          control={
+                            <Switch
+                              checked={formData.enhanced_encoding}
+                              onChange={(e) => handleInputChange('enhanced_encoding', e.target.checked)}
+                              disabled={saving}
+                              color="success"
+                            />
+                          }
+                          label={
+                            <Box>
+                              <Typography variant="body1" component="div">
+                                ⚡ Enhanced Stream Encoding
+                              </Typography>
+                              <Typography variant="caption" color="text.secondary">
+                                Enables advanced stream processing with error recovery, anti-loop protection, and H.264 compatibility fixes. Recommended for unreliable IPTV sources.
                               </Typography>
                             </Box>
                           }
