@@ -243,7 +243,7 @@ class StreamResilienceService extends EventEmitter {
           resilienceState.upstreamReconnects = 0;
           resilienceState.consecutiveUpstreamFailures = 0;
           logger.info('Upstream reconnection successful - counters reset', {
-            streamId: resilienceState.streamId,
+            streamId,
             recoveryDuration: Date.now() - resilienceState.recoveryStartTime
           });
         }
