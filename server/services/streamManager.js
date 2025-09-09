@@ -1417,7 +1417,7 @@ class StreamManager {
           '-reconnect_at_eof', '1',
           '-reconnect_streamed', '1',
           '-reconnect_delay_max', '5',
-          '-timeout', '15000000' // 15 second timeout for IPTV
+          '-timeout', '30000000' // 30 second timeout for slow IPTV streams
         ].join(' ');
         
         // For redirected or complex streams, add additional robustness options
@@ -2184,7 +2184,7 @@ class StreamManager {
             // Use GET request with maxRedirects=0 to detect redirect, then follow manually
             const response = await axios.get(streamUrl, {
               maxRedirects: 0, // Don't follow automatically to detect redirect
-              timeout: 15000,
+              timeout: 30000, // 30 seconds for slow M3U8 redirect resolution
               validateStatus: function (status) {
                 // Accept both success and redirect responses
                 return (status >= 200 && status < 300) || (status >= 300 && status < 400);
@@ -2435,7 +2435,7 @@ class StreamManager {
           '-reconnect_at_eof', '1',
           '-reconnect_streamed', '1',
           '-reconnect_delay_max', '5',
-          '-timeout', '15000000' // 15 second timeout
+          '-timeout', '30000000' // 30 second timeout for slow streams
         ].join(' ');
         
         // For IPTV streams, add additional robustness options
