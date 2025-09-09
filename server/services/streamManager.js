@@ -1465,27 +1465,27 @@ class StreamManager {
       command: args.join(' ')
     });
 
-    // SCALABLE CONNECTION LIMITS: Use stream parameter for connection pre-warming
+    // SCALABLE CONNECTION LIMITS: Use stream parameter for VLC compatibility 
     const hasConnectionLimits = streamData?.connection_limits === 1 || streamData?.connection_limits === true;
     if (hasConnectionLimits) {
-      logger.stream('Pre-warming connection for IPTV server with connection limits', { 
+      logger.stream('Applying VLC compatibility for IPTV server with connection limits', { 
         streamName: streamData?.name,
         finalUrl: finalUrl.substring(0, 50) + '...'
       });
       
-      // Use connection manager to establish proper delay and headers
-      const connectionManager = require('../utils/connectionManager');
-      const axios = require('axios');
-      
-      // Pre-warm the connection asynchronously (don't wait for response)
-      connectionManager.makeVLCCompatibleRequest(axios, finalUrl, {
-        timeout: 5000,  // Quick pre-check, don't delay FFmpeg too long
-        maxContentLength: 1024  // Just need to trigger the connection slot
-      }).catch(error => {
-        logger.warn('Connection pre-warming failed, but continuing with FFmpeg', {
-          streamName: streamData?.name,
-          error: error.message,
-          status: error.response?.status
+      // Start connection pre-warming in background (fire and forget - don't block FFmpeg)
+      setImmediate(() => {
+        const connectionManager = require('../utils/connectionManager');
+        const axios = require('axios');
+        
+        connectionManager.makeVLCCompatibleRequest(axios, finalUrl, {
+          timeout: 3000,
+          maxContentLength: 512
+        }).catch(error => {
+          logger.debug('Background connection pre-warm completed', {
+            streamName: streamData?.name,
+            status: error.response?.status || 'error'
+          });
         });
       });
     }

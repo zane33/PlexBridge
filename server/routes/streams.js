@@ -4,6 +4,7 @@ const database = require('../services/database');
 const streamManager = require('../services/streamManager');
 const streamSessionManager = require('../services/streamSessionManager');
 const streamPreviewService = require('../services/streamPreviewService');
+const deferredStreamHandler = require('../services/deferredStreamHandler');
 const logger = require('../utils/logger');
 const { createStreamingSession } = require('../utils/streamingDecisionFix');
 const { getSessionManager, sessionKeepAlive, addStreamHeaders } = require('../utils/sessionPersistenceFix');
@@ -877,6 +878,24 @@ router.get('/stream/:channelId/:filename?', async (req, res) => {
           }
         }
         
+        // CRITICAL TIMEOUT FIX: Check if stream needs deferred handling for connection limits
+        const hasConnectionLimits = stream?.connection_limits === 1 || stream?.connection_limits === true;
+        const needsDeferredHandling = hasConnectionLimits && isPlexRequest && !isSubFile;
+        
+        if (needsDeferredHandling) {
+          logger.info('Using deferred stream handler for connection-limited IPTV stream', {
+            channelId: channel ? channel.id : stream.id,
+            channelName: channel ? channel.name : stream.name,
+            streamUrl: stream.url?.substring(0, 50) + '...',
+            userAgent: req.get('User-Agent'),
+            reason: 'Preventing Plex timeout during slow upstream connection'
+          });
+          
+          // Use deferred handler - this will immediately respond to Plex
+          // while initializing the stream in background
+          return await deferredStreamHandler.handleDeferredStream(req, res, channel, stream);
+        }
+        
         // Check if resilient streaming should be used
         const resilienceDecision = shouldUseResilientStreaming(req, stream);
         
@@ -1092,6 +1111,47 @@ router.get('/streams/convert/hls/:streamId', async (req, res) => {
 
 // Active streams endpoint - Enhanced with persistent session management
 // Resilience statistics endpoint
+/**
+ * GET /streams/deferred
+ * Get statistics for deferred stream handling (connection timeout prevention)
+ */
+router.get('/streams/deferred', async (req, res) => {
+  try {
+    logger.info('Getting deferred stream statistics');
+    
+    const deferredStats = deferredStreamHandler.getStats();
+    
+    const response = {
+      success: true,
+      timestamp: new Date().toISOString(),
+      data: {
+        ...deferredStats,
+        description: 'Deferred streaming prevents Plex timeouts for slow IPTV connections',
+        features: {
+          immediate_response: 'HTTP 200 sent immediately to prevent Plex timeout',
+          padding_stream: 'MPEG-TS padding maintains connection during initialization',
+          background_init: 'FFmpeg starts with connection delays in background',
+          seamless_transition: 'Automatic switch from padding to real stream'
+        },
+        trigger_conditions: {
+          connection_limits: 'Stream has connection_limits=1 or true',
+          plex_request: 'Request is from Plex Media Server',
+          main_stream: 'Not a sub-file or segment request'
+        }
+      }
+    };
+
+    res.json(response);
+  } catch (error) {
+    logger.error('Failed to get deferred stream statistics', { error: error.message });
+    res.status(500).json({
+      success: false,
+      error: 'Failed to retrieve deferred stream statistics',
+      details: error.message
+    });
+  }
+});
+
 router.get('/streams/resilience', async (req, res) => {
   try {
     logger.info('Getting stream resilience statistics');
