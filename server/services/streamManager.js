@@ -360,21 +360,23 @@ class StreamManager {
   }
 
   async validateHLSStream(url, auth) {
+    const connectionManager = require('../utils/connectionManager');
+    
     try {
-      // Use IPTV-optimized headers for better compatibility
-      const headers = { 
-        'User-Agent': 'VLC/3.0.20 LibVLC/3.0.20',
-        'Accept': '*/*',
-        'Connection': 'keep-alive'
-      };
+      logger.stream('Validating HLS stream with VLC-compatible connection management', { 
+        url: url.substring(0, 100) + (url.length > 100 ? '...' : '')
+      });
+
+      // Prepare auth headers
+      const authHeaders = {};
       if (auth && auth.username) {
-        headers['Authorization'] = `Basic ${Buffer.from(`${auth.username}:${auth.password}`).toString('base64')}`;
+        authHeaders['Authorization'] = `Basic ${Buffer.from(`${auth.username}:${auth.password}`).toString('base64')}`;
       }
 
-      const response = await axios.get(url, {
-        timeout: 15000, // Increased timeout for IPTV streams
-        maxRedirects: 10, // Allow more redirects
-        headers
+      // Use VLC-compatible connection manager
+      const response = await connectionManager.makeVLCCompatibleRequest(axios, url, {
+        headers: authHeaders,
+        maxContentLength: 1024 * 1024 // 1MB limit for M3U8 files
       });
 
       const parser = new m3u8Parser.Parser();
@@ -2181,40 +2183,66 @@ class StreamManager {
           });
           
           try {
-            // Use GET request with maxRedirects=0 to detect redirect, then follow manually
-            const response = await axios.get(streamUrl, {
-              maxRedirects: 0, // Don't follow automatically to detect redirect
-              timeout: 30000, // 30 seconds for slow M3U8 redirect resolution
+            // Use GET request to follow complete redirect chain like VLC does
+            // CRITICAL FIX: Use VLC-compatible connection management to avoid connection limits
+            const connectionManager = require('../utils/connectionManager');
+            
+            const response = await connectionManager.makeVLCCompatibleRequest(axios, streamUrl, {
+              maxContentLength: 1024 * 1024, // 1MB limit for M3U8 files
+              timeout: streamUrl.includes('38.64.138') ? 30000 : 15000, // Progressive timeout strategy
               validateStatus: function (status) {
                 // Accept both success and redirect responses
                 return (status >= 200 && status < 300) || (status >= 300 && status < 400);
               },
-              headers: {
-                'User-Agent': 'VLC/3.0.20 LibVLC/3.0.20',
-                'Accept': '*/*',
-                'Connection': 'keep-alive'
+              beforeRedirect: (options, { headers }) => {
+                // Security: Block redirects to internal networks (SSRF protection)
+                try {
+                  const url = new URL(options.href);
+                  const hostname = url.hostname.toLowerCase();
+                  if (hostname === 'localhost' || 
+                      hostname === '127.0.0.1' ||
+                      hostname.startsWith('192.168.') ||
+                      hostname.startsWith('10.') ||
+                      hostname.match(/^172\.(1[6-9]|2[0-9]|3[01])\./)) {
+                    throw new Error('Redirect to internal network blocked for security');
+                  }
+                } catch (error) {
+                  logger.warn('Blocked potentially malicious redirect', {
+                    channelId: channel.id,
+                    originalUrl: streamUrl.substring(0, 50) + '...',
+                    redirectUrl: options.href.substring(0, 50) + '...',
+                    error: error.message
+                  });
+                  throw error;
+                }
               }
             });
             
-            if (response.status >= 300 && response.status < 400 && response.headers.location) {
-              // Found redirect, use the redirect URL
-              finalStreamUrl = response.headers.location;
-              logger.info('M3U8 stream redirected successfully', {
-                channelId: channel.id,
-                originalUrl: streamUrl.substring(0, 50) + '...',
-                finalUrl: finalStreamUrl.substring(0, 50) + '...',
-                status: response.status
-              });
-            } else if (response.status >= 200 && response.status < 300) {
-              // Direct response, validate it's actually M3U8 content
+            if (response.status >= 200 && response.status < 300) {
+              // Get the final URL after following all redirects
+              finalStreamUrl = response.request.responseURL || streamUrl;
+              
+              if (finalStreamUrl !== streamUrl) {
+                logger.info('M3U8 stream redirected successfully through complete chain', {
+                  channelId: channel.id,
+                  originalUrl: streamUrl.substring(0, 50) + '...',
+                  finalUrl: finalStreamUrl.substring(0, 50) + '...',
+                  status: response.status
+                });
+              }
+              
+              // Validate it's actually M3U8 content
               if (response.data && response.data.includes('#EXTM3U')) {
-                logger.info('M3U8 stream accessible directly (no redirect needed)', {
-                  channelId: channel.id
+                logger.info('M3U8 stream content validated', {
+                  channelId: channel.id,
+                  contentType: response.headers['content-type'],
+                  contentLength: response.data.length
                 });
               } else {
                 logger.warn('M3U8 URL returned non-playlist content', {
                   channelId: channel.id,
-                  contentType: response.headers['content-type']
+                  contentType: response.headers['content-type'],
+                  responseLength: response.data ? response.data.length : 0
                 });
               }
             }
