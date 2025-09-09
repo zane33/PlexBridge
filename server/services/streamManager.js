@@ -108,7 +108,7 @@ class StreamManager {
         '-reconnect_at_eof', '1',
         '-reconnect_streamed', '1',
         '-reconnect_delay_max', '5',
-        '-timeout', '10000000', // 10 second timeout
+        '-timeout', '25000000', // 25 second timeout (increased for slow IPTV)
         '-multiple_requests', '1',
         '-http_seekable', '0'
       ];
@@ -359,12 +359,13 @@ class StreamManager {
     }
   }
 
-  async validateHLSStream(url, auth) {
+  async validateHLSStream(url, auth, userAgent = null) {
     const connectionManager = require('../utils/connectionManager');
     
     try {
       logger.stream('Validating HLS stream with VLC-compatible connection management', { 
-        url: url.substring(0, 100) + (url.length > 100 ? '...' : '')
+        url: url.substring(0, 100) + (url.length > 100 ? '...' : ''),
+        clientType: userAgent ? (connectionManager.isPlexClient(userAgent) ? 'Plex' : 'Standard') : 'Unknown'
       });
 
       // Prepare auth headers
@@ -373,10 +374,11 @@ class StreamManager {
         authHeaders['Authorization'] = `Basic ${Buffer.from(`${auth.username}:${auth.password}`).toString('base64')}`;
       }
 
-      // Use VLC-compatible connection manager
+      // Use VLC-compatible connection manager with User-Agent context
       const response = await connectionManager.makeVLCCompatibleRequest(axios, url, {
         headers: authHeaders,
-        maxContentLength: 1024 * 1024 // 1MB limit for M3U8 files
+        maxContentLength: 1024 * 1024, // 1MB limit for M3U8 files
+        userAgent: userAgent
       });
 
       const parser = new m3u8Parser.Parser();
@@ -1419,7 +1421,7 @@ class StreamManager {
           '-reconnect_at_eof', '1',
           '-reconnect_streamed', '1',
           '-reconnect_delay_max', '5',
-          '-timeout', '30000000' // 30 second timeout for slow IPTV streams
+          '-timeout', '45000000' // 45 second timeout for slow IPTV streams
         ].join(' ');
         
         // For redirected or complex streams, add additional robustness options
@@ -2187,9 +2189,13 @@ class StreamManager {
             // CRITICAL FIX: Use VLC-compatible connection management to avoid connection limits
             const connectionManager = require('../utils/connectionManager');
             
+            // Extract User-Agent from request for Plex optimization
+            const requestUserAgent = req.get('User-Agent') || '';
+            
             const response = await connectionManager.makeVLCCompatibleRequest(axios, streamUrl, {
               maxContentLength: 1024 * 1024, // 1MB limit for M3U8 files
-              timeout: streamUrl.includes('38.64.138') ? 30000 : 15000, // Progressive timeout strategy
+              timeout: streamUrl.includes('38.64.138') ? 45000 : 25000, // Progressive timeout strategy (increased for 15s upstream)
+              userAgent: requestUserAgent, // Pass User-Agent for Plex optimization
               validateStatus: function (status) {
                 // Accept both success and redirect responses
                 return (status >= 200 && status < 300) || (status >= 300 && status < 400);
@@ -2463,7 +2469,7 @@ class StreamManager {
           '-reconnect_at_eof', '1',
           '-reconnect_streamed', '1',
           '-reconnect_delay_max', '5',
-          '-timeout', '30000000' // 30 second timeout for slow streams
+          '-timeout', '45000000' // 45 second timeout for slow streams
         ].join(' ');
         
         // For IPTV streams, add additional robustness options
@@ -3760,7 +3766,7 @@ class StreamManager {
       }
       
       const response = await axios.get(finalStreamUrl, {
-        timeout: 30000,
+        timeout: 45000, // Increased for 15-second upstream connections
         responseType: streamType === 'hls' ? 'text' : 'stream', // Get text for HLS to rewrite URLs
         headers: {
           'User-Agent': config.protocols.http.userAgent || 'PlexBridge/1.0'
@@ -3982,7 +3988,7 @@ class StreamManager {
       }
       
       const response = await axios.get(finalStreamUrl, {
-        timeout: 30000,
+        timeout: 45000, // Increased for 15-second upstream connections
         responseType: 'stream',
         headers: {
           'User-Agent': config.protocols.http.userAgent || 'PlexBridge/1.0'
