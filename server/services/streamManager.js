@@ -1412,7 +1412,7 @@ class StreamManager {
           '-allowed_extensions', 'ALL',
           '-protocol_whitelist', 'file,http,https,tcp,tls,pipe,crypto',
           '-user_agent', 'VLC/3.0.20 LibVLC/3.0.20',
-          '-headers', 'Accept: */*\\r\\nConnection: keep-alive\\r\\n',
+          '-headers', 'Accept: */*\\r\\nConnection: close\\r\\n',
           '-live_start_index', '0',
           '-http_persistent', '0',
           '-http_seekable', '0',
@@ -1424,8 +1424,11 @@ class StreamManager {
           '-timeout', '45000000' // 45 second timeout for slow IPTV streams
         ].join(' ');
         
-        // For redirected or complex streams, add additional robustness options
-        if (finalUrl !== url || finalUrl.includes('38.64.138.128')) {
+        // Always add VLC headers for problematic IPTV servers that use connection limits
+        if (finalUrl.includes('38.64.138.128')) {
+          hlsArgs += ' -max_reload 3 -http_multiple 1 -headers "User-Agent: VLC/3.0.20 LibVLC/3.0.20\\r\\nConnection: close\\r\\n"';
+        } else if (finalUrl !== url) {
+          // For other redirected streams, add additional robustness options
           hlsArgs += ' -max_reload 3 -http_multiple 1 -headers "User-Agent: VLC/3.0.20 LibVLC/3.0.20\\r\\n"';
           logger.stream('Added enhanced HLS compatibility options for IPTV stream', {
             originalUrl: url.substring(0, 50) + '...',
@@ -1456,6 +1459,30 @@ class StreamManager {
       finalUrl: finalUrl,
       command: args.join(' ')
     });
+
+    // For problematic IPTV servers, use connection manager to "warm up" the connection
+    // This prevents FFmpeg from getting 4XX errors due to connection limits
+    if (finalUrl.includes('38.64.138.128')) {
+      logger.stream('Pre-warming connection for problematic IPTV server', { 
+        server: '38.64.138.128',
+        finalUrl: finalUrl.substring(0, 50) + '...'
+      });
+      
+      // Use connection manager to establish proper delay and headers
+      const connectionManager = require('../utils/connectionManager');
+      const axios = require('axios');
+      
+      // Pre-warm the connection asynchronously (don't wait for response)
+      connectionManager.makeVLCCompatibleRequest(axios, finalUrl, {
+        timeout: 5000,  // Quick pre-check, don't delay FFmpeg too long
+        maxContentLength: 1024  // Just need to trigger the connection slot
+      }).catch(error => {
+        logger.warn('Connection pre-warming failed, but continuing with FFmpeg', {
+          error: error.message,
+          status: error.response?.status
+        });
+      });
+    }
 
     return spawn(config.streams.ffmpegPath, args);
   }
