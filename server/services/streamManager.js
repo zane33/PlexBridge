@@ -9,6 +9,7 @@ const settingsService = require('./settingsService');
 const streamSessionManager = require('./streamSessionManager');
 const streamResilienceService = require('./streamResilienceService');
 const ffmpegProfiles = require('../config/ffmpegProfiles');
+const progressiveStreamHandler = require('./progressiveStreamHandler');
 
 // Android TV Configuration Constants - Optimized for faster startup
 const ANDROID_TV_CONFIG = {
@@ -1014,7 +1015,7 @@ class StreamManager {
         case 'hls':
         case 'dash':
         case 'http':
-          streamProcess = await this.createHTTPStreamProxy(url, auth, customHeaders, streamData);
+          streamProcess = await this.createHTTPStreamProxy(url, auth, customHeaders, streamData, req, res);
           break;
         case 'ts':
         case 'mpegts':
@@ -1038,6 +1039,12 @@ class StreamManager {
         default:
           res.status(400).json({ error: 'Unsupported stream type' });
           return;
+      }
+
+      // Handle progressive stream response (already sent by progressive handler)
+      if (streamProcess && streamProcess.isProgressive && streamProcess.handled) {
+        logger.info('Progressive stream handler completed response', { streamId, sessionId });
+        return;
       }
 
       if (!streamProcess) {
@@ -1312,7 +1319,24 @@ class StreamManager {
     }
   }
 
-  async createHTTPStreamProxy(url, auth, customHeaders, streamData = null) {
+  async createHTTPStreamProxy(url, auth, customHeaders, streamData = null, req = null, res = null) {
+    // ENHANCED IPTV SUPPORT: Use progressive handler for streams with connection limits
+    if (progressiveStreamHandler.shouldUseProgressiveHandler(url, streamData)) {
+      logger.info('Using progressive stream handler for IPTV stream with connection limits', {
+        url: url.substring(0, 100) + '...',
+        streamName: streamData?.name,
+        connectionLimits: streamData?.connection_limits
+      });
+      
+      // Progressive handler manages the entire response - return special marker
+      if (req && res) {
+        await progressiveStreamHandler.handleProgressiveStream(url, streamData, req, res);
+        return { isProgressive: true, handled: true };
+      } else {
+        logger.warn('Progressive handler requested but req/res not provided - falling back to standard method');
+      }
+    }
+
     // For HLS streams that redirect, we need to resolve the final URL first
     let finalUrl = url;
     
@@ -1465,27 +1489,27 @@ class StreamManager {
       command: args.join(' ')
     });
 
-    // SCALABLE CONNECTION LIMITS: Use stream parameter for VLC compatibility 
+    // SCALABLE CONNECTION LIMITS: Use stream parameter for connection pre-warming
     const hasConnectionLimits = streamData?.connection_limits === 1 || streamData?.connection_limits === true;
     if (hasConnectionLimits) {
-      logger.stream('Applying VLC compatibility for IPTV server with connection limits', { 
+      logger.stream('Pre-warming connection for IPTV server with connection limits', { 
         streamName: streamData?.name,
         finalUrl: finalUrl.substring(0, 50) + '...'
       });
       
-      // Start connection pre-warming in background (fire and forget - don't block FFmpeg)
-      setImmediate(() => {
-        const connectionManager = require('../utils/connectionManager');
-        const axios = require('axios');
-        
-        connectionManager.makeVLCCompatibleRequest(axios, finalUrl, {
-          timeout: 3000,
-          maxContentLength: 512
-        }).catch(error => {
-          logger.debug('Background connection pre-warm completed', {
-            streamName: streamData?.name,
-            status: error.response?.status || 'error'
-          });
+      // Use connection manager to establish proper delay and headers
+      const connectionManager = require('../utils/connectionManager');
+      const axios = require('axios');
+      
+      // Pre-warm the connection asynchronously (don't wait for response)
+      connectionManager.makeVLCCompatibleRequest(axios, finalUrl, {
+        timeout: 5000,  // Quick pre-check, don't delay FFmpeg too long
+        maxContentLength: 1024  // Just need to trigger the connection slot
+      }).catch(error => {
+        logger.warn('Connection pre-warming failed, but continuing with FFmpeg', {
+          streamName: streamData?.name,
+          error: error.message,
+          status: error.response?.status
         });
       });
     }
