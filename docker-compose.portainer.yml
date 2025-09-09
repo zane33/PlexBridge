@@ -48,7 +48,7 @@ services:
       options:
         max-size: "10m"
         max-file: "3"
-    #network_mode: "container:transmission-openvpn"
+    network_mode: "host"
     ports:
       - "3000:3000"
       - "1900:1900/udp"
