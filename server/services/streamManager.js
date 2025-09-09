@@ -2172,6 +2172,75 @@ class StreamManager {
               error: playlistError.message.replace(/[?&]([^=]+)=[^&]*/g, '[REDACTED]')
             });
           }
+        }
+        // Special handling for generic IPTV M3U8 streams that require redirect resolution
+        else if (streamUrl.includes('.m3u8')) {
+          logger.info('Detected generic M3U8 stream, resolving redirects', {
+            channelId: channel.id,
+            streamUrl: streamUrl.substring(0, 50) + '...'
+          });
+          
+          try {
+            // Use GET request with maxRedirects=0 to detect redirect, then follow manually
+            const response = await axios.get(streamUrl, {
+              maxRedirects: 0, // Don't follow automatically to detect redirect
+              timeout: 15000,
+              validateStatus: function (status) {
+                // Accept both success and redirect responses
+                return (status >= 200 && status < 300) || (status >= 300 && status < 400);
+              },
+              headers: {
+                'User-Agent': 'VLC/3.0.20 LibVLC/3.0.20',
+                'Accept': '*/*',
+                'Connection': 'keep-alive'
+              }
+            });
+            
+            if (response.status >= 300 && response.status < 400 && response.headers.location) {
+              // Found redirect, use the redirect URL
+              finalStreamUrl = response.headers.location;
+              logger.info('M3U8 stream redirected successfully', {
+                channelId: channel.id,
+                originalUrl: streamUrl.substring(0, 50) + '...',
+                finalUrl: finalStreamUrl.substring(0, 50) + '...',
+                status: response.status
+              });
+            } else if (response.status >= 200 && response.status < 300) {
+              // Direct response, validate it's actually M3U8 content
+              if (response.data && response.data.includes('#EXTM3U')) {
+                logger.info('M3U8 stream accessible directly (no redirect needed)', {
+                  channelId: channel.id
+                });
+              } else {
+                logger.warn('M3U8 URL returned non-playlist content', {
+                  channelId: channel.id,
+                  contentType: response.headers['content-type']
+                });
+              }
+            }
+          } catch (m3u8Error) {
+            logger.warn('Failed to resolve M3U8 redirect, trying fallback HEAD request', {
+              channelId: channel.id,
+              error: m3u8Error.message
+            });
+            
+            // Fallback to original HEAD request method
+            try {
+              const headResponse = await axios.head(streamUrl, {
+                maxRedirects: 5,
+                timeout: 10000,
+                headers: {
+                  'User-Agent': 'VLC/3.0.20 LibVLC/3.0.20'
+                }
+              });
+              finalStreamUrl = headResponse.request.responseURL || streamUrl;
+            } catch (headError) {
+              logger.warn('Fallback HEAD request also failed, using original URL', {
+                channelId: channel.id,
+                error: headError.message
+              });
+            }
+          }
         } else {
           // For other streams, use HEAD request
           const response = await axios.head(streamUrl, {
