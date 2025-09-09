@@ -1014,7 +1014,7 @@ class StreamManager {
         case 'hls':
         case 'dash':
         case 'http':
-          streamProcess = await this.createHTTPStreamProxy(url, auth, customHeaders);
+          streamProcess = await this.createHTTPStreamProxy(url, auth, customHeaders, streamData);
           break;
         case 'ts':
         case 'mpegts':
@@ -1312,7 +1312,7 @@ class StreamManager {
     }
   }
 
-  async createHTTPStreamProxy(url, auth, customHeaders) {
+  async createHTTPStreamProxy(url, auth, customHeaders, streamData = null) {
     // For HLS streams that redirect, we need to resolve the final URL first
     let finalUrl = url;
     
@@ -1424,9 +1424,14 @@ class StreamManager {
           '-timeout', '45000000' // 45 second timeout for slow IPTV streams
         ].join(' ');
         
-        // Always add VLC headers for problematic IPTV servers that use connection limits
-        if (finalUrl.includes('38.64.138.128')) {
+        // SCALABLE CONNECTION LIMITS: Use stream parameter instead of hardcoded IP
+        const hasConnectionLimits = streamData?.connection_limits === 1 || streamData?.connection_limits === true;
+        if (hasConnectionLimits) {
           hlsArgs += ' -max_reload 3 -http_multiple 1 -headers "User-Agent: VLC/3.0.20 LibVLC/3.0.20\\r\\nConnection: close\\r\\n"';
+          logger.stream('Applied VLC-compatible headers for connection limits', {
+            streamName: streamData?.name,
+            streamUrl: finalUrl.substring(0, 50) + '...'
+          });
         } else if (finalUrl !== url) {
           // For other redirected streams, add additional robustness options
           hlsArgs += ' -max_reload 3 -http_multiple 1 -headers "User-Agent: VLC/3.0.20 LibVLC/3.0.20\\r\\n"';
@@ -1460,11 +1465,11 @@ class StreamManager {
       command: args.join(' ')
     });
 
-    // For problematic IPTV servers, use connection manager to "warm up" the connection
-    // This prevents FFmpeg from getting 4XX errors due to connection limits
-    if (finalUrl.includes('38.64.138.128')) {
-      logger.stream('Pre-warming connection for problematic IPTV server', { 
-        server: '38.64.138.128',
+    // SCALABLE CONNECTION LIMITS: Use stream parameter for connection pre-warming
+    const hasConnectionLimits = streamData?.connection_limits === 1 || streamData?.connection_limits === true;
+    if (hasConnectionLimits) {
+      logger.stream('Pre-warming connection for IPTV server with connection limits', { 
+        streamName: streamData?.name,
         finalUrl: finalUrl.substring(0, 50) + '...'
       });
       
@@ -1478,6 +1483,7 @@ class StreamManager {
         maxContentLength: 1024  // Just need to trigger the connection slot
       }).catch(error => {
         logger.warn('Connection pre-warming failed, but continuing with FFmpeg', {
+          streamName: streamData?.name,
           error: error.message,
           status: error.response?.status
         });
@@ -2221,7 +2227,7 @@ class StreamManager {
             
             const response = await connectionManager.makeVLCCompatibleRequest(axios, streamUrl, {
               maxContentLength: 1024 * 1024, // 1MB limit for M3U8 files
-              timeout: streamUrl.includes('38.64.138') ? 45000 : 25000, // Progressive timeout strategy (increased for 15s upstream)
+              timeout: (stream?.connection_limits === 1 || stream?.connection_limits === true) ? 45000 : 25000, // Progressive timeout strategy (increased for streams with connection limits)
               userAgent: requestUserAgent, // Pass User-Agent for Plex optimization
               validateStatus: function (status) {
                 // Accept both success and redirect responses
@@ -2499,12 +2505,15 @@ class StreamManager {
           '-timeout', '45000000' // 45 second timeout for slow streams
         ].join(' ');
         
-        // For IPTV streams, add additional robustness options
-        if (finalStreamUrl !== streamUrl || finalStreamUrl.includes('38.64.138.128')) {
+        // SCALABLE CONNECTION LIMITS: Use stream parameter for IPTV compatibility 
+        const hasConnectionLimits = stream?.connection_limits === 1 || stream?.connection_limits === true;
+        if (finalStreamUrl !== streamUrl || hasConnectionLimits) {
           hlsArgs += ' -max_reload 3 -http_multiple 1 -analyzeduration 5000000 -probesize 5000000';
           
           logger.info('Added enhanced HLS compatibility options for IPTV Plex stream', {
             channelId: channel.id,
+            streamName: stream?.name,
+            connectionLimits: hasConnectionLimits,
             originalUrl: streamUrl.substring(0, 50) + '...',
             finalUrl: finalStreamUrl.substring(0, 50) + '...'
           });
@@ -3007,7 +3016,7 @@ class StreamManager {
           errorType,
           isEnhancedEncoding: stream?.enhanced_encoding || false,
           encodingProfile: stream?.enhanced_encoding_profile,
-          streamUrl: finalStreamUrl.includes('38.64.138.128') ? 'sky_sport_nz_provider' : 'other',
+          streamUrl: (stream?.connection_limits === 1 || stream?.connection_limits === true) ? 'connection_limits_enabled' : 'standard_stream',
           output: errorOutput.trim(),
           isM3u8Error,
           isEnhancedEncodingError,

@@ -435,6 +435,14 @@ async function addEnhancedEncodingSupport(database) {
         ALTER TABLE streams ADD COLUMN monitoring_enabled INTEGER DEFAULT 0;
       `);
       
+      // Add connection_limits column if it doesn't exist (safe migration)
+      try {
+        database.prepare('ALTER TABLE streams ADD COLUMN connection_limits INTEGER DEFAULT 0').run();
+        logger.info('Added connection_limits column during enhanced encoding migration');
+      } catch (error) {
+        // Column already exists, continue silently
+      }
+      
       // Enable anti-loop encoding for channel 505 ( Sports AU) which has looping issues
       const SportsLoopUpdate = database.prepare(`
         UPDATE streams 
@@ -474,6 +482,24 @@ async function addEnhancedEncodingSupport(database) {
       if (otherUpdatedRows.changes > 0) {
         logger.info('High-reliability encoding enabled for other  Sports channels', {
           updatedChannels: otherUpdatedRows.changes
+        });
+      }
+      
+      // Enable connection_limits for existing Sky Sport SELECT streams (hardcoded IP migration)
+      const skySelectUpdate = database.prepare(`
+        UPDATE streams 
+        SET connection_limits = 1
+        WHERE url LIKE '%38.64.138.128%' 
+           OR url LIKE '%sky%sport%' 
+           OR name LIKE '%Sky Sport SELECT%'
+           OR name LIKE '%Sky Sports%'
+      `);
+      
+      const skyUpdatedRows = skySelectUpdate.run();
+      if (skyUpdatedRows.changes > 0) {
+        logger.info('Connection limits enabled for existing Sky Sport SELECT streams (replacing hardcoded IPs)', {
+          updatedStreams: skyUpdatedRows.changes,
+          reason: 'Migration from hardcoded 38.64.138.128 IP detection'
         });
       }
       
