@@ -97,7 +97,7 @@ class StreamManager {
       const hlsArgs = [
         '-allowed_extensions', 'ALL',
         '-protocol_whitelist', 'file,http,https,tcp,tls,pipe,crypto',
-        '-user_agent', 'PlexBridge/1.0',
+        '-user_agent', 'VLC/3.0.20 LibVLC/3.0.20',
         '-live_start_index', '0',
         '-http_persistent', '1'
       ];
@@ -2111,7 +2111,7 @@ class StreamManager {
             maxRedirects: 5,
             timeout: 10000,
             headers: {
-              'User-Agent': 'PlexBridge/1.0'
+              'User-Agent': 'VLC/3.0.20 LibVLC/3.0.20'
             }
           });
           finalStreamUrl = response.request.responseURL || streamUrl;
@@ -3042,7 +3042,7 @@ class StreamManager {
             maxRedirects: 0,
             timeout: 10000,
             validateStatus: (status) => status >= 200 && status < 400,
-            headers: { 'User-Agent': 'PlexBridge/1.0' }
+            headers: { 'User-Agent': 'VLC/3.0.20 LibVLC/3.0.20' }
           });
           if (response.status === 302 && response.headers.location) {
             finalStreamUrl = response.headers.location;
@@ -4340,7 +4340,7 @@ class StreamManager {
           maxContentLength: 1024 * 1024, // 1MB limit
           maxBodyLength: 1024 * 1024,
           headers: {
-            'User-Agent': 'PlexBridge/1.0 FFmpeg-compatible',
+            'User-Agent': 'VLC/3.0.20 LibVLC/3.0.20',
             'Accept': 'application/vnd.apple.mpegurl,application/x-mpegURL,*/*'
           }
         });
@@ -4586,7 +4586,7 @@ class StreamManager {
         timeout: 10000,
         maxContentLength: 2 * 1024 * 1024, // 2MB limit
         headers: {
-          'User-Agent': 'PlexBridge/1.0 FFmpeg-compatible',
+          'User-Agent': 'VLC/3.0.20 LibVLC/3.0.20',
           'Accept': 'application/vnd.apple.mpegurl,application/x-mpegURL,*/*'
         }
       });
