@@ -2761,6 +2761,45 @@ class StreamManager {
         clientIP: req.ip
       });
 
+      // CRITICAL PRODUCTION FIX: Add startup timeout to prevent hanging
+      let streamStarted = false;
+      
+      // Adjust timeout based on stream type - TVNZ and complex M3U8 streams need more time
+      const isTVNZStream = finalStreamUrl.includes('i.mjh.nz') || finalStreamUrl.includes('cloudfront.net');
+      const isComplexM3U8 = finalStreamUrl.includes('.m3u8') && (
+        finalStreamUrl.includes('cloudfront') || 
+        finalStreamUrl.includes('mediapackage') ||
+        finalStreamUrl.includes('master.m3u8')
+      );
+      
+      const startupTimeoutMs = isTVNZStream || isComplexM3U8 ? 30000 : 15000; // 30s for complex streams, 15s for others
+      
+      const startupTimeout = setTimeout(() => {
+        if (!streamStarted) {
+          logger.error('FFmpeg startup timeout - process may be hanging', {
+            channelId: channel.id,
+            pid: ffmpegProcess.pid,
+            streamUrl: finalStreamUrl.substring(0, 100) + '...',
+            timeoutMs: startupTimeoutMs,
+            isTVNZStream,
+            isComplexM3U8
+          });
+          
+          // Kill the hanging process
+          if (ffmpegProcess && ffmpegProcess.pid) {
+            ffmpegProcess.kill('SIGKILL');
+          }
+          
+          // Send error response if headers not sent
+          if (!res.headersSent && res.writable) {
+            res.status(503).set({
+              'Content-Type': 'text/plain',
+              'X-PlexBridge-Error': 'Stream startup timeout'
+            }).send('Stream startup timeout');
+          }
+        }
+      }, startupTimeoutMs);
+
       // ===== ADD SESSION TRACKING FOR PLEX STREAMS =====
       const streamSessionManager = require('./streamSessionManager');
       const sessionClientIdentifier = this.generateClientIdentifier(req);
@@ -3201,11 +3240,41 @@ class StreamManager {
         return;
       }
 
-      // Pipe FFmpeg output directly to response without buffering
-      ffmpegProcess.stdout.pipe(res);
+      // CRITICAL PRODUCTION FIX: Use direct piping without buffering to prevent hanging
+      // This ensures immediate streaming for Plex compatibility
+      ffmpegProcess.stdout.pipe(res, { end: false });
+      
+      // Handle FFmpeg output events for proper cleanup
+      ffmpegProcess.stdout.on('end', () => {
+        if (!res.headersSent && res.writable) {
+          res.end();
+        }
+      });
+      
+      ffmpegProcess.stdout.on('error', (error) => {
+        logger.error('FFmpeg stdout error', {
+          sessionId,
+          channelId: channel.id,
+          error: error.message
+        });
+        if (!res.headersSent && res.writable) {
+          res.end();
+        }
+      });
       
       // Handle FFmpeg stdout with bandwidth tracking
       ffmpegProcess.stdout.on('data', (chunk) => {
+        // CRITICAL: Clear startup timeout when first data arrives
+        if (!streamStarted) {
+          streamStarted = true;
+          clearTimeout(startupTimeout);
+          logger.info('FFmpeg stream startup successful', {
+            channelId: channel.id,
+            sessionId,
+            firstChunkSize: chunk.length
+          });
+        }
+        
         const stats = this.streamStats.get(sessionId);
         if (stats) {
           const now = Date.now();
