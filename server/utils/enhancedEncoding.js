@@ -235,6 +235,52 @@ const ENHANCED_ENCODING_PROFILES = {
     retry_attempts: 1,
     enable_monitoring: false,
     ultra_safe: true
+  },
+
+  // HLS-COMPATIBLE: Enhanced encoding that preserves HLS processing
+  'hls-enhanced': {
+    name: 'HLS Enhanced Reliability',
+    description: 'Enhanced encoding specifically designed for complex HLS streams with redirect resolution',
+    ffmpeg_options: [
+      // HLS-specific input arguments for complex streams
+      '-allowed_extensions', 'ALL',
+      '-protocol_whitelist', 'file,http,https,tcp,tls,pipe,crypto',
+      
+      // Enhanced reliability for HLS
+      '-reconnect', '1',
+      '-reconnect_at_eof', '1', 
+      '-reconnect_streamed', '1',
+      '-reconnect_delay_max', '3',
+      '-timeout', '15000000', // 15 second timeout for complex redirects
+      '-user_agent', 'PlexBridge/1.0',
+      
+      // HLS-optimized buffering and analysis
+      '-probesize', '5000000',     // Larger probe for complex playlists
+      '-analyzeduration', '5000000', // Sufficient analysis for variant detection
+      
+      // Error recovery for unreliable HLS sources
+      '-err_detect', 'ignore_err',
+      '-fflags', '+genpts+igndts+discardcorrupt',
+      
+      // Stream handling optimized for HLS
+      '-seekable', '0',
+      '-avoid_negative_ts', 'make_zero',
+      '-max_delay', '3000000',
+      
+      // Copy streams without re-encoding
+      '-c:v', 'copy',
+      '-c:a', 'copy',
+      
+      // MPEG-TS output optimized for Plex
+      '-f', 'mpegts',
+      '-muxdelay', '0',
+      '-flush_packets', '1'
+    ],
+    priority: 75,
+    timeout_ms: 20000,
+    retry_attempts: 3,
+    enable_monitoring: true,
+    hls_compatible: true  // Flag to indicate this profile works with HLS processing
   }
 };
 
@@ -361,16 +407,35 @@ function selectEncodingProfile(streamInfo, channelNumber = null, errorHistory = 
     return 'high-reliability';
   }
   
-  // EMERGENCY OVERRIDE: Force ALL enhanced encoding to use emergency-safe mode
-  // This prevents ALL H.264 PPS corruption until we can properly debug
+  // SURGICAL FIX: Allow HLS streams to use HLS-compatible enhanced encoding
+  // Only force emergency-safe mode for non-HLS streams with H.264 corruption risk
   if (streamInfo.enhanced_encoding) {
-    logger.error('EMERGENCY OVERRIDE: Enhanced encoding forced to emergency-safe mode', {
-      streamName: streamInfo.name,
-      originalProfile: streamInfo.enhanced_encoding_profile || 'high-reliability',
-      forcedProfile: 'emergency-safe',
-      reason: 'Preventing H.264 PPS corruption'
-    });
-    return 'emergency-safe'; // FORCE emergency mode for ALL enhanced encoding
+    // Check if this is an HLS stream that needs proper HLS processing
+    const isHLSStream = streamInfo.url && (
+      streamInfo.url.includes('.m3u8') || 
+      streamInfo.url.includes('/hls/') ||
+      streamInfo.url.includes('mjh.nz') ||  // Redirect services that serve HLS
+      streamInfo.url.match(/live\/.*\.m3u8$/)
+    );
+    
+    if (isHLSStream) {
+      logger.info('Using HLS-compatible enhanced encoding for complex HLS stream', {
+        streamName: streamInfo.name,
+        streamUrl: streamInfo.url.substring(0, 100) + '...',
+        profile: 'hls-enhanced',
+        reason: 'Complex HLS stream requires proper HLS processing'
+      });
+      return 'hls-enhanced'; // Use HLS-compatible enhanced profile
+    } else {
+      // For non-HLS streams, keep the emergency override for H.264 safety
+      logger.error('EMERGENCY OVERRIDE: Non-HLS enhanced encoding forced to emergency-safe mode', {
+        streamName: streamInfo.name,
+        originalProfile: streamInfo.enhanced_encoding_profile || 'high-reliability',
+        forcedProfile: 'emergency-safe',
+        reason: 'Preventing H.264 PPS corruption in non-HLS streams'
+      });
+      return 'emergency-safe'; // FORCE emergency mode only for non-HLS enhanced encoding
+    }
   }
   
   // Default to standard reliability

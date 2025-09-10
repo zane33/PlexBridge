@@ -10,6 +10,7 @@ const streamSessionManager = require('./streamSessionManager');
 const streamResilienceService = require('./streamResilienceService');
 const ffmpegProfiles = require('../config/ffmpegProfiles');
 const progressiveStreamHandler = require('./progressiveStreamHandler');
+const advancedM3U8Resolver = require('./advancedM3U8Resolver');
 
 // Android TV Configuration Constants - Optimized for faster startup
 const ANDROID_TV_CONFIG = {
@@ -2211,83 +2212,60 @@ class StreamManager {
             });
           }
         }
-        // Special handling for generic IPTV M3U8 streams that require redirect resolution
+        // Special handling for generic IPTV M3U8 streams using AdvancedM3U8Resolver
         else if (streamUrl.includes('.m3u8')) {
-          logger.info('Detected generic M3U8 stream, resolving redirects', {
+          logger.info('Detected generic M3U8 stream, using AdvancedM3U8Resolver', {
             channelId: channel.id,
             streamUrl: streamUrl.substring(0, 50) + '...'
           });
           
           try {
-            // Use GET request to follow complete redirect chain like VLC does
-            // CRITICAL FIX: Use VLC-compatible connection management to avoid connection limits
-            const connectionManager = require('../utils/connectionManager');
-            
-            // Extract User-Agent from request for Plex optimization
+            // Use AdvancedM3U8Resolver for complex HLS streams like TVNZ
             const requestUserAgent = req.get('User-Agent') || '';
+            const hasConnectionLimits = stream?.connection_limits === 1 || stream?.connection_limits === true;
             
-            const response = await connectionManager.makeVLCCompatibleRequest(axios, streamUrl, {
-              maxContentLength: 1024 * 1024, // 1MB limit for M3U8 files
-              timeout: (stream?.connection_limits === 1 || stream?.connection_limits === true) ? 45000 : 25000, // Progressive timeout strategy (increased for streams with connection limits)
-              userAgent: requestUserAgent, // Pass User-Agent for Plex optimization
-              validateStatus: function (status) {
-                // Accept both success and redirect responses
-                return (status >= 200 && status < 300) || (status >= 300 && status < 400);
-              },
-              beforeRedirect: (options, { headers }) => {
-                // Security: Block redirects to internal networks (SSRF protection)
-                try {
-                  const url = new URL(options.href);
-                  const hostname = url.hostname.toLowerCase();
-                  if (hostname === 'localhost' || 
-                      hostname === '127.0.0.1' ||
-                      hostname.startsWith('192.168.') ||
-                      hostname.startsWith('10.') ||
-                      hostname.match(/^172\.(1[6-9]|2[0-9]|3[01])\./)) {
-                    throw new Error('Redirect to internal network blocked for security');
-                  }
-                } catch (error) {
-                  logger.warn('Blocked potentially malicious redirect', {
-                    channelId: channel.id,
-                    originalUrl: streamUrl.substring(0, 50) + '...',
-                    redirectUrl: options.href.substring(0, 50) + '...',
-                    error: error.message
-                  });
-                  throw error;
-                }
-              }
+            const resolutionResult = await advancedM3U8Resolver.resolveM3U8Stream(streamUrl, {
+              connectionLimits: hasConnectionLimits,
+              userAgent: requestUserAgent,
+              channelId: channel.id,
+              enableKeepAlive: true
             });
             
-            if (response.status >= 200 && response.status < 300) {
-              // Get the final URL after following all redirects
-              finalStreamUrl = response.request.responseURL || streamUrl;
+            if (resolutionResult.success) {
+              finalStreamUrl = resolutionResult.finalUrl;
               
-              if (finalStreamUrl !== streamUrl) {
-                logger.info('M3U8 stream redirected successfully through complete chain', {
+              logger.info('AdvancedM3U8Resolver successfully resolved complex HLS stream', {
+                channelId: channel.id,
+                originalUrl: streamUrl.substring(0, 50) + '...',
+                finalUrl: finalStreamUrl.substring(0, 50) + '...',
+                resolutionTime: resolutionResult.resolutionTime,
+                isMasterPlaylist: resolutionResult.analysis?.isMasterPlaylist,
+                isMediaPlaylist: resolutionResult.analysis?.isMediaPlaylist,
+                variantCount: resolutionResult.analysis?.variants?.length || 0,
+                segmentCount: resolutionResult.analysis?.segments?.length || 0
+              });
+              
+              // If this was a master playlist, we now have the best variant
+              if (resolutionResult.analysis?.isMasterPlaylist && resolutionResult.analysis?.variants?.length > 0) {
+                logger.info('Master playlist resolved to best quality variant', {
                   channelId: channel.id,
-                  originalUrl: streamUrl.substring(0, 50) + '...',
-                  finalUrl: finalStreamUrl.substring(0, 50) + '...',
-                  status: response.status
+                  selectedBandwidth: resolutionResult.analysis.variants[0]?.bandwidth,
+                  selectedResolution: resolutionResult.analysis.variants[0]?.resolution,
+                  totalVariants: resolutionResult.analysis.variants.length
                 });
               }
+            } else {
+              logger.warn('AdvancedM3U8Resolver failed, falling back to original URL', {
+                channelId: channel.id,
+                error: resolutionResult.error,
+                fallbackUrl: resolutionResult.fallbackUrl
+              });
               
-              // Validate it's actually M3U8 content
-              if (response.data && response.data.includes('#EXTM3U')) {
-                logger.info('M3U8 stream content validated', {
-                  channelId: channel.id,
-                  contentType: response.headers['content-type'],
-                  contentLength: response.data.length
-                });
-              } else {
-                logger.warn('M3U8 URL returned non-playlist content', {
-                  channelId: channel.id,
-                  contentType: response.headers['content-type'],
-                  responseLength: response.data ? response.data.length : 0
-                });
-              }
+              // Use fallback URL from resolver
+              finalStreamUrl = resolutionResult.fallbackUrl || streamUrl;
             }
           } catch (m3u8Error) {
-            logger.warn('Failed to resolve M3U8 redirect, trying fallback HEAD request', {
+            logger.warn('AdvancedM3U8Resolver failed, trying fallback HEAD request', {
               channelId: channel.id,
               error: m3u8Error.message
             });
@@ -2302,6 +2280,10 @@ class StreamManager {
                 }
               });
               finalStreamUrl = headResponse.request.responseURL || streamUrl;
+              logger.info('Fallback HEAD request succeeded for M3U8 stream', {
+                channelId: channel.id,
+                finalUrl: finalStreamUrl.substring(0, 50) + '...'
+              });
             } catch (headError) {
               logger.warn('Fallback HEAD request also failed, using original URL', {
                 channelId: channel.id,
@@ -2545,10 +2527,14 @@ class StreamManager {
               antiLoop: streamConfig.encoding_profile === 'anti-loop'
             });
             
+            // CRITICAL FIX: Check for HLS streams before applying emergency override
+            const isHLSStream = finalStreamUrl.includes('.m3u8');
+            
             // For anti-loop or emergency profiles, completely replace args to prevent conflicts
-            if (streamConfig.encoding_profile === 'anti-loop' || 
+            // BUT preserve HLS handling for complex streams like TVNZ
+            if ((streamConfig.encoding_profile === 'anti-loop' || 
                 streamConfig.encoding_profile === 'emergency-safe' || 
-                streamConfig.encoding_profile === 'ultra-minimal') {
+                streamConfig.encoding_profile === 'ultra-minimal') && !isHLSStream) {
               args = streamConfig.ffmpeg_options.concat(['-i', finalStreamUrl, 'pipe:1']);
               logger.error('Applied EMERGENCY FFmpeg configuration for H.264 safety', {
                 channelId: channel.id,
@@ -2557,14 +2543,25 @@ class StreamManager {
                 argCount: args.length
               });
             } else {
-              // For other profiles, use enhanced encoding args but ensure proper output
+              // For other profiles OR HLS streams, use enhanced encoding args but ensure proper output
               args = streamConfig.ffmpeg_options.concat(['-i', finalStreamUrl, '-f', 'mpegts', 'pipe:1']);
-              logger.info('Applied enhanced encoding FFmpeg configuration', {
-                channelId: channel.id,
-                channelNumber: channel.number,
-                profile: streamConfig.encoding_profile,
-                argCount: args.length
-              });
+              
+              if (isHLSStream) {
+                logger.info('Applied enhanced encoding FFmpeg configuration for HLS stream', {
+                  channelId: channel.id,
+                  channelNumber: channel.number,
+                  profile: streamConfig.encoding_profile,
+                  argCount: args.length,
+                  emergencyOverrideBypassed: streamConfig.encoding_profile === 'emergency-safe'
+                });
+              } else {
+                logger.info('Applied enhanced encoding FFmpeg configuration', {
+                  channelId: channel.id,
+                  channelNumber: channel.number,
+                  profile: streamConfig.encoding_profile,
+                  argCount: args.length
+                });
+              }
             }
           }
         }
