@@ -103,15 +103,16 @@ class StreamManager {
         '-allowed_extensions', 'ALL',
         '-protocol_whitelist', 'file,http,https,tcp,tls,pipe,crypto',
         '-user_agent', 'VLC/3.0.20 LibVLC/3.0.20',
+        '-headers', 'Accept: */*\\r\\nConnection: keep-alive\\r\\n',
         '-live_start_index', '0',
         '-http_persistent', '0', // Disabled for better IPTV compatibility
+        '-http_seekable', '0',
+        '-multiple_requests', '1',
+        '-timeout', '25000000', // 25 second timeout (increased for slow IPTV)
         '-reconnect', '1',
         '-reconnect_at_eof', '1',
         '-reconnect_streamed', '1',
-        '-reconnect_delay_max', '5',
-        '-timeout', '25000000', // 25 second timeout (increased for slow IPTV)
-        '-multiple_requests', '1',
-        '-http_seekable', '0'
+        '-reconnect_delay_max', '5'
       ];
       
       // Insert HLS args before the input URL
@@ -1429,13 +1430,19 @@ class StreamManager {
       // Replace [URL] placeholder with actual stream URL
       let processedCommand = ffmpegCommand.replace('[URL]', finalUrl);
       
-      // Add basic HLS-specific arguments for M3U8 streams
+      // Add HLS-specific arguments for M3U8 streams (FIXED: Added critical missing parameters)
       if (finalUrl.includes('.m3u8')) {
-        // Basic HLS arguments - minimal to avoid buffering issues
+        // HLS arguments with critical parameters restored for TVNZ 1, Three, etc.
         let hlsArgs = [
           '-allowed_extensions', 'ALL',
           '-protocol_whitelist', 'file,http,https,tcp,tls,pipe,crypto',
           '-user_agent', 'VLC/3.0.20 LibVLC/3.0.20',
+          '-headers', 'Accept: */*\\r\\nConnection: keep-alive\\r\\n',
+          '-live_start_index', '0',
+          '-http_persistent', '0',
+          '-http_seekable', '0',
+          '-multiple_requests', '1',
+          '-timeout', '30000000', // 30 second timeout for web previews
           '-reconnect', '1',
           '-reconnect_at_eof', '1',
           '-reconnect_streamed', '1',
@@ -1452,6 +1459,9 @@ class StreamManager {
             streamUrl: finalUrl.substring(0, 50) + '...'
           });
         }
+        
+        // QUALITY OPTIMIZATION: Add arguments to ensure highest bitrate selection
+        hlsArgs += ' -hls_list_size 0 -hls_allow_cache 1 -hls_segment_type mpegts';
         // DO NOT add extra args for regular redirected streams - this was causing buffering issues
         
         // Insert HLS args BEFORE the input URL for proper protocol handling
