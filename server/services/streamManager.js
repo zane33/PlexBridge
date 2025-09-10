@@ -1429,41 +1429,30 @@ class StreamManager {
       // Replace [URL] placeholder with actual stream URL
       let processedCommand = ffmpegCommand.replace('[URL]', finalUrl);
       
-      // Add optimized HLS-specific arguments for IPTV streams
+      // Add basic HLS-specific arguments for M3U8 streams
       if (finalUrl.includes('.m3u8')) {
-        // Enhanced HLS arguments specifically optimized for IPTV streams like Sky Sport SELECT NZ
+        // Basic HLS arguments - minimal to avoid buffering issues
         let hlsArgs = [
           '-allowed_extensions', 'ALL',
           '-protocol_whitelist', 'file,http,https,tcp,tls,pipe,crypto',
           '-user_agent', 'VLC/3.0.20 LibVLC/3.0.20',
-          '-headers', 'Accept: */*\\r\\nConnection: close\\r\\n',
-          '-live_start_index', '0',
-          '-http_persistent', '0',
-          '-http_seekable', '0',
-          '-multiple_requests', '1',
           '-reconnect', '1',
           '-reconnect_at_eof', '1',
           '-reconnect_streamed', '1',
-          '-reconnect_delay_max', '5',
-          '-timeout', '45000000' // 45 second timeout for slow IPTV streams
+          '-reconnect_delay_max', '2'
         ].join(' ');
         
         // SCALABLE CONNECTION LIMITS: Use stream parameter instead of hardcoded IP
         const hasConnectionLimits = streamData?.connection_limits === 1 || streamData?.connection_limits === true;
         if (hasConnectionLimits) {
+          // ONLY add special handling for streams with connection limits enabled
           hlsArgs += ' -max_reload 3 -http_multiple 1 -headers "User-Agent: VLC/3.0.20 LibVLC/3.0.20\\r\\nConnection: close\\r\\n"';
           logger.stream('Applied VLC-compatible headers for connection limits', {
             streamName: streamData?.name,
             streamUrl: finalUrl.substring(0, 50) + '...'
           });
-        } else if (finalUrl !== url) {
-          // For other redirected streams, add additional robustness options
-          hlsArgs += ' -max_reload 3 -http_multiple 1 -headers "User-Agent: VLC/3.0.20 LibVLC/3.0.20\\r\\n"';
-          logger.stream('Added enhanced HLS compatibility options for IPTV stream', {
-            originalUrl: url.substring(0, 50) + '...',
-            finalUrl: finalUrl.substring(0, 50) + '...'
-          });
         }
+        // DO NOT add extra args for regular redirected streams - this was causing buffering issues
         
         // Insert HLS args BEFORE the input URL for proper protocol handling
         processedCommand = processedCommand.replace('-i ' + finalUrl, hlsArgs + ' -i ' + finalUrl);
@@ -1489,30 +1478,8 @@ class StreamManager {
       command: args.join(' ')
     });
 
-    // SCALABLE CONNECTION LIMITS: Use stream parameter for connection pre-warming
-    const hasConnectionLimits = streamData?.connection_limits === 1 || streamData?.connection_limits === true;
-    if (hasConnectionLimits) {
-      logger.stream('Pre-warming connection for IPTV server with connection limits', { 
-        streamName: streamData?.name,
-        finalUrl: finalUrl.substring(0, 50) + '...'
-      });
-      
-      // Use connection manager to establish proper delay and headers
-      const connectionManager = require('../utils/connectionManager');
-      const axios = require('axios');
-      
-      // Pre-warm the connection asynchronously (don't wait for response)
-      connectionManager.makeVLCCompatibleRequest(axios, finalUrl, {
-        timeout: 5000,  // Quick pre-check, don't delay FFmpeg too long
-        maxContentLength: 1024  // Just need to trigger the connection slot
-      }).catch(error => {
-        logger.warn('Connection pre-warming failed, but continuing with FFmpeg', {
-          streamName: streamData?.name,
-          error: error.message,
-          status: error.response?.status
-        });
-      });
-    }
+    // Connection pre-warming is now handled by the progressive stream handler
+    // Regular streams don't need pre-warming as it can cause buffering issues
 
     return spawn(config.streams.ffmpegPath, args);
   }
