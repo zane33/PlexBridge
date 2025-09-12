@@ -15,10 +15,10 @@ const advancedM3U8Resolver = require('./advancedM3U8Resolver');
 // Android TV Configuration Constants - Optimized for faster startup
 const ANDROID_TV_CONFIG = {
   RESET_INTERVAL: 1200, // 20 minutes in seconds
-  ANALYZE_DURATION: 2000000, // 2MB (reduced from 5MB for faster startup)
-  PROBE_SIZE: 2000000, // 2MB (reduced from 5MB for faster startup)
+  ANALYZE_DURATION: 3000000, // 3MB (reduced from 5MB for faster startup)
+  PROBE_SIZE: 3000000, // 3MB (reduced from 5MB for faster startup)
   SEGMENT_DURATION: 30, // 30 seconds
-  BUFFER_SIZE: '256k',
+  BUFFER_SIZE: '2M',
   QUEUE_SIZE: 4096,
   MAX_RESTARTS: 3, // Maximum restarts per 5-minute window
   RESTART_WINDOW: 300000, // 5 minutes in milliseconds
