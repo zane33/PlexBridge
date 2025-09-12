@@ -13,10 +13,10 @@ const ffmpegProfiles = require('../config/ffmpegProfiles');
 // Android TV Configuration Constants
 const ANDROID_TV_CONFIG = {
   RESET_INTERVAL: 1200, // 20 minutes in seconds
-  ANALYZE_DURATION: 10000000, // 10MB (reduced from 10MB for faster startup)
-  PROBE_SIZE: 10000000, // 10MB (reduced from 10MB for faster startup)
-  SEGMENT_DURATION: 10, // 10 seconds
-  BUFFER_SIZE: '1M',
+  ANALYZE_DURATION: 5000000, // 5MB (reduced from 10MB for faster startup)
+  PROBE_SIZE: 5000000, // 5MB (reduced from 10MB for faster startup)
+  SEGMENT_DURATION: 30, // 30 seconds
+  BUFFER_SIZE: '256k',
   QUEUE_SIZE: 4096,
   MAX_RESTARTS: 3, // Maximum restarts per 5-minute window
   RESTART_WINDOW: 300000, // 5 minutes in milliseconds
@@ -3135,7 +3135,7 @@ class StreamManager {
         
         // HLS output settings optimized for Plex Web
         '-f', 'hls',
-        '-hls_time', '',           // 10 second segments (longer for stability)
+        '-hls_time', '10',           // 10 second segments (longer for stability)
         '-hls_list_size', '6',       // Keep 6 segments in playlist (1 minute buffer)
         '-hls_wrap', '10',           // Wrap segment numbering
         '-hls_delete_threshold', '1', // Delete old segments
