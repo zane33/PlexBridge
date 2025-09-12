@@ -15,10 +15,10 @@ const advancedM3U8Resolver = require('./advancedM3U8Resolver');
 // Android TV Configuration Constants - Optimized for faster startup
 const ANDROID_TV_CONFIG = {
   RESET_INTERVAL: 1200, // 20 minutes in seconds
-  ANALYZE_DURATION: 2000000, // 2MB (reduced from 5MB for faster startup)
-  PROBE_SIZE: 2000000, // 2MB (reduced from 5MB for faster startup)
+  ANALYZE_DURATION: 5000000, // 5MB (increased from 2MB for better reliability)
+  PROBE_SIZE: 5000000, // 5MB (increased from 2MB for better reliability)
   SEGMENT_DURATION: 30, // 30 seconds
-  BUFFER_SIZE: '256k',
+  BUFFER_SIZE: '5M',
   QUEUE_SIZE: 4096,
   MAX_RESTARTS: 3, // Maximum restarts per 5-minute window
   RESTART_WINDOW: 300000, // 5 minutes in milliseconds
@@ -1348,7 +1348,7 @@ class StreamManager {
         logger.info('Resolving M3U8 stream URL redirects', { url: url.substring(0, 100) + '...' });
         
         const response = await axios.get(url, {
-          maxRedirects: 0, // Don't follow redirects automatically
+          maxRedirects: 5, // Don't follow redirects automatically
           timeout: 15000,
           validateStatus: function (status) {
             // Accept redirects and success responses
