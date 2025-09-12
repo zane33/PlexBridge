@@ -18,7 +18,7 @@ const ANDROID_TV_CONFIG = {
   ANALYZE_DURATION: 3000000, // 3MB (reduced from 5MB for faster startup)
   PROBE_SIZE: 3000000, // 3MB (reduced from 5MB for faster startup)
   SEGMENT_DURATION: 30, // 30 seconds
-  BUFFER_SIZE: '1M', // Moderate buffer size
+  BUFFER_SIZE: '256k',
   QUEUE_SIZE: 4096,
   MAX_RESTARTS: 3, // Maximum restarts per 5-minute window
   RESTART_WINDOW: 300000, // 5 minutes in milliseconds
@@ -98,19 +98,22 @@ class StreamManager {
       'pipe:1'
     ];
 
-    // Add HLS-specific arguments - simplified for better compatibility
+    // Add HLS-specific arguments if needed with IPTV optimizations
     if (streamUrl.includes('.m3u8')) {
       const hlsArgs = [
-        '-re', // Read input at native frame rate - critical for smooth playback
         '-allowed_extensions', 'ALL',
         '-protocol_whitelist', 'file,http,https,tcp,tls,pipe,crypto',
         '-user_agent', 'VLC/3.0.20 LibVLC/3.0.20',
         '-headers', 'Accept: */*\\r\\nConnection: keep-alive\\r\\n',
-        '-timeout', '25000000', // 25 second timeout
+        '-live_start_index', '0',
+        '-http_persistent', '0', // Disabled for better IPTV compatibility
+        '-http_seekable', '0',
+        '-multiple_requests', '1',
+        '-timeout', '25000000', // 25 second timeout (increased for slow IPTV)
         '-reconnect', '1',
         '-reconnect_at_eof', '1',
         '-reconnect_streamed', '1',
-        '-reconnect_delay_max', '2'
+        '-reconnect_delay_max', '5'
       ];
       
       // Insert HLS args before the input URL
@@ -1428,16 +1431,19 @@ class StreamManager {
       // Replace [URL] placeholder with actual stream URL
       let processedCommand = ffmpegCommand.replace('[URL]', finalUrl);
       
-      // Add HLS-specific arguments for M3U8 streams - keep it simple
+      // Add HLS-specific arguments for M3U8 streams (FIXED: Added critical missing parameters)
       if (finalUrl.includes('.m3u8')) {
-        // Simple HLS arguments for better compatibility
+        // HLS arguments with critical parameters restored for TVNZ 1, Three, etc.
         let hlsArgs = [
-          '-re', // Read at native frame rate
           '-allowed_extensions', 'ALL',
           '-protocol_whitelist', 'file,http,https,tcp,tls,pipe,crypto',
           '-user_agent', 'VLC/3.0.20 LibVLC/3.0.20',
           '-headers', 'Accept: */*\\r\\nConnection: keep-alive\\r\\n',
-          '-timeout', '30000000', // 30 second timeout
+          '-live_start_index', '0',
+          '-http_persistent', '0',
+          '-http_seekable', '0',
+          '-multiple_requests', '1',
+          '-timeout', '30000000', // 30 second timeout for web previews
           '-reconnect', '1',
           '-reconnect_at_eof', '1',
           '-reconnect_streamed', '1',
@@ -2465,13 +2471,16 @@ class StreamManager {
       
       // Add optimized HLS-specific arguments for IPTV streams in Plex streaming
       if (finalStreamUrl.includes('.m3u8')) {
-        // Simple HLS arguments for IPTV streams in Plex
+        // Enhanced HLS arguments specifically optimized for IPTV streams in Plex
         let hlsArgs = [
-          '-re', // Read at native frame rate for smooth playback
           '-allowed_extensions', 'ALL',
           '-protocol_whitelist', 'file,http,https,tcp,tls,pipe,crypto',
           '-user_agent', 'VLC/3.0.20 LibVLC/3.0.20',
           '-headers', 'Accept: */*\\r\\nConnection: keep-alive\\r\\n',
+          '-live_start_index', '0',
+          '-http_persistent', '0',
+          '-http_seekable', '0',
+          '-multiple_requests', '1',
           '-reconnect', '1',
           '-reconnect_at_eof', '1',
           '-reconnect_streamed', '1',
