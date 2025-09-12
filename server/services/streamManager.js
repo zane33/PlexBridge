@@ -18,7 +18,7 @@ const ANDROID_TV_CONFIG = {
   ANALYZE_DURATION: 3000000, // 3MB (reduced from 5MB for faster startup)
   PROBE_SIZE: 3000000, // 3MB (reduced from 5MB for faster startup)
   SEGMENT_DURATION: 30, // 30 seconds
-  BUFFER_SIZE: '256k',
+  BUFFER_SIZE: '2M',
   QUEUE_SIZE: 4096,
   MAX_RESTARTS: 3, // Maximum restarts per 5-minute window
   RESTART_WINDOW: 300000, // 5 minutes in milliseconds
@@ -1437,17 +1437,17 @@ class StreamManager {
         let hlsArgs = [
           '-allowed_extensions', 'ALL',
           '-protocol_whitelist', 'file,http,https,tcp,tls,pipe,crypto',
+          '-user_agent', 'VLC/3.0.20 LibVLC/3.0.20',
+          '-headers', 'Accept: */*\\r\\nConnection: keep-alive\\r\\n',
+          '-live_start_index', '0',
+          '-http_persistent', '0',
+          '-http_seekable', '0',
+          '-multiple_requests', '1',
+          '-timeout', '30000000', // 30 second timeout for web previews
           '-reconnect', '1',
           '-reconnect_at_eof', '1',
           '-reconnect_streamed', '1',
-          '-reconnect_delay_max', '2',
-          '-user_agent', userAgent || 'Mozilla/5.0',
-          '-referer', streamData?.referer || url,
-          '-headers', `User-Agent: ${userAgent || 'Mozilla/5.0'}\\r\\nReferer: ${streamData?.referer || url}\\r\\n`,
-          '-timeout', '15000000', // 15 second timeout for IPTV
-          '-live_start_index', '0', // Start from latest segment
-          '-hls_time', '0', // Use server-provided segment duration
-          '-re' // Read input at native frame rate (critical for TVNZ 1 stability)
+          '-reconnect_delay_max', '2'
         ].join(' ');
         
         // SCALABLE CONNECTION LIMITS: Use stream parameter instead of hardcoded IP
@@ -1457,6 +1457,14 @@ class StreamManager {
           hlsArgs += ' -max_reload 3 -http_multiple 1 -headers "User-Agent: VLC/3.0.20 LibVLC/3.0.20\\r\\nConnection: close\\r\\n"';
           logger.stream('Applied VLC-compatible headers for connection limits', {
             streamName: streamData?.name,
+            streamUrl: finalUrl.substring(0, 50) + '...'
+          });
+        }
+        
+        // CRITICAL FIX FOR MJH/TVNZ STREAMS: Add -re flag for i.mjh.nz domains
+        if (finalUrl.includes('i.mjh.nz') || finalUrl.includes('tvnz')) {
+          hlsArgs += ' -re'; // Read input at native frame rate (required for TVNZ stability)
+          logger.info('Added -re flag for mjh/TVNZ stream', {
             streamUrl: finalUrl.substring(0, 50) + '...'
           });
         }
