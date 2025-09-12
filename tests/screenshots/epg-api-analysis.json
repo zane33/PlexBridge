@@ -1,0 +1,18 @@
+{
+  "epg": {
+    "status": 200,
+    "data": {
+      "start": "2025-08-19T04:47:46.820Z",
+      "end": "2025-08-20T04:47:46.820Z",
+      "programs": []
+    }
+  },
+  "sources": {
+    "status": 200,
+    "data": []
+  },
+  "programs": {
+    "status": 200,
+    "data": []
+  }
+}
