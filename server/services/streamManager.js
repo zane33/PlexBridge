@@ -1437,17 +1437,17 @@ class StreamManager {
         let hlsArgs = [
           '-allowed_extensions', 'ALL',
           '-protocol_whitelist', 'file,http,https,tcp,tls,pipe,crypto',
-          '-user_agent', 'VLC/3.0.20 LibVLC/3.0.20',
-          '-headers', 'Accept: */*\\r\\nConnection: keep-alive\\r\\n',
-          '-live_start_index', '0',
-          '-http_persistent', '0',
-          '-http_seekable', '0',
-          '-multiple_requests', '1',
-          '-timeout', '30000000', // 30 second timeout for web previews
           '-reconnect', '1',
           '-reconnect_at_eof', '1',
           '-reconnect_streamed', '1',
-          '-reconnect_delay_max', '2'
+          '-reconnect_delay_max', '2',
+          '-user_agent', userAgent || 'Mozilla/5.0',
+          '-referer', streamData?.referer || url,
+          '-headers', `User-Agent: ${userAgent || 'Mozilla/5.0'}\\r\\nReferer: ${streamData?.referer || url}\\r\\n`,
+          '-timeout', '15000000', // 15 second timeout for IPTV
+          '-live_start_index', '0', // Start from latest segment
+          '-hls_time', '0', // Use server-provided segment duration
+          '-re' // Read input at native frame rate (critical for TVNZ 1 stability)
         ].join(' ');
         
         // SCALABLE CONNECTION LIMITS: Use stream parameter instead of hardcoded IP
