@@ -12,23 +12,23 @@ const ffmpegProfiles = require('../config/ffmpegProfiles');
 const progressiveStreamHandler = require('./progressiveStreamHandler');
 const advancedM3U8Resolver = require('./advancedM3U8Resolver');
 
-// Android TV Configuration Constants - Optimized for faster startup
+// Android TV Configuration Constants - Optimized for stability and reduced buffering
 const ANDROID_TV_CONFIG = {
   RESET_INTERVAL: 1200, // 20 minutes in seconds
-  ANALYZE_DURATION: 3000000, // 3MB (reduced from 5MB for faster startup)
-  PROBE_SIZE: 3000000, // 3MB (reduced from 5MB for faster startup)
+  ANALYZE_DURATION: 5000000, // 5MB for proper stream analysis
+  PROBE_SIZE: 5000000, // 5MB to ensure format detection
   SEGMENT_DURATION: 30, // 30 seconds
-  BUFFER_SIZE: '2M',
-  QUEUE_SIZE: 4096,
+  BUFFER_SIZE: '4M', // Increased from 256k to 4MB for stable buffering
+  QUEUE_SIZE: 8192, // Increased from 4096 for better queueing
   MAX_RESTARTS: 3, // Maximum restarts per 5-minute window
   RESTART_WINDOW: 300000, // 5 minutes in milliseconds
   RESTART_DELAY: 1000, // 1 second delay before restart (reduced for faster recovery)
   HEALTH_CHECK_INTERVAL: 10000, // Check stream health every 10 seconds
   USER_AGENT_PATTERNS: ['android', 'shield', 'androidtv'],
-  // IPTV-specific optimizations for faster startup
-  IPTV_TIMEOUT: 10000, // 10 second timeout for IPTV connections
-  IPTV_PROBE_SIZE: 1000000, // 1MB probe size for IPTV streams
-  IPTV_ANALYZE_DURATION: 1000000 // 1MB analysis for IPTV streams
+  // IPTV-specific optimizations for stability
+  IPTV_TIMEOUT: 15000, // 15 second timeout for IPTV connections (increased from 10s)
+  IPTV_PROBE_SIZE: 3000000, // 3MB probe size for IPTV streams
+  IPTV_ANALYZE_DURATION: 3000000 // 3MB analysis for IPTV streams
 };
 
 class StreamManager {
@@ -86,34 +86,39 @@ class StreamManager {
       '-segment_list', 'pipe:2', // Use stderr instead of /dev/null for better performance
       '-reset_timestamps', '1',
       '-avoid_negative_ts', 'make_zero',
-      '-fflags', '+genpts+igndts+discardcorrupt+nobuffer',
-      '-flags', '+low_delay',
+      '-fflags', '+genpts+igndts+discardcorrupt',
+      '-flags', 'low_delay',
       '-copyts',
-      '-muxdelay', '0',
-      '-muxpreload', '0',
-      '-flush_packets', '1',
-      '-max_delay', '0',
+      '-muxdelay', '0.1',
+      '-muxpreload', '0.1',
+      '-flush_packets', '0',
+      '-max_delay', '500000',
       '-max_muxing_queue_size', ANDROID_TV_CONFIG.QUEUE_SIZE.toString(),
       '-rtbufsize', ANDROID_TV_CONFIG.BUFFER_SIZE,
+      '-bufsize', ANDROID_TV_CONFIG.BUFFER_SIZE,
       'pipe:1'
     ];
 
-    // Add HLS-specific arguments if needed with IPTV optimizations
+    // Add HLS-specific arguments if needed with optimizations for stability
     if (streamUrl.includes('.m3u8')) {
       const hlsArgs = [
         '-allowed_extensions', 'ALL',
         '-protocol_whitelist', 'file,http,https,tcp,tls,pipe,crypto',
         '-user_agent', 'VLC/3.0.20 LibVLC/3.0.20',
         '-headers', 'Accept: */*\\r\\nConnection: keep-alive\\r\\n',
-        '-live_start_index', '0',
-        '-http_persistent', '0', // Disabled for better IPTV compatibility
+        '-live_start_index', '-3', // Start from 3 segments back for buffer
+        '-http_persistent', '1', // Enable persistent connections for stability
         '-http_seekable', '0',
-        '-multiple_requests', '1',
-        '-timeout', '25000000', // 25 second timeout (increased for slow IPTV)
+        '-http_multiple', '1', // Allow multiple HTTP connections
+        '-seg_download_retry_limit', '3', // Retry segment downloads
+        '-timeout', '30000000', // 30 second timeout for slow connections
         '-reconnect', '1',
         '-reconnect_at_eof', '1',
         '-reconnect_streamed', '1',
-        '-reconnect_delay_max', '5'
+        '-reconnect_on_network_error', '1',
+        '-reconnect_on_http_error', '4xx,5xx',
+        '-reconnect_delay_max', '5',
+        '-max_reload', '1000' // Allow many playlist reloads for live streams
       ];
       
       // Insert HLS args before the input URL
@@ -1431,22 +1436,26 @@ class StreamManager {
       // Replace [URL] placeholder with actual stream URL
       let processedCommand = ffmpegCommand.replace('[URL]', finalUrl);
       
-      // Add HLS-specific arguments for M3U8 streams (FIXED: Added critical missing parameters)
+      // Add HLS-specific arguments for M3U8 streams with buffering improvements
       if (finalUrl.includes('.m3u8')) {
-        // HLS arguments with critical parameters restored for TVNZ 1, Three, etc.
+        // Enhanced HLS arguments for stability and reduced buffering
         let hlsArgs = [
           '-allowed_extensions', 'ALL',
           '-protocol_whitelist', 'file,http,https,tcp,tls,pipe,crypto',
           '-user_agent', 'VLC/3.0.20 LibVLC/3.0.20',
           '-headers', 'Accept: */*\\r\\nConnection: keep-alive\\r\\n',
-          '-live_start_index', '0',
-          '-http_persistent', '0',
+          '-live_start_index', '-3', // Start 3 segments back for buffer
+          '-http_persistent', '1', // Enable persistent connections
           '-http_seekable', '0',
-          '-multiple_requests', '1',
-          '-timeout', '30000000', // 30 second timeout for web previews
+          '-http_multiple', '1', // Allow multiple connections
+          '-seg_download_retry_limit', '3', // Retry failed segments
+          '-max_reload', '1000', // Allow many playlist reloads
+          '-timeout', '30000000', // 30 second timeout for stability
           '-reconnect', '1',
           '-reconnect_at_eof', '1',
           '-reconnect_streamed', '1',
+          '-reconnect_on_network_error', '1',
+          '-reconnect_on_http_error', '4xx,5xx',
           '-reconnect_delay_max', '2'
         ].join(' ');
         
@@ -2471,19 +2480,23 @@ class StreamManager {
       
       // Add optimized HLS-specific arguments for IPTV streams in Plex streaming
       if (finalStreamUrl.includes('.m3u8')) {
-        // Enhanced HLS arguments specifically optimized for IPTV streams in Plex
+        // Enhanced HLS arguments with improved buffering for IPTV streams in Plex
         let hlsArgs = [
           '-allowed_extensions', 'ALL',
           '-protocol_whitelist', 'file,http,https,tcp,tls,pipe,crypto',
           '-user_agent', 'VLC/3.0.20 LibVLC/3.0.20',
           '-headers', 'Accept: */*\\r\\nConnection: keep-alive\\r\\n',
-          '-live_start_index', '0',
-          '-http_persistent', '0',
+          '-live_start_index', '-3', // Start 3 segments back for buffer
+          '-http_persistent', '1', // Enable persistent connections
           '-http_seekable', '0',
-          '-multiple_requests', '1',
+          '-http_multiple', '1', // Allow multiple connections
+          '-seg_download_retry_limit', '3', // Retry failed segments
+          '-max_reload', '1000', // Allow many playlist reloads
           '-reconnect', '1',
           '-reconnect_at_eof', '1',
           '-reconnect_streamed', '1',
+          '-reconnect_on_network_error', '1',
+          '-reconnect_on_http_error', '4xx,5xx',
           '-reconnect_delay_max', '5',
           '-timeout', '45000000' // 45 second timeout for slow streams
         ].join(' ');
