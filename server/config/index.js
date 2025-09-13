@@ -92,7 +92,7 @@ const defaultConfig = {
       timeout: parseInt(process.env.UDP_TIMEOUT) || 5000
     },
     http: {
-      userAgent: process.env.HTTP_USER_AGENT || 'VLC/3.0.20 LibVLC/3.0.20',
+      userAgent: process.env.HTTP_USER_AGENT || 'PlexTV/1.0',
       timeout: parseInt(process.env.HTTP_TIMEOUT) || 30000,
       followRedirects: process.env.HTTP_FOLLOW_REDIRECTS !== 'false'
     },

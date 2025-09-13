@@ -11,15 +11,12 @@ const { getConsumerManager } = require('../services/consumerManager');
 const { v4: uuidv4 } = require('uuid');
 const segmentHandler = require('../services/segmentHandler');
 const hlsQualitySelector = require('../services/hlsQualitySelector');
-const androidTVSessionManager = require('../services/androidTVSessionManager');
-const hlsSegmentResolver = require('../services/hlsSegmentResolver');
 
 // Apply session keep-alive middleware to all stream endpoints
 router.use(sessionKeepAlive());
 
 /**
  * Determine if resilient streaming should be used based on request and stream characteristics
- * CRITICAL FIX: Always enable resilience by default to prevent session termination
  */
 function shouldUseResilientStreaming(req, stream) {
   const userAgent = req.get('User-Agent') || '';
@@ -33,30 +30,12 @@ function shouldUseResilientStreaming(req, stream) {
                       userAgent.toLowerCase().includes('pms') ||
                       userAgent.toLowerCase().includes('lavf');
   
-  // CRITICAL FIX: Check environment variable first for resilience by default
-  if (process.env.RESILIENT_BY_DEFAULT === 'true' || process.env.STREAM_RESILIENCE_ENABLED === 'true') {
-    return { 
-      enabled: true, 
-      reason: 'resilience_enabled_by_default_env',
-      layer: 'environment_configuration'
-    };
-  }
-  
   // Check for explicit resilience request
   if (req.query.resilient === 'true' || req.query.resilience === 'true') {
     return { 
       enabled: true, 
       reason: 'explicit_request',
       layer: 'user_requested'
-    };
-  }
-  
-  // Check for explicit disable (only way to disable when env is set)
-  if (req.query.resilient === 'false' || req.query.resilience === 'false') {
-    return { 
-      enabled: false, 
-      reason: 'explicitly_disabled',
-      layer: 'user_override'
     };
   }
   
@@ -129,24 +108,10 @@ function shouldUseResilientStreaming(req, stream) {
     };
   }
   
-  // CRITICAL FIX: Default to enabled unless explicitly disabled in config
-  const config = require('../config');
-  
-  // Only disable if explicitly set to false in config AND not overridden by env
-  if (config.streams?.resilience?.enabled === false && 
-      process.env.RESILIENT_BY_DEFAULT !== 'true' &&
-      process.env.STREAM_RESILIENCE_ENABLED !== 'true') {
-    return { 
-      enabled: false, 
-      reason: 'resilience_disabled_in_config'
-    };
-  }
-  
-  // DEFAULT: Always enable resilient streaming for session persistence
+  // Default: don't use resilient streaming
   return { 
-    enabled: true, 
-    reason: 'resilience_enabled_by_default',
-    layer: 'default_optimization'
+    enabled: false, 
+    reason: 'standard_streaming_sufficient'
   };
 }
 
@@ -167,95 +132,8 @@ router.get('/stream/:channelId/:filename?', async (req, res) => {
                          req.query.format === 'mpegts' ||
                          req.query.raw === 'true';
     
-    const isAndroidTV = userAgent.toLowerCase().includes('androidtv') || 
-                        userAgent.toLowerCase().includes('android tv') ||
-                        userAgent.toLowerCase().includes('nexusplayer') ||
-                        userAgent.toLowerCase().includes('mibox') ||
-                        userAgent.toLowerCase().includes('shield') ||
-                        userAgent.toLowerCase().includes('android');
+    const isAndroidTV = userAgent.toLowerCase().includes('android');
     
-    // Get channel and stream info early for targetUrl resolution
-    // Get channel info from database - first try as channel ID
-    let channel = await database.get('SELECT * FROM channels WHERE id = ?', [channelId]);
-    let stream = null;
-    
-    if (channel) {
-      // Found channel, get associated stream
-      stream = await database.get('SELECT * FROM streams WHERE channel_id = ?', [channelId]);
-      if (!stream) {
-        logger.warn('Stream not found for channel', { 
-          channelId, 
-          channelName: channel.name,
-          channelNumber: channel.number,
-          filename,
-          clientIP: req.ip 
-        });
-        return res.status(404).send('Stream not found for channel');
-      }
-    } else {
-      // No channel found, try as stream ID directly
-      stream = await database.get('SELECT * FROM streams WHERE id = ?', [channelId]);
-      if (stream && stream.channel_id) {
-        // Found stream, get associated channel
-        channel = await database.get('SELECT * FROM channels WHERE id = ?', [stream.channel_id]);
-      }
-      
-      if (!stream) {
-        logger.warn('Neither channel nor stream found', { channelId, filename, clientIP: req.ip });
-        return res.status(404).send('Channel not found');
-      }
-      
-      // Log that we're using stream ID access
-      logger.info('Stream accessed directly by stream ID', { 
-        streamId: channelId, 
-        streamName: stream.name,
-        channelId: stream.channel_id,
-        channelName: channel ? channel.name : 'Unknown'
-      });
-    }
-    
-    // Determine the target URL early for session creation
-    let targetUrl = stream.url;
-    
-    // CRITICAL FIX: Process beacon URLs at the initial URL resolution stage
-    // This ensures beacon URLs are processed for ALL requests (Plex, web, mobile)
-    if (!isSubFile && streamManager.isBeaconTrackingUrl(targetUrl)) {
-      try {
-        logger.info('Detected beacon tracking URL, processing...', {
-          channelId,
-          originalUrl: targetUrl.substring(0, 100) + '...',
-          isPlexRequest,
-          userAgent: req.get('User-Agent')
-        });
-        
-        // Process the beacon URL to extract the clean streaming URL
-        const processedUrl = await streamManager.processPlaylistWithBeacons(targetUrl, req, channelId);
-        
-        if (processedUrl && processedUrl !== targetUrl) {
-          targetUrl = processedUrl;
-          logger.info('Successfully processed beacon URL', {
-            channelId,
-            originalLength: stream.url.length,
-            processedLength: targetUrl.length,
-            hasBeaconParams: stream.url.includes('bcn=') || stream.url.includes('redirect_url='),
-            isPlexRequest
-          });
-        } else {
-          logger.warn('Beacon URL processing returned same URL', {
-            channelId,
-            originalUrl: stream.url.substring(0, 100) + '...'
-          });
-        }
-      } catch (beaconError) {
-        logger.error('Failed to process beacon URL, using original', {
-          channelId,
-          error: beaconError.message,
-          originalUrl: stream.url.substring(0, 100) + '...'
-        });
-        // Continue with original URL if beacon processing fails
-      }
-    }
-
     // Generate or extract session ID for persistent session management
     let sessionId = req.headers['x-session-id'] || 
                    req.query.sessionId || 
@@ -270,38 +148,6 @@ router.get('/stream/:channelId/:filename?', async (req, res) => {
                                req.query.X_Plex_Session_Identifier ||
                                req.query.session ||
                                sessionId;
-      
-      // CRITICAL: Create enhanced Android TV session for long-running stream stability
-      if (isAndroidTV) {
-        try {
-          const androidTVSession = await androidTVSessionManager.createAndroidTVSession({
-            sessionId,
-            channelId,
-            streamUrl: targetUrl,
-            clientInfo: {
-              userAgent,
-              platform: isAndroidTV ? 'AndroidTV' : 'Unknown',
-              remoteAddress: req.ip || req.connection.remoteAddress
-            },
-            plexSessionId: consumerSessionId,
-            consumerSessionId: consumerSessionId
-          });
-          
-          logger.info('Created Android TV enhanced session for long-running stability', {
-            sessionId,
-            channelId,
-            consumerSessionId,
-            sessionUptime: 0,
-            healthMonitoringEnabled: true
-          });
-        } catch (androidTVError) {
-          logger.error('Failed to create Android TV enhanced session - using fallback', {
-            error: androidTVError.message,
-            sessionId,
-            channelId
-          });
-        }
-      }
       
       // Helper function to sanitize headers
       const sanitizeHeader = (header) => {
@@ -425,20 +271,11 @@ router.get('/stream/:channelId/:filename?', async (req, res) => {
       
       // ANDROID TV SESSION RESILIENCE: Prevent premature termination
       if (isAndroidTV) {
-        // Extract quality parameters for Android TV
-        const quality = req.query.quality || req.query.Quality || 'high';
-        const audioBoost = req.query.audioBoost || req.query.AudioBoost || '100';
-        const directStream = req.query.directStream || req.query.DirectStream || '1';
-        
         res.set({
           'X-Android-TV-Session': 'true',
           'X-Session-Timeout': '300',  // 5 minutes timeout for Android TV
           'X-Reconnect-Grace': '30',   // 30 seconds grace period for reconnection
           'X-Buffer-Resilience': 'high', // High resilience for buffering
-          'X-Quality-Selected': quality,
-          'X-Audio-Boost': audioBoost,
-          'X-Direct-Stream': directStream,
-          'X-Transcoding-Compatible': 'true',
           'Cache-Control': 'no-cache, no-store, must-revalidate'
         });
         
@@ -507,46 +344,55 @@ router.get('/stream/:channelId/:filename?', async (req, res) => {
       filename
     });
     
+    // Get channel info from database - first try as channel ID
+    let channel = await database.get('SELECT * FROM channels WHERE id = ?', [channelId]);
+    let stream = null;
+    
+    if (channel) {
+      // Found channel, get associated stream
+      stream = await database.get('SELECT * FROM streams WHERE channel_id = ?', [channelId]);
+      if (!stream) {
+        logger.warn('Stream not found for channel', { 
+          channelId, 
+          channelName: channel.name,
+          channelNumber: channel.number,
+          filename,
+          clientIP: req.ip 
+        });
+        return res.status(404).send('Stream not found for channel');
+      }
+    } else {
+      // No channel found, try as stream ID directly
+      stream = await database.get('SELECT * FROM streams WHERE id = ?', [channelId]);
+      if (stream && stream.channel_id) {
+        // Found stream, get associated channel
+        channel = await database.get('SELECT * FROM channels WHERE id = ?', [stream.channel_id]);
+      }
+      
+      if (!stream) {
+        logger.warn('Neither channel nor stream found', { channelId, filename, clientIP: req.ip });
+        return res.status(404).send('Channel not found');
+      }
+      
+      // Log that we're using stream ID access
+      logger.info('Stream accessed directly by stream ID', { 
+        streamId: channelId, 
+        streamName: stream.name,
+        channelId: stream.channel_id,
+        channelName: channel ? channel.name : 'Unknown'
+      });
+    }
+    
+    // Determine the target URL
+    let targetUrl = stream.url;
     if (isSubFile) {
-      // CRITICAL FIX: Use HLS Segment Resolver for proper segment URL resolution
-      // This fixes Android TV 404 errors by dynamically resolving segment URLs from playlists
-      if (filename.endsWith('.ts') || filename.endsWith('.m4s') || filename.endsWith('.mp4')) {
-        try {
-          // Use the HLS segment resolver to get the actual segment URL
-          targetUrl = await hlsSegmentResolver.resolveSegmentUrl(stream.url, filename, {
-            userAgent: req.get('User-Agent')
-          });
-          
-          logger.info('Resolved HLS segment URL dynamically', {
-            originalUrl: stream.url,
-            segmentFilename: filename,
-            resolvedUrl: targetUrl.substring(0, 80) + '...',
-            isAndroidTV
-          });
-        } catch (resolveError) {
-          logger.error('Failed to resolve HLS segment URL, using fallback', {
-            error: resolveError.message,
-            streamUrl: stream.url,
-            filename
-          });
-          
-          // Fallback to old logic temporarily
-          if (stream.url.includes('i.mjh.nz/.r/discovery-hgtv.m3u8')) {
-            // HGTV redirects to https://mediapackage-hgtv-source.fullscreen.nz/index.m3u8
-            targetUrl = `https://mediapackage-hgtv-source.fullscreen.nz/${filename}`;
-            logger.info('Using hardcoded HGTV target URL', { targetUrl, filename });
-          } else {
-            // Try to construct based on base URL
-            const baseUrl = stream.url.replace(/\/[^\/]*\.m3u8.*$/, '/');
-            targetUrl = baseUrl + filename;
-          }
-        }
-      } else if (stream.url.includes('i.mjh.nz/.r/discovery-hgtv.m3u8')) {
+      // For sub-files, construct the target URL based on known redirect patterns
+      if (stream.url.includes('i.mjh.nz/.r/discovery-hgtv.m3u8')) {
         // HGTV redirects to https://mediapackage-hgtv-source.fullscreen.nz/index.m3u8
         targetUrl = `https://mediapackage-hgtv-source.fullscreen.nz/${filename}`;
         logger.info('Using hardcoded HGTV target URL', { targetUrl, filename });
       } else {
-        // For other sub-files (like .m3u8 variants), try to resolve redirect using curl-like approach
+        // For other streams, try to resolve redirect using curl-like approach
         try {
           const axios = require('axios');
           
@@ -770,16 +616,6 @@ router.get('/stream/:channelId/:filename?', async (req, res) => {
             }
           }
           
-          // ENHANCED: Update Android TV session manager for proactive health monitoring
-          if (isAndroidTV && finalSessionId) {
-            androidTVSessionManager.updateSessionActivity(finalSessionId, 'hls_segment_request');
-            logger.debug('Updated Android TV session manager activity', {
-              sessionId: finalSessionId,
-              activityType: 'hls_segment_request',
-              filename
-            });
-          }
-          
           // ADDITIONAL ANDROID TV FIX: Monitor for session health
           if (isAndroidTV && finalSessionId) {
             try {
@@ -950,119 +786,6 @@ router.get('/streams/preview/:streamId', async (req, res) => {
     logger.error('Stream preview service error:', error);
     if (!res.headersSent) {
       res.status(500).json({ error: 'Stream preview failed', details: error.message });
-    }
-  }
-});
-
-// Cleaned playlist proxy endpoint for beacon URL processing
-router.get('/stream/playlist/:playlistId', async (req, res) => {
-  try {
-    const { playlistId } = req.params;
-    
-    logger.debug('Cleaned playlist request', { playlistId });
-    
-    // Get cleaned playlist from StreamManager
-    const cleanedPlaylists = streamManager.cleanedPlaylists;
-    if (!cleanedPlaylists || !cleanedPlaylists.has(playlistId)) {
-      logger.warn('Cleaned playlist not found or expired', { playlistId });
-      return res.status(404).send('Playlist not found or expired');
-    }
-    
-    const playlistData = cleanedPlaylists.get(playlistId);
-    const now = Date.now();
-    
-    // Check if playlist has expired (older than 5 minutes)
-    if (now - playlistData.timestamp > 5 * 60 * 1000) {
-      cleanedPlaylists.delete(playlistId);
-      logger.warn('Cleaned playlist expired', { playlistId });
-      return res.status(404).send('Playlist expired');
-    }
-    
-    // Set appropriate headers for HLS playlist
-    res.set({
-      'Content-Type': 'application/vnd.apple.mpegurl',
-      'Cache-Control': 'no-cache, no-store, must-revalidate',
-      'Access-Control-Allow-Origin': '*',
-      'Access-Control-Allow-Headers': 'Range, Content-Type, Authorization'
-    });
-    
-    logger.info('Serving cleaned playlist', {
-      playlistId,
-      originalUrl: playlistData.originalUrl,
-      contentLength: playlistData.content.length
-    });
-    
-    res.send(playlistData.content);
-    
-  } catch (error) {
-    logger.error('Error serving cleaned playlist', {
-      playlistId: req.params.playlistId,
-      error: error.message,
-      stack: error.stack
-    });
-    res.status(500).send('Internal server error');
-  }
-});
-
-// HLS segment endpoint for Plex Web Client streaming
-router.get('/api/streams/segment/:sessionId/:filename', async (req, res) => {
-  try {
-    const { sessionId, filename } = req.params;
-    const fs = require('fs');
-    const path = require('path');
-    
-    logger.debug('HLS segment request', { sessionId, filename });
-    
-    // Validate the filename to prevent directory traversal
-    if (filename.includes('..') || filename.includes('/') || filename.includes('\\')) {
-      logger.warn('Invalid segment filename', { sessionId, filename });
-      return res.status(400).send('Invalid filename');
-    }
-    
-    // Construct the segment path
-    const segmentPath = path.join('data/cache', filename);
-    
-    // Check if the file exists
-    if (!fs.existsSync(segmentPath)) {
-      logger.warn('HLS segment not found', { sessionId, filename, segmentPath });
-      return res.status(404).send('Segment not found');
-    }
-    
-    // Get file stats for content length
-    const stats = fs.statSync(segmentPath);
-    
-    // Set proper headers for MPEG-TS segment
-    res.set({
-      'Content-Type': 'video/mp2t',
-      'Content-Length': stats.size,
-      'Access-Control-Allow-Origin': '*',
-      'Cache-Control': 'no-cache, no-store, must-revalidate',
-      'Accept-Ranges': 'bytes'
-    });
-    
-    // Stream the file
-    const stream = fs.createReadStream(segmentPath);
-    stream.pipe(res);
-    
-    stream.on('error', (error) => {
-      logger.error('Error streaming HLS segment', {
-        sessionId,
-        filename,
-        error: error.message
-      });
-      if (!res.headersSent) {
-        res.status(500).send('Error streaming segment');
-      }
-    });
-    
-  } catch (error) {
-    logger.error('HLS segment endpoint error', {
-      sessionId: req.params.sessionId,
-      filename: req.params.filename,
-      error: error.message
-    });
-    if (!res.headersSent) {
-      res.status(500).send('Internal server error');
     }
   }
 });

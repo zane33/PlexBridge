@@ -17,13 +17,10 @@ module.exports = {
   // High Quality Copy - No re-encoding, preserves original quality
   highQualityCopy: {
     name: 'High Quality Copy',
-    description: 'Direct copy of video and audio, no quality loss, with AES-128 encryption support',
+    description: 'Direct copy of video and audio, no quality loss',
     args: [
       '-hide_banner',
       '-loglevel', 'error',
-      '-allowed_extensions', 'ALL',
-      '-protocol_whitelist', 'file,http,https,tcp,tls,pipe,crypto',
-      '-user_agent', 'VLC/3.0.20 LibVLC/3.0.20',
       '-reconnect', '1',
       '-reconnect_at_eof', '1',
       '-reconnect_streamed', '1',
@@ -82,13 +79,11 @@ module.exports = {
   // HLS High Quality - For HLS streams, preserves quality
   hlsHighQuality: {
     name: 'HLS High Quality',
-    description: 'Optimized for HLS streams with quality preservation and AES-128 encryption support',
+    description: 'Optimized for HLS streams with quality preservation',
     args: [
       '-hide_banner',
       '-loglevel', 'error',
       '-allowed_extensions', 'ALL',
-      '-protocol_whitelist', 'file,http,https,tcp,tls,pipe,crypto',
-      '-user_agent', 'VLC/3.0.20 LibVLC/3.0.20',
       '-max_reload', '1000',
       '-m3u8_hold_counters', '10',
       '-live_start_index', '-1',

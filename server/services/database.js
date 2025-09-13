@@ -499,15 +499,6 @@ class DatabaseService {
       `);
       createAndroidTVSessionsTable.run();
 
-      // Add connection_limits column to streams table if it doesn't exist
-      try {
-        this.db.prepare('ALTER TABLE streams ADD COLUMN connection_limits INTEGER DEFAULT 0').run();
-        logger.info('Added connection_limits column to streams table');
-      } catch (error) {
-        // Column already exists, ignore error
-        logger.info('connection_limits column already exists in streams table');
-      }
-
       logger.info('Database tables created successfully (including Android TV sessions)');
     } catch (error) {
       logger.error('Failed to create database tables:', error);

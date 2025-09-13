@@ -138,8 +138,6 @@ function StreamManager() {
     last_failure: null,
     failure_count: 0,
     monitoring_enabled: false,
-    // SCALABLE CONNECTION LIMITS: Replace hardcoded IP detection with flexible parameter
-    connection_limits: false,
   });
   const { enqueueSnackbar } = useSnackbar();
   const theme = useTheme();
@@ -357,8 +355,6 @@ function StreamManager() {
       last_failure: null,
       failure_count: 0,
       monitoring_enabled: false,
-      // SCALABLE CONNECTION LIMITS: Initialize connection limits field
-      connection_limits: false,
     });
     setDialogOpen(true);
   };
@@ -399,7 +395,6 @@ function StreamManager() {
       enabled: stream.enabled === 1 || stream.enabled === true,
       enhanced_encoding: stream.enhanced_encoding === 1 || stream.enhanced_encoding === true,
       monitoring_enabled: stream.monitoring_enabled === 1 || stream.monitoring_enabled === true,
-      connection_limits: stream.connection_limits === 1 || stream.connection_limits === true,
       
       // Numeric fields
       reliability_score: parseFloat(stream.reliability_score) || 1.0,
@@ -516,7 +511,6 @@ function StreamManager() {
         // Number fields that need to be converted from boolean to 0/1
         enhanced_encoding: formData.enhanced_encoding ? 1 : 0,
         monitoring_enabled: formData.monitoring_enabled ? 1 : 0,
-        connection_limits: formData.connection_limits ? 1 : 0,
         
         // Numeric fields that should stay as numbers
         reliability_score: parseFloat(formData.reliability_score) || 1.0,
@@ -1724,33 +1718,6 @@ function StreamManager() {
                               </Typography>
                               <Typography variant="caption" color="text.secondary">
                                 Enables advanced stream processing with error recovery, anti-loop protection, and H.264 compatibility fixes. Recommended for unreliable IPTV sources.
-                              </Typography>
-                            </Box>
-                          }
-                        />
-                      </Box>
-                    </Grid>
-                    
-                    {/* IPTV CONNECTION LIMITS: User-controlled toggle for connection management */}
-                    <Grid item xs={12}>
-                      <Box sx={{ mt: 2, mb: 1 }}>
-                        <FormControlLabel
-                          control={
-                            <Switch
-                              checked={formData.connection_limits}
-                              onChange={(e) => handleInputChange('connection_limits', e.target.checked)}
-                              disabled={saving}
-                              color="warning"
-                            />
-                          }
-                          label={
-                            <Box>
-                              <Typography variant="body1" component="div">
-                                🔗 IPTV Connection Limits
-                              </Typography>
-                              <Typography variant="caption" color="text.secondary">
-                                Enable VLC-compatible connection management for IPTV servers that limit connections per IP address. 
-                                Use this if you get "403 Forbidden" or "Max Connections Reached" errors.
                               </Typography>
                             </Box>
                           }
