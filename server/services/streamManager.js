@@ -1999,12 +1999,16 @@ class StreamManager {
       const detection = await this.detectStreamFormat(streamUrl);
       logger.stream('Detected stream format', { url: streamUrl, format: detection });
 
+      // Special handling for mjh.nz streams - force FFmpeg processing for redirect resolution
+      const isMJHStream = streamUrl.includes('mjh.nz') || streamUrl.includes('i.mjh.nz');
+      
       // For HLS/DASH streams, we can redirect directly or proxy based on CORS
-      if (detection.type === 'hls' || detection.type === 'dash') {
+      // EXCEPTION: mjh.nz streams need FFmpeg processing for redirect resolution
+      if ((detection.type === 'hls' || detection.type === 'dash') && !isMJHStream) {
         return await this.proxyWebCompatibleStreamWithChannel(streamUrl, detection.type, channel, req, res);
       }
 
-      // For other stream types, use FFmpeg transcoding to web-compatible format
+      // For other stream types, and mjh.nz streams, use FFmpeg transcoding
       return await this.proxyTranscodedStreamWithChannel(streamUrl, detection.type, channel, req, res);
 
     } catch (error) {
@@ -3783,12 +3787,16 @@ class StreamManager {
       const detection = await this.detectStreamFormat(streamUrl);
       logger.stream('Detected stream format', { url: streamUrl, format: detection });
 
+      // Special handling for mjh.nz streams - force FFmpeg processing for redirect resolution
+      const isMJHStream = streamUrl.includes('mjh.nz') || streamUrl.includes('i.mjh.nz');
+      
       // For HLS/DASH streams, we can redirect directly or proxy based on CORS
-      if (detection.type === 'hls' || detection.type === 'dash') {
+      // EXCEPTION: mjh.nz streams need FFmpeg processing for redirect resolution
+      if ((detection.type === 'hls' || detection.type === 'dash') && !isMJHStream) {
         return await this.proxyWebCompatibleStream(streamUrl, detection.type, req, res);
       }
 
-      // For other stream types, use FFmpeg transcoding to web-compatible format
+      // For other stream types, and mjh.nz streams, use FFmpeg transcoding
       return await this.proxyTranscodedStream(streamUrl, detection.type, req, res);
 
     } catch (error) {

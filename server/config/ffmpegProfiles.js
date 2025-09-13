@@ -109,117 +109,86 @@ module.exports = {
     ]
   },
 
-  // Optimized M3U8/HLS Profile - Fixes buffering and mjh.nz issues
+  // Optimized M3U8/HLS Profile - Conservative approach based on working config
   m3u8Optimized: {
     name: 'M3U8 Optimized',
-    description: 'Optimized for m3u8 streams including mjh.nz with reduced buffering',
+    description: 'Conservative optimization for m3u8 streams with larger buffers',
     args: [
       '-hide_banner',
       '-loglevel', 'error',
       
-      // HLS-specific optimizations
+      // Standard HLS support
       '-allowed_extensions', 'ALL',
       '-protocol_whitelist', 'file,http,https,tcp,tls,pipe,crypto',
-      '-user_agent', 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+      '-user_agent', 'VLC/3.0.20 LibVLC/3.0.20',
       
-      // Optimized HLS parameters for live streams
-      '-live_start_index', '-3',          // Start from 3 segments back for buffer
-      '-seg_max_retry', '10',             // Retry segment downloads
-      '-seg_timeout', '10000000',         // 10 second segment timeout
-      '-http_persistent', '1',            // Keep connections alive for segments
-      '-http_multiple', '1',              // Allow multiple connections
-      
-      // Reduced analysis for faster startup
-      '-analyzeduration', '3000000',      // 3 seconds (reduced from 20)
-      '-probesize', '5000000',            // 5MB probe (reduced from 20MB)
-      
-      // Network resilience
+      // Standard network resilience (based on working config)
       '-reconnect', '1',
       '-reconnect_at_eof', '1',
       '-reconnect_streamed', '1',
-      '-reconnect_delay_max', '3',
-      '-timeout', '15000000',             // 15 second timeout
+      '-reconnect_delay_max', '2',
       
-      // Buffering optimization - larger buffers to prevent rebuffering
-      '-rtbufsize', '10M',                // 10MB read buffer (increased)
-      '-buffer_size', '10485760',         // 10MB internal buffer
-      '-max_muxing_queue_size', '4096',
+      // Larger buffer for stability (key improvement)
+      '-rtbufsize', '5M',                 // 5MB read buffer (increased from default)
       
       '-i', '[URL]',
       
-      // Copy streams without re-encoding
+      // Standard stream copying
       '-c:v', 'copy',
       '-c:a', 'copy',
-      '-map', '0:v:0?',                   // Optional video mapping
-      '-map', '0:a:0?',                   // Optional audio mapping
-      
-      // Bitstream filtering
       '-bsf:v', 'h264_mp4toannexb',
       
-      // MPEG-TS output optimizations
+      // Standard MPEG-TS output (based on working config)
       '-f', 'mpegts',
       '-mpegts_copyts', '1',
       '-avoid_negative_ts', 'make_zero',
-      '-fflags', '+genpts+igndts',
-      '-flags', 'low_delay',
-      '-max_delay', '1000000',            // 1 second max delay
-      '-flush_packets', '1',
+      '-fflags', '+genpts+igndts+discardcorrupt',
+      '-copyts',
       '-muxdelay', '0',
       '-muxpreload', '0',
+      '-flush_packets', '1',
+      '-max_delay', '0',
+      '-max_muxing_queue_size', '9999',
       
       'pipe:1'
     ]
   },
 
-  // HTTP Stream Optimized - Reduces buffering for direct HTTP streams
+  // HTTP Stream Optimized - Conservative with larger buffers
   httpStreamOptimized: {
     name: 'HTTP Stream Optimized',
-    description: 'Optimized for direct HTTP streams with larger buffers',
+    description: 'Conservative optimization for HTTP streams with larger buffers',
     args: [
       '-hide_banner',
       '-loglevel', 'error',
       
-      // HTTP-specific optimizations
-      '-user_agent', 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
-      '-headers', 'Accept: */*\\r\\nConnection: keep-alive\\r\\n',
-      '-multiple_requests', '1',
-      '-seekable', '0',
-      
-      // Network resilience
+      // Standard network resilience
       '-reconnect', '1',
       '-reconnect_at_eof', '1',
       '-reconnect_streamed', '1',
-      '-reconnect_delay_max', '5',
-      '-timeout', '20000000',             // 20 second timeout
+      '-reconnect_delay_max', '2',
       
-      // Large buffers to prevent frequent rebuffering
-      '-rtbufsize', '20M',                // 20MB read buffer (significantly increased)
-      '-buffer_size', '20971520',         // 20MB internal buffer
-      '-max_muxing_queue_size', '8192',   // Large queue size
-      
-      // Faster analysis for quicker startup
-      '-analyzeduration', '2000000',      // 2 seconds
-      '-probesize', '5000000',            // 5MB probe
+      // Larger buffer for HTTP streams (key improvement)
+      '-rtbufsize', '10M',                // 10MB read buffer (increased)
       
       '-i', '[URL]',
       
-      // Copy streams
+      // Standard stream copying
       '-c:v', 'copy',
       '-c:a', 'copy',
-      '-map', '0:v:0?',
-      '-map', '0:a:0?',
-      
-      // Bitstream filtering if needed
       '-bsf:v', 'h264_mp4toannexb',
       
-      // MPEG-TS output
+      // Standard MPEG-TS output (based on working config)
       '-f', 'mpegts',
       '-mpegts_copyts', '1',
       '-avoid_negative_ts', 'make_zero',
-      '-fflags', '+genpts+igndts',
-      '-flags', 'low_delay',
-      '-max_delay', '500000',             // 0.5 second max delay
+      '-fflags', '+genpts+igndts+discardcorrupt',
+      '-copyts',
+      '-muxdelay', '0',
+      '-muxpreload', '0',
       '-flush_packets', '1',
+      '-max_delay', '0',
+      '-max_muxing_queue_size', '9999',
       
       'pipe:1'
     ]
@@ -302,7 +271,6 @@ module.exports = {
       
       // INPUT BUFFERING FOR UPSTREAM INSTABILITY  
       '-rtbufsize', '2M',                // 2MB read buffer
-      '-buffer_size', '2097152',         // 2MB internal buffer
       
       // DECODER ERROR RECOVERY
       '-ec', '2',                        // Error concealment: favor speed over accuracy
@@ -367,7 +335,6 @@ module.exports = {
       
       // LARGE BUFFERS FOR UPSTREAM INSTABILITY
       '-rtbufsize', '5M',                // 5MB read buffer
-      '-buffer_size', '5242880',         // 5MB internal buffer
       
       // MAXIMUM ERROR CONCEALMENT
       '-ec', '3',                        // Maximum error concealment
