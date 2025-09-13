@@ -49,9 +49,9 @@ services:
         max-size: "10m"
         max-file: "3"
     network_mode: "host"
-    #ports:
-      #- "3000:3000"
-      #- "1900:1900/udp"
+    ports:
+      - "3000:3000"
+      - "1900:1900/udp"
     volumes:
       # Use named volume for data persistence (Portainer compatible)
       - plextv_data:/data
@@ -63,7 +63,7 @@ services:
       - NODE_ENV=production
       
       # Network configuration - customize these for your deployment
-      - HOST_IP=0.0.0.0                    # Bind address (0.0.0.0 for all interfaces)
+      - HOST_IP=0.0.0.0                     # Bind address (0.0.0.0 for all interfaces)
       - HTTP_PORT=3000                     # Main HTTP server port
       - STREAM_PORT=3000                   # Streaming port (usually same as HTTP_PORT)
       - DISCOVERY_PORT=1900                # SSDP discovery port

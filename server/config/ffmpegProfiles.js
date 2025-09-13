@@ -17,10 +17,13 @@ module.exports = {
   // High Quality Copy - No re-encoding, preserves original quality
   highQualityCopy: {
     name: 'High Quality Copy',
-    description: 'Direct copy of video and audio, no quality loss',
+    description: 'Direct copy of video and audio, no quality loss, with AES-128 encryption support',
     args: [
       '-hide_banner',
       '-loglevel', 'error',
+      '-allowed_extensions', 'ALL',
+      '-protocol_whitelist', 'file,http,https,tcp,tls,pipe,crypto',
+      '-user_agent', 'VLC/3.0.20 LibVLC/3.0.20',
       '-reconnect', '1',
       '-reconnect_at_eof', '1',
       '-reconnect_streamed', '1',
@@ -79,11 +82,13 @@ module.exports = {
   // HLS High Quality - For HLS streams, preserves quality
   hlsHighQuality: {
     name: 'HLS High Quality',
-    description: 'Optimized for HLS streams with quality preservation',
+    description: 'Optimized for HLS streams with quality preservation and AES-128 encryption support',
     args: [
       '-hide_banner',
       '-loglevel', 'error',
       '-allowed_extensions', 'ALL',
+      '-protocol_whitelist', 'file,http,https,tcp,tls,pipe,crypto',
+      '-user_agent', 'VLC/3.0.20 LibVLC/3.0.20',
       '-max_reload', '1000',
       '-m3u8_hold_counters', '10',
       '-live_start_index', '-1',
@@ -100,6 +105,91 @@ module.exports = {
       '-avoid_negative_ts', 'disabled',
       '-max_delay', '5000000',
       '-flush_packets', '0',
+      'pipe:1'
+    ]
+  },
+
+  // Optimized M3U8/HLS Profile - Conservative approach based on working config
+  m3u8Optimized: {
+    name: 'M3U8 Optimized',
+    description: 'Conservative optimization for m3u8 streams with larger buffers',
+    args: [
+      '-hide_banner',
+      '-loglevel', 'error',
+      
+      // Standard HLS support
+      '-allowed_extensions', 'ALL',
+      '-protocol_whitelist', 'file,http,https,tcp,tls,pipe,crypto',
+      '-user_agent', 'VLC/3.0.20 LibVLC/3.0.20',
+      
+      // Standard network resilience (based on working config)
+      '-reconnect', '1',
+      '-reconnect_at_eof', '1',
+      '-reconnect_streamed', '1',
+      '-reconnect_delay_max', '2',
+      
+      // Larger buffer for stability (key improvement)
+      '-rtbufsize', '5M',                 // 5MB read buffer (increased from default)
+      
+      '-i', '[URL]',
+      
+      // Standard stream copying
+      '-c:v', 'copy',
+      '-c:a', 'copy',
+      '-bsf:v', 'h264_mp4toannexb',
+      
+      // Standard MPEG-TS output (based on working config)
+      '-f', 'mpegts',
+      '-mpegts_copyts', '1',
+      '-avoid_negative_ts', 'make_zero',
+      '-fflags', '+genpts+igndts+discardcorrupt',
+      '-copyts',
+      '-muxdelay', '0',
+      '-muxpreload', '0',
+      '-flush_packets', '1',
+      '-max_delay', '0',
+      '-max_muxing_queue_size', '9999',
+      
+      'pipe:1'
+    ]
+  },
+
+  // HTTP Stream Optimized - Conservative with larger buffers
+  httpStreamOptimized: {
+    name: 'HTTP Stream Optimized',
+    description: 'Conservative optimization for HTTP streams with larger buffers',
+    args: [
+      '-hide_banner',
+      '-loglevel', 'error',
+      
+      // Standard network resilience
+      '-reconnect', '1',
+      '-reconnect_at_eof', '1',
+      '-reconnect_streamed', '1',
+      '-reconnect_delay_max', '2',
+      
+      // Larger buffer for HTTP streams (key improvement)
+      '-rtbufsize', '10M',                // 10MB read buffer (increased)
+      
+      '-i', '[URL]',
+      
+      // Standard stream copying
+      '-c:v', 'copy',
+      '-c:a', 'copy',
+      '-bsf:v', 'h264_mp4toannexb',
+      
+      // Standard MPEG-TS output (based on working config)
+      '-f', 'mpegts',
+      '-mpegts_copyts', '1',
+      '-avoid_negative_ts', 'make_zero',
+      '-fflags', '+genpts+igndts+discardcorrupt',
+      '-copyts',
+      '-muxdelay', '0',
+      '-muxpreload', '0',
+      '-flush_packets', '1',
+      '-max_delay', '0',
+      '-max_muxing_queue_size', '9999',
+      
       'pipe:1'
     ]
   },
@@ -181,7 +271,6 @@ module.exports = {
       
       // INPUT BUFFERING FOR UPSTREAM INSTABILITY  
       '-rtbufsize', '2M',                // 2MB read buffer
-      '-buffer_size', '2097152',         // 2MB internal buffer
       
       // DECODER ERROR RECOVERY
       '-ec', '2',                        // Error concealment: favor speed over accuracy
@@ -246,7 +335,6 @@ module.exports = {
       
       // LARGE BUFFERS FOR UPSTREAM INSTABILITY
       '-rtbufsize', '5M',                // 5MB read buffer
-      '-buffer_size', '5242880',         // 5MB internal buffer
       
       // MAXIMUM ERROR CONCEALMENT
       '-ec', '3',                        // Maximum error concealment
@@ -285,7 +373,9 @@ module.exports = {
 // Function to select best profile based on client, stream, and resilience requirements
 module.exports.selectProfile = function(userAgent, streamUrl, streamType, resilienceLevel = 'standard') {
   const isAndroidTV = userAgent && userAgent.toLowerCase().includes('android');
-  const isHLS = streamUrl && streamUrl.includes('.m3u8');
+  const isM3U8 = streamUrl && streamUrl.includes('.m3u8');
+  const isMJH = streamUrl && (streamUrl.includes('mjh.nz') || streamUrl.includes('i.mjh.nz'));
+  const isHTTPStream = streamType === 'http' && !isM3U8;
   
   // Override profile selection based on resilience requirements
   if (resilienceLevel === 'maximum' || resilienceLevel === 'corruption_tolerant') {
@@ -296,12 +386,18 @@ module.exports.selectProfile = function(userAgent, streamUrl, streamType, resili
     return module.exports.streamContinuity;
   }
   
-  if (isAndroidTV) {
-    return module.exports.androidTVOptimized;
+  // Use optimized M3U8 profile for mjh.nz and m3u8 streams
+  if (isMJH || isM3U8) {
+    return module.exports.m3u8Optimized;
   }
   
-  if (isHLS) {
-    return module.exports.hlsHighQuality;
+  // Use HTTP optimized profile for direct HTTP streams
+  if (isHTTPStream) {
+    return module.exports.httpStreamOptimized;
+  }
+  
+  if (isAndroidTV) {
+    return module.exports.androidTVOptimized;
   }
   
   // Default to high quality copy
@@ -315,8 +411,27 @@ module.exports.getResilienceProfile = function(level) {
     'enhanced': module.exports.androidTVOptimized, 
     'maximum': module.exports.h264CorruptionResilient,
     'corruption_tolerant': module.exports.h264CorruptionResilient,
-    'continuity_priority': module.exports.streamContinuity
+    'continuity_priority': module.exports.streamContinuity,
+    'm3u8_optimized': module.exports.m3u8Optimized,
+    'http_optimized': module.exports.httpStreamOptimized
   };
   
   return profiles[level] || module.exports.highQualityCopy;
+};
+
+// Get profile for specific stream types
+module.exports.getStreamTypeProfile = function(streamUrl, streamType) {
+  const isM3U8 = streamUrl && streamUrl.includes('.m3u8');
+  const isMJH = streamUrl && (streamUrl.includes('mjh.nz') || streamUrl.includes('i.mjh.nz'));
+  const isHTTPStream = streamType === 'http' && !isM3U8;
+  
+  if (isMJH || isM3U8) {
+    return module.exports.m3u8Optimized;
+  }
+  
+  if (isHTTPStream) {
+    return module.exports.httpStreamOptimized;
+  }
+  
+  return module.exports.highQualityCopy;
 };
