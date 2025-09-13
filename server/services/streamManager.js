@@ -2151,38 +2151,60 @@ class StreamManager {
             redirected: finalStreamUrl !== streamUrl
           });
         }
-        // For  and mjh.nz streams, follow redirects properly
-        else if (streamUrl.includes('mjh.nz') || streamUrl.includes('')) {
-          // Use a HEAD request without following redirects to get the Location header
-          const response = await axios.head(streamUrl, {
-            maxRedirects: 0, // Don't follow redirects automatically
-            timeout: 10000,
-            validateStatus: function (status) {
-              return status >= 200 && status < 400; // Accept redirects as success
-            },
-            headers: {
-              'User-Agent': 'VLC/3.0.0 LibVLC/3.0.0',
-              'Accept': '*/*'
-            }
-          });
-          
-          // Get the redirect URL from the location header
-          if (response.status === 302 && response.headers.location) {
-            finalStreamUrl = response.headers.location;
+        // For mjh.nz streams, follow redirects properly with improved handling
+        else if (streamUrl.includes('mjh.nz') || streamUrl.includes('i.mjh.nz')) {
+          try {
+            // Use HEAD request to get redirect without downloading content
+            const response = await axios.head(streamUrl, {
+              maxRedirects: 0, // Handle redirects manually
+              timeout: 15000, // Increased timeout for slow responses
+              validateStatus: function (status) {
+                return status >= 200 && status < 400; // Accept all success and redirect codes
+              },
+              headers: {
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+                'Accept': '*/*',
+                'Accept-Encoding': 'gzip, deflate',
+                'Connection': 'keep-alive'
+              }
+            });
             
-            logger.info('/mjh.nz redirect resolved', {
+            // Handle different redirect status codes
+            if ([301, 302, 303, 307, 308].includes(response.status) && response.headers.location) {
+              finalStreamUrl = response.headers.location;
+              
+              logger.info('mjh.nz redirect resolved successfully', {
+                channelId: channel.id,
+                originalUrl: streamUrl.substring(0, 50) + '...',
+                finalUrl: finalStreamUrl.substring(0, 50) + '...',
+                status: response.status,
+                redirectType: response.status === 302 ? 'temporary' : 'permanent',
+                isMjhStream: true
+              });
+            } else if (response.status === 200) {
+              // Direct access without redirect - use original URL
+              finalStreamUrl = streamUrl;
+              logger.info('mjh.nz direct access (no redirect needed)', {
+                channelId: channel.id,
+                url: streamUrl.substring(0, 50) + '...',
+                status: response.status
+              });
+            } else {
+              logger.warn('mjh.nz unexpected response status', {
+                channelId: channel.id,
+                status: response.status,
+                url: streamUrl.substring(0, 50) + '...'
+              });
+            }
+          } catch (mjhError) {
+            logger.warn('mjh.nz redirect failed, using original URL', {
               channelId: channel.id,
-              originalUrl: streamUrl,
-              finalUrl: finalStreamUrl,
-              status: response.status,
-              redirected: true
+              error: mjhError.message,
+              code: mjhError.code,
+              url: streamUrl.substring(0, 50) + '...'
             });
-          } else {
-            logger.warn('/mjh.nz redirect not found', {
-              channelId: channel.id,
-              status: response.status,
-              headers: response.headers
-            });
+            // Use original URL as fallback
+            finalStreamUrl = streamUrl;
           }
         }
         // Handle beacon tracking URLs (generic detection) for Plex
@@ -2452,66 +2474,53 @@ class StreamManager {
       } else {
         // Use quality-preserving profiles for streams that don't need transcoding
         if (isAndroidTV) {
-          // Android TV specific - use optimized profile for quality and stability
-          const profile = ffmpegProfiles.selectProfile(userAgent, finalStreamUrl, 'mpegts');
+          // Android TV specific - use stream-type-aware optimized profile
+          const streamType = this.detectStreamType(finalStreamUrl);
+          const profile = ffmpegProfiles.selectProfile(userAgent, finalStreamUrl, streamType?.type);
           const profileArgs = profile.args.join(' ');
           ffmpegCommand = settings?.plexlive?.transcoding?.androidtv?.ffmpegArgs ||
                          config.plexlive?.transcoding?.androidtv?.ffmpegArgs ||
                          profileArgs;
           
-          logger.info('Using quality-preserving profile for Android TV', { 
+          logger.info('Using stream-type-optimized profile for Android TV', { 
             clientIP: req.ip,
             profile: profile.name,
-            description: profile.description
+            description: profile.description,
+            streamType: streamType?.type,
+            url: finalStreamUrl.substring(0, 50) + '...'
           });
         } else {
-          // Standard high quality copy profile for best quality preservation
-          const profile = ffmpegProfiles.highQualityCopy;
+          // Use stream-type-specific optimized profiles
+          const streamType = this.detectStreamType(finalStreamUrl);
+          const profile = ffmpegProfiles.getStreamTypeProfile(finalStreamUrl, streamType?.type);
           const profileArgs = profile.args.join(' ');
           ffmpegCommand = settings?.plexlive?.transcoding?.mpegts?.ffmpegArgs || 
                          config.plexlive?.transcoding?.mpegts?.ffmpegArgs ||
                          profileArgs;
+          
+          logger.info('Using stream-type-optimized profile', { 
+            clientIP: req.ip,
+            profile: profile.name,
+            description: profile.description,
+            streamType: streamType?.type,
+            url: finalStreamUrl.substring(0, 50) + '...'
+          });
         }
       }
       
       // Replace [URL] placeholder with actual stream URL
       ffmpegCommand = ffmpegCommand.replace('[URL]', finalStreamUrl);
       
-      // Add optimized HLS-specific arguments for IPTV streams in Plex streaming
-      if (finalStreamUrl.includes('.m3u8')) {
-        // Enhanced HLS arguments specifically optimized for IPTV streams in Plex
-        let hlsArgs = [
-          '-allowed_extensions', 'ALL',
-          '-protocol_whitelist', 'file,http,https,tcp,tls,pipe,crypto',
-          '-user_agent', 'VLC/3.0.20 LibVLC/3.0.20',
-          '-headers', 'Accept: */*\\r\\nConnection: keep-alive\\r\\n',
-          '-live_start_index', '0',
-          '-http_persistent', '0',
-          '-http_seekable', '0',
-          '-multiple_requests', '1',
-          '-reconnect', '1',
-          '-reconnect_at_eof', '1',
-          '-reconnect_streamed', '1',
-          '-reconnect_delay_max', '5',
-          '-timeout', '45000000' // 45 second timeout for slow streams
-        ].join(' ');
-        
-        // SCALABLE CONNECTION LIMITS: Use stream parameter for IPTV compatibility 
-        const hasConnectionLimits = stream?.connection_limits === 1 || stream?.connection_limits === true;
-        if (finalStreamUrl !== streamUrl || hasConnectionLimits) {
-          hlsArgs += ' -max_reload 3 -http_multiple 1 -analyzeduration 5000000 -probesize 5000000';
-          
-          logger.info('Added enhanced HLS compatibility options for IPTV Plex stream', {
-            channelId: channel.id,
-            streamName: stream?.name,
-            connectionLimits: hasConnectionLimits,
-            originalUrl: streamUrl.substring(0, 50) + '...',
-            finalUrl: finalStreamUrl.substring(0, 50) + '...'
-          });
-        }
-        
-        // Insert HLS args BEFORE the input URL for proper protocol handling
-        ffmpegCommand = ffmpegCommand.replace('-i ' + finalStreamUrl, hlsArgs + ' -i ' + finalStreamUrl);
+      // Log special handling for connection limits
+      const hasConnectionLimits = stream?.connection_limits === 1 || stream?.connection_limits === true;
+      if (hasConnectionLimits && finalStreamUrl.includes('.m3u8')) {
+        logger.info('Using optimized M3U8 profile for connection-limited stream', {
+          channelId: channel.id,
+          streamName: stream?.name,
+          connectionLimits: hasConnectionLimits,
+          originalUrl: streamUrl.substring(0, 50) + '...',
+          finalUrl: finalStreamUrl.substring(0, 50) + '...'
+        });
       }
       
       // Parse command line into arguments array, but handle special characters in URLs

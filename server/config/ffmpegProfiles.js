@@ -109,6 +109,122 @@ module.exports = {
     ]
   },
 
+  // Optimized M3U8/HLS Profile - Fixes buffering and mjh.nz issues
+  m3u8Optimized: {
+    name: 'M3U8 Optimized',
+    description: 'Optimized for m3u8 streams including mjh.nz with reduced buffering',
+    args: [
+      '-hide_banner',
+      '-loglevel', 'error',
+      
+      // HLS-specific optimizations
+      '-allowed_extensions', 'ALL',
+      '-protocol_whitelist', 'file,http,https,tcp,tls,pipe,crypto',
+      '-user_agent', 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+      
+      // Optimized HLS parameters for live streams
+      '-live_start_index', '-3',          // Start from 3 segments back for buffer
+      '-seg_max_retry', '10',             // Retry segment downloads
+      '-seg_timeout', '10000000',         // 10 second segment timeout
+      '-http_persistent', '1',            // Keep connections alive for segments
+      '-http_multiple', '1',              // Allow multiple connections
+      
+      // Reduced analysis for faster startup
+      '-analyzeduration', '3000000',      // 3 seconds (reduced from 20)
+      '-probesize', '5000000',            // 5MB probe (reduced from 20MB)
+      
+      // Network resilience
+      '-reconnect', '1',
+      '-reconnect_at_eof', '1',
+      '-reconnect_streamed', '1',
+      '-reconnect_delay_max', '3',
+      '-timeout', '15000000',             // 15 second timeout
+      
+      // Buffering optimization - larger buffers to prevent rebuffering
+      '-rtbufsize', '10M',                // 10MB read buffer (increased)
+      '-buffer_size', '10485760',         // 10MB internal buffer
+      '-max_muxing_queue_size', '4096',
+      
+      '-i', '[URL]',
+      
+      // Copy streams without re-encoding
+      '-c:v', 'copy',
+      '-c:a', 'copy',
+      '-map', '0:v:0?',                   // Optional video mapping
+      '-map', '0:a:0?',                   // Optional audio mapping
+      
+      // Bitstream filtering
+      '-bsf:v', 'h264_mp4toannexb',
+      
+      // MPEG-TS output optimizations
+      '-f', 'mpegts',
+      '-mpegts_copyts', '1',
+      '-avoid_negative_ts', 'make_zero',
+      '-fflags', '+genpts+igndts',
+      '-flags', 'low_delay',
+      '-max_delay', '1000000',            // 1 second max delay
+      '-flush_packets', '1',
+      '-muxdelay', '0',
+      '-muxpreload', '0',
+      
+      'pipe:1'
+    ]
+  },
+
+  // HTTP Stream Optimized - Reduces buffering for direct HTTP streams
+  httpStreamOptimized: {
+    name: 'HTTP Stream Optimized',
+    description: 'Optimized for direct HTTP streams with larger buffers',
+    args: [
+      '-hide_banner',
+      '-loglevel', 'error',
+      
+      // HTTP-specific optimizations
+      '-user_agent', 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+      '-headers', 'Accept: */*\\r\\nConnection: keep-alive\\r\\n',
+      '-multiple_requests', '1',
+      '-seekable', '0',
+      
+      // Network resilience
+      '-reconnect', '1',
+      '-reconnect_at_eof', '1',
+      '-reconnect_streamed', '1',
+      '-reconnect_delay_max', '5',
+      '-timeout', '20000000',             // 20 second timeout
+      
+      // Large buffers to prevent frequent rebuffering
+      '-rtbufsize', '20M',                // 20MB read buffer (significantly increased)
+      '-buffer_size', '20971520',         // 20MB internal buffer
+      '-max_muxing_queue_size', '8192',   // Large queue size
+      
+      // Faster analysis for quicker startup
+      '-analyzeduration', '2000000',      // 2 seconds
+      '-probesize', '5000000',            // 5MB probe
+      
+      '-i', '[URL]',
+      
+      // Copy streams
+      '-c:v', 'copy',
+      '-c:a', 'copy',
+      '-map', '0:v:0?',
+      '-map', '0:a:0?',
+      
+      // Bitstream filtering if needed
+      '-bsf:v', 'h264_mp4toannexb',
+      
+      // MPEG-TS output
+      '-f', 'mpegts',
+      '-mpegts_copyts', '1',
+      '-avoid_negative_ts', 'make_zero',
+      '-fflags', '+genpts+igndts',
+      '-flags', 'low_delay',
+      '-max_delay', '500000',             // 0.5 second max delay
+      '-flush_packets', '1',
+      
+      'pipe:1'
+    ]
+  },
+
   // Transcoding High Quality - When transcoding is needed
   transcodingHighQuality: {
     name: 'Transcoding High Quality',
@@ -290,7 +406,9 @@ module.exports = {
 // Function to select best profile based on client, stream, and resilience requirements
 module.exports.selectProfile = function(userAgent, streamUrl, streamType, resilienceLevel = 'standard') {
   const isAndroidTV = userAgent && userAgent.toLowerCase().includes('android');
-  const isHLS = streamUrl && streamUrl.includes('.m3u8');
+  const isM3U8 = streamUrl && streamUrl.includes('.m3u8');
+  const isMJH = streamUrl && (streamUrl.includes('mjh.nz') || streamUrl.includes('i.mjh.nz'));
+  const isHTTPStream = streamType === 'http' && !isM3U8;
   
   // Override profile selection based on resilience requirements
   if (resilienceLevel === 'maximum' || resilienceLevel === 'corruption_tolerant') {
@@ -301,12 +419,18 @@ module.exports.selectProfile = function(userAgent, streamUrl, streamType, resili
     return module.exports.streamContinuity;
   }
   
-  if (isAndroidTV) {
-    return module.exports.androidTVOptimized;
+  // Use optimized M3U8 profile for mjh.nz and m3u8 streams
+  if (isMJH || isM3U8) {
+    return module.exports.m3u8Optimized;
   }
   
-  if (isHLS) {
-    return module.exports.hlsHighQuality;
+  // Use HTTP optimized profile for direct HTTP streams
+  if (isHTTPStream) {
+    return module.exports.httpStreamOptimized;
+  }
+  
+  if (isAndroidTV) {
+    return module.exports.androidTVOptimized;
   }
   
   // Default to high quality copy
@@ -320,8 +444,27 @@ module.exports.getResilienceProfile = function(level) {
     'enhanced': module.exports.androidTVOptimized, 
     'maximum': module.exports.h264CorruptionResilient,
     'corruption_tolerant': module.exports.h264CorruptionResilient,
-    'continuity_priority': module.exports.streamContinuity
+    'continuity_priority': module.exports.streamContinuity,
+    'm3u8_optimized': module.exports.m3u8Optimized,
+    'http_optimized': module.exports.httpStreamOptimized
   };
   
   return profiles[level] || module.exports.highQualityCopy;
+};
+
+// Get profile for specific stream types
+module.exports.getStreamTypeProfile = function(streamUrl, streamType) {
+  const isM3U8 = streamUrl && streamUrl.includes('.m3u8');
+  const isMJH = streamUrl && (streamUrl.includes('mjh.nz') || streamUrl.includes('i.mjh.nz'));
+  const isHTTPStream = streamType === 'http' && !isM3U8;
+  
+  if (isMJH || isM3U8) {
+    return module.exports.m3u8Optimized;
+  }
+  
+  if (isHTTPStream) {
+    return module.exports.httpStreamOptimized;
+  }
+  
+  return module.exports.highQualityCopy;
 };
