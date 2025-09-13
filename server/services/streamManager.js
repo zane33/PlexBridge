@@ -1999,16 +1999,12 @@ class StreamManager {
       const detection = await this.detectStreamFormat(streamUrl);
       logger.stream('Detected stream format', { url: streamUrl, format: detection });
 
-      // Special handling for mjh.nz streams - force FFmpeg processing for redirect resolution
-      const isMJHStream = streamUrl.includes('mjh.nz') || streamUrl.includes('i.mjh.nz');
-      
       // For HLS/DASH streams, we can redirect directly or proxy based on CORS
-      // EXCEPTION: mjh.nz streams need FFmpeg processing for redirect resolution
-      if ((detection.type === 'hls' || detection.type === 'dash') && !isMJHStream) {
+      if (detection.type === 'hls' || detection.type === 'dash') {
         return await this.proxyWebCompatibleStreamWithChannel(streamUrl, detection.type, channel, req, res);
       }
 
-      // For other stream types, and mjh.nz streams, use FFmpeg transcoding
+      // For other stream types, use FFmpeg transcoding to web-compatible format
       return await this.proxyTranscodedStreamWithChannel(streamUrl, detection.type, channel, req, res);
 
     } catch (error) {
@@ -2479,8 +2475,8 @@ class StreamManager {
         // Use quality-preserving profiles for streams that don't need transcoding
         if (isAndroidTV) {
           // Android TV specific - use stream-type-aware optimized profile
-          const streamType = this.detectStreamType(finalStreamUrl);
-          const profile = ffmpegProfiles.selectProfile(userAgent, finalStreamUrl, streamType?.type);
+          const streamFormat = await this.detectStreamFormat(finalStreamUrl);
+          const profile = ffmpegProfiles.selectProfile(userAgent, finalStreamUrl, streamFormat?.type);
           const profileArgs = profile.args.join(' ');
           ffmpegCommand = settings?.plexlive?.transcoding?.androidtv?.ffmpegArgs ||
                          config.plexlive?.transcoding?.androidtv?.ffmpegArgs ||
@@ -2490,13 +2486,13 @@ class StreamManager {
             clientIP: req.ip,
             profile: profile.name,
             description: profile.description,
-            streamType: streamType?.type,
+            streamType: streamFormat?.type,
             url: finalStreamUrl.substring(0, 50) + '...'
           });
         } else {
           // Use stream-type-specific optimized profiles
-          const streamType = this.detectStreamType(finalStreamUrl);
-          const profile = ffmpegProfiles.getStreamTypeProfile(finalStreamUrl, streamType?.type);
+          const streamFormat = await this.detectStreamFormat(finalStreamUrl);
+          const profile = ffmpegProfiles.getStreamTypeProfile(finalStreamUrl, streamFormat?.type);
           const profileArgs = profile.args.join(' ');
           ffmpegCommand = settings?.plexlive?.transcoding?.mpegts?.ffmpegArgs || 
                          config.plexlive?.transcoding?.mpegts?.ffmpegArgs ||
@@ -2506,7 +2502,7 @@ class StreamManager {
             clientIP: req.ip,
             profile: profile.name,
             description: profile.description,
-            streamType: streamType?.type,
+            streamType: streamFormat?.type,
             url: finalStreamUrl.substring(0, 50) + '...'
           });
         }
@@ -3787,16 +3783,12 @@ class StreamManager {
       const detection = await this.detectStreamFormat(streamUrl);
       logger.stream('Detected stream format', { url: streamUrl, format: detection });
 
-      // Special handling for mjh.nz streams - force FFmpeg processing for redirect resolution
-      const isMJHStream = streamUrl.includes('mjh.nz') || streamUrl.includes('i.mjh.nz');
-      
       // For HLS/DASH streams, we can redirect directly or proxy based on CORS
-      // EXCEPTION: mjh.nz streams need FFmpeg processing for redirect resolution
-      if ((detection.type === 'hls' || detection.type === 'dash') && !isMJHStream) {
+      if (detection.type === 'hls' || detection.type === 'dash') {
         return await this.proxyWebCompatibleStream(streamUrl, detection.type, req, res);
       }
 
-      // For other stream types, and mjh.nz streams, use FFmpeg transcoding
+      // For other stream types, use FFmpeg transcoding to web-compatible format
       return await this.proxyTranscodedStream(streamUrl, detection.type, req, res);
 
     } catch (error) {
@@ -3867,6 +3859,45 @@ class StreamManager {
       });
       
       let finalStreamUrl = streamUrl;
+      
+      // Handle mjh.nz redirects before HLS processing
+      if (streamUrl.includes('mjh.nz') || streamUrl.includes('i.mjh.nz')) {
+        try {
+          logger.info('Resolving mjh.nz redirect for web-compatible stream', {
+            originalUrl: streamUrl,
+            channelId: channel.id
+          });
+          
+          const response = await axios.head(streamUrl, {
+            maxRedirects: 0,
+            timeout: 15000,
+            validateStatus: function (status) {
+              return status >= 200 && status < 400;
+            },
+            headers: {
+              'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+              'Accept': '*/*'
+            }
+          });
+          
+          if ([301, 302, 303, 307, 308].includes(response.status) && response.headers.location) {
+            finalStreamUrl = response.headers.location;
+            
+            logger.info('mjh.nz redirect resolved for web-compatible stream', {
+              channelId: channel.id,
+              originalUrl: streamUrl.substring(0, 50) + '...',
+              finalUrl: finalStreamUrl.substring(0, 50) + '...',
+              status: response.status
+            });
+          }
+        } catch (mjhError) {
+          logger.warn('mjh.nz redirect failed for web-compatible stream, using original URL', {
+            channelId: channel.id,
+            error: mjhError.message,
+            url: streamUrl.substring(0, 50) + '...'
+          });
+        }
+      }
       
       // For HLS streams, resolve to highest quality variant first
       if (streamType === 'hls') {
