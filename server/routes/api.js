@@ -39,7 +39,9 @@ const streamSchema = Joi.object({
   reliability_score: Joi.number().min(0).max(1).default(1.0),
   last_failure: Joi.date().allow(null).default(null),
   failure_count: Joi.number().integer().min(0).default(0),
-  monitoring_enabled: Joi.number().integer().min(0).max(1).default(0)
+  monitoring_enabled: Joi.number().integer().min(0).max(1).default(0),
+  // SCALABLE CONNECTION LIMITS: Replace hardcoded IP detection with flexible parameter
+  connection_limits: Joi.number().integer().min(0).max(1).default(0)
 });
 
 // Define genre options for each primary category
@@ -463,8 +465,8 @@ router.post('/streams', validate(streamSchema), async (req, res) => {
     // CRITICAL FIX: Include enhanced_encoding fields in INSERT to prevent data corruption
     await database.run(`
       INSERT INTO streams (id, channel_id, name, url, type, backup_urls, auth_username, auth_password, headers, protocol_options, enabled,
-                         enhanced_encoding, enhanced_encoding_profile, reliability_score, last_failure, failure_count, monitoring_enabled)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                         enhanced_encoding, enhanced_encoding_profile, reliability_score, last_failure, failure_count, monitoring_enabled, connection_limits)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `, [
       id,
       data.channel_id,
@@ -483,7 +485,9 @@ router.post('/streams', validate(streamSchema), async (req, res) => {
       data.reliability_score !== undefined ? data.reliability_score : 1.0,
       data.last_failure || null,
       data.failure_count !== undefined ? data.failure_count : 0,
-      data.monitoring_enabled !== undefined ? (data.monitoring_enabled ? 1 : 0) : 0
+      data.monitoring_enabled !== undefined ? (data.monitoring_enabled ? 1 : 0) : 0,
+      // SCALABLE CONNECTION LIMITS: Add connection_limits support
+      data.connection_limits !== undefined ? (data.connection_limits ? 1 : 0) : 0
     ]);
 
     const stream = await database.get('SELECT * FROM streams WHERE id = ?', [id]);
@@ -524,7 +528,7 @@ router.put('/streams/:id', validate(streamSchema), async (req, res) => {
       SET channel_id = ?, name = ?, url = ?, type = ?, backup_urls = ?, 
           auth_username = ?, auth_password = ?, headers = ?, protocol_options = ?, enabled = ?,
           enhanced_encoding = ?, enhanced_encoding_profile = ?, reliability_score = ?, 
-          last_failure = ?, failure_count = ?, monitoring_enabled = ?
+          last_failure = ?, failure_count = ?, monitoring_enabled = ?, connection_limits = ?
       WHERE id = ?
     `, [
       data.channel_id,
@@ -544,6 +548,8 @@ router.put('/streams/:id', validate(streamSchema), async (req, res) => {
       data.last_failure || null,
       data.failure_count !== undefined ? data.failure_count : 0,
       data.monitoring_enabled !== undefined ? (data.monitoring_enabled ? 1 : 0) : 0,
+      // SCALABLE CONNECTION LIMITS: Add connection_limits support
+      data.connection_limits !== undefined ? (data.connection_limits ? 1 : 0) : 0,
       req.params.id
     ]);
 

@@ -9,20 +9,26 @@ const settingsService = require('./settingsService');
 const streamSessionManager = require('./streamSessionManager');
 const streamResilienceService = require('./streamResilienceService');
 const ffmpegProfiles = require('../config/ffmpegProfiles');
+const progressiveStreamHandler = require('./progressiveStreamHandler');
+const advancedM3U8Resolver = require('./advancedM3U8Resolver');
 
-// Android TV Configuration Constants
+// Android TV Configuration Constants - Optimized for faster startup
 const ANDROID_TV_CONFIG = {
   RESET_INTERVAL: 1200, // 20 minutes in seconds
-  ANALYZE_DURATION: 5000000, // 5MB (reduced from 10MB for faster startup)
-  PROBE_SIZE: 5000000, // 5MB (reduced from 10MB for faster startup)
+  ANALYZE_DURATION: 2000000, // 2MB (reduced from 5MB for faster startup)
+  PROBE_SIZE: 2000000, // 2MB (reduced from 5MB for faster startup)
   SEGMENT_DURATION: 30, // 30 seconds
   BUFFER_SIZE: '256k',
   QUEUE_SIZE: 4096,
   MAX_RESTARTS: 3, // Maximum restarts per 5-minute window
   RESTART_WINDOW: 300000, // 5 minutes in milliseconds
-  RESTART_DELAY: 2000, // 2 seconds delay before restart (increased from 1 second)
+  RESTART_DELAY: 1000, // 1 second delay before restart (reduced for faster recovery)
   HEALTH_CHECK_INTERVAL: 10000, // Check stream health every 10 seconds
-  USER_AGENT_PATTERNS: ['android', 'shield', 'androidtv']
+  USER_AGENT_PATTERNS: ['android', 'shield', 'androidtv'],
+  // IPTV-specific optimizations for faster startup
+  IPTV_TIMEOUT: 10000, // 10 second timeout for IPTV connections
+  IPTV_PROBE_SIZE: 1000000, // 1MB probe size for IPTV streams
+  IPTV_ANALYZE_DURATION: 1000000 // 1MB analysis for IPTV streams
 };
 
 class StreamManager {
@@ -92,14 +98,22 @@ class StreamManager {
       'pipe:1'
     ];
 
-    // Add HLS-specific arguments if needed
+    // Add HLS-specific arguments if needed with IPTV optimizations
     if (streamUrl.includes('.m3u8')) {
       const hlsArgs = [
         '-allowed_extensions', 'ALL',
         '-protocol_whitelist', 'file,http,https,tcp,tls,pipe,crypto',
-        '-user_agent', 'PlexBridge/1.0',
+        '-user_agent', 'VLC/3.0.20 LibVLC/3.0.20',
+        '-headers', 'Accept: */*\\r\\nConnection: keep-alive\\r\\n',
         '-live_start_index', '0',
-        '-http_persistent', '1'
+        '-http_persistent', '0', // Disabled for better IPTV compatibility
+        '-http_seekable', '0',
+        '-multiple_requests', '1',
+        '-timeout', '25000000', // 25 second timeout (increased for slow IPTV)
+        '-reconnect', '1',
+        '-reconnect_at_eof', '1',
+        '-reconnect_streamed', '1',
+        '-reconnect_delay_max', '5'
       ];
       
       // Insert HLS args before the input URL
@@ -168,7 +182,10 @@ class StreamManager {
       // Check URL pattern first
       const urlLower = url.toLowerCase();
       
-      if (urlLower.includes('.m3u8') || urlLower.includes('/hls/')) {
+      // Enhanced M3U8/HLS detection for IPTV streams
+      if (urlLower.includes('.m3u8') || urlLower.includes('/hls/') || 
+          (urlLower.includes('live/') && urlLower.match(/\/\d+\.m3u8$/))) {
+        logger.debug('Detected HLS stream from URL pattern', { url: url.substring(0, 100) + '...' });
         return { type: 'hls', protocol: 'http' };
       }
       
@@ -345,16 +362,26 @@ class StreamManager {
     }
   }
 
-  async validateHLSStream(url, auth) {
+  async validateHLSStream(url, auth, userAgent = null) {
+    const connectionManager = require('../utils/connectionManager');
+    
     try {
-      const headers = { 'User-Agent': config.protocols.http.userAgent };
+      logger.stream('Validating HLS stream with VLC-compatible connection management', { 
+        url: url.substring(0, 100) + (url.length > 100 ? '...' : ''),
+        clientType: userAgent ? (connectionManager.isPlexClient(userAgent) ? 'Plex' : 'Standard') : 'Unknown'
+      });
+
+      // Prepare auth headers
+      const authHeaders = {};
       if (auth && auth.username) {
-        headers['Authorization'] = `Basic ${Buffer.from(`${auth.username}:${auth.password}`).toString('base64')}`;
+        authHeaders['Authorization'] = `Basic ${Buffer.from(`${auth.username}:${auth.password}`).toString('base64')}`;
       }
 
-      const response = await axios.get(url, {
-        timeout: config.protocols.http.timeout,
-        headers
+      // Use VLC-compatible connection manager with User-Agent context
+      const response = await connectionManager.makeVLCCompatibleRequest(axios, url, {
+        headers: authHeaders,
+        maxContentLength: 1024 * 1024, // 1MB limit for M3U8 files
+        userAgent: userAgent
       });
 
       const parser = new m3u8Parser.Parser();
@@ -990,7 +1017,7 @@ class StreamManager {
         case 'hls':
         case 'dash':
         case 'http':
-          streamProcess = await this.createHTTPStreamProxy(url, auth, customHeaders);
+          streamProcess = await this.createHTTPStreamProxy(url, auth, customHeaders, streamData, req, res);
           break;
         case 'ts':
         case 'mpegts':
@@ -1014,6 +1041,12 @@ class StreamManager {
         default:
           res.status(400).json({ error: 'Unsupported stream type' });
           return;
+      }
+
+      // Handle progressive stream response (already sent by progressive handler)
+      if (streamProcess && streamProcess.isProgressive && streamProcess.handled) {
+        logger.info('Progressive stream handler completed response', { streamId, sessionId });
+        return;
       }
 
       if (!streamProcess) {
@@ -1288,18 +1321,69 @@ class StreamManager {
     }
   }
 
-  async createHTTPStreamProxy(url, auth, customHeaders) {
+  async createHTTPStreamProxy(url, auth, customHeaders, streamData = null, req = null, res = null) {
+    // ENHANCED IPTV SUPPORT: Use progressive handler for streams with connection limits
+    if (progressiveStreamHandler.shouldUseProgressiveHandler(url, streamData)) {
+      logger.info('Using progressive stream handler for IPTV stream with connection limits', {
+        url: url.substring(0, 100) + '...',
+        streamName: streamData?.name,
+        connectionLimits: streamData?.connection_limits
+      });
+      
+      // Progressive handler manages the entire response - return special marker
+      if (req && res) {
+        await progressiveStreamHandler.handleProgressiveStream(url, streamData, req, res);
+        return { isProgressive: true, handled: true };
+      } else {
+        logger.warn('Progressive handler requested but req/res not provided - falling back to standard method');
+      }
+    }
+
     // For HLS streams that redirect, we need to resolve the final URL first
     let finalUrl = url;
     
     try {
-      // Check if URL redirects
-      if (url.includes('mjh.nz') || url.includes('')) {
+      // Enhanced redirect resolution for IPTV M3U8 streams
+      if (url.includes('.m3u8')) {
+        logger.info('Resolving M3U8 stream URL redirects', { url: url.substring(0, 100) + '...' });
+        
+        const response = await axios.get(url, {
+          maxRedirects: 0, // Don't follow redirects automatically
+          timeout: 15000,
+          validateStatus: function (status) {
+            // Accept redirects and success responses
+            return (status >= 200 && status < 300) || (status >= 300 && status < 400);
+          },
+          headers: {
+            'User-Agent': 'VLC/3.0.20 LibVLC/3.0.20',
+            'Accept': '*/*',
+            'Connection': 'keep-alive'
+          }
+        });
+        
+        // Handle redirect responses
+        if (response.status >= 300 && response.status < 400 && response.headers.location) {
+          finalUrl = response.headers.location;
+          logger.info('M3U8 stream redirected', { 
+            original: url.substring(0, 50) + '...',
+            final: finalUrl.substring(0, 50) + '...',
+            status: response.status
+          });
+        } else if (response.status >= 200 && response.status < 300) {
+          // Direct M3U8 response, validate content
+          if (response.data && response.data.includes('#EXTM3U')) {
+            logger.info('M3U8 stream accessible directly', { url: url.substring(0, 50) + '...' });
+          } else {
+            logger.warn('M3U8 URL did not return valid playlist content', { url: url.substring(0, 50) + '...' });
+          }
+        }
+        
+      } else if (url.includes('mjh.nz') || url.includes('')) {
         const response = await axios.head(url, {
           maxRedirects: 5,
           timeout: 5000,
           headers: {
-            'User-Agent': config.protocols.http.userAgent
+            'User-Agent': 'VLC/3.0.20 LibVLC/3.0.20'
           }
         });
         
@@ -1310,7 +1394,7 @@ class StreamManager {
         }
       }
     } catch (error) {
-      logger.warn('Failed to resolve redirect, using original URL', { url, error: error.message });
+      logger.warn('Failed to resolve redirect, using original URL', { url: url.substring(0, 50) + '...', error: error.message });
     }
 
     // Get FFmpeg arguments from settings for proper transcoding
@@ -1347,20 +1431,39 @@ class StreamManager {
       // Replace [URL] placeholder with actual stream URL
       let processedCommand = ffmpegCommand.replace('[URL]', finalUrl);
       
-      // Add HLS-specific arguments if needed
+      // Add HLS-specific arguments for M3U8 streams (FIXED: Added critical missing parameters)
       if (finalUrl.includes('.m3u8')) {
-        let hlsArgs = settings?.plexlive?.transcoding?.mpegts?.hlsProtocolArgs || 
-                     config.plexlive?.transcoding?.mpegts?.hlsProtocolArgs ||
-                     '-allowed_extensions ALL -protocol_whitelist file,http,https,tcp,tls,pipe,crypto';
+        // HLS arguments with critical parameters restored for TVNZ 1, Three, etc.
+        let hlsArgs = [
+          '-allowed_extensions', 'ALL',
+          '-protocol_whitelist', 'file,http,https,tcp,tls,pipe,crypto',
+          '-user_agent', 'VLC/3.0.20 LibVLC/3.0.20',
+          '-headers', 'Accept: */*\\r\\nConnection: keep-alive\\r\\n',
+          '-live_start_index', '0',
+          '-http_persistent', '0',
+          '-http_seekable', '0',
+          '-multiple_requests', '1',
+          '-timeout', '30000000', // 30 second timeout for web previews
+          '-reconnect', '1',
+          '-reconnect_at_eof', '1',
+          '-reconnect_streamed', '1',
+          '-reconnect_delay_max', '2'
+        ].join(' ');
         
-        // For redirected streams, add additional HLS options for better compatibility
-        if (finalUrl !== url) {
-          hlsArgs += ' -http_seekable 0 -multiple_requests 1 -http_persistent 0';
-          logger.stream('Added HLS compatibility options for redirected stream', {
-            originalUrl: url,
-            finalUrl: finalUrl
+        // SCALABLE CONNECTION LIMITS: Use stream parameter instead of hardcoded IP
+        const hasConnectionLimits = streamData?.connection_limits === 1 || streamData?.connection_limits === true;
+        if (hasConnectionLimits) {
+          // ONLY add special handling for streams with connection limits enabled
+          hlsArgs += ' -max_reload 3 -http_multiple 1 -headers "User-Agent: VLC/3.0.20 LibVLC/3.0.20\\r\\nConnection: close\\r\\n"';
+          logger.stream('Applied VLC-compatible headers for connection limits', {
+            streamName: streamData?.name,
+            streamUrl: finalUrl.substring(0, 50) + '...'
           });
         }
+        
+        // QUALITY OPTIMIZATION: Add arguments to ensure highest bitrate selection
+        hlsArgs += ' -hls_list_size 0 -hls_allow_cache 1 -hls_segment_type mpegts';
+        // DO NOT add extra args for regular redirected streams - this was causing buffering issues
         
         // Insert HLS args BEFORE the input URL for proper protocol handling
         processedCommand = processedCommand.replace('-i ' + finalUrl, hlsArgs + ' -i ' + finalUrl);
@@ -1385,6 +1488,9 @@ class StreamManager {
       finalUrl: finalUrl,
       command: args.join(' ')
     });
+
+    // Connection pre-warming is now handled by the progressive stream handler
+    // Regular streams don't need pre-warming as it can cause buffering issues
 
     return spawn(config.streams.ffmpegPath, args);
   }
@@ -2105,13 +2211,93 @@ class StreamManager {
               error: playlistError.message.replace(/[?&]([^=]+)=[^&]*/g, '[REDACTED]')
             });
           }
+        }
+        // Special handling for generic IPTV M3U8 streams using AdvancedM3U8Resolver
+        else if (streamUrl.includes('.m3u8')) {
+          logger.info('Detected generic M3U8 stream, using AdvancedM3U8Resolver', {
+            channelId: channel.id,
+            streamUrl: streamUrl.substring(0, 50) + '...'
+          });
+          
+          try {
+            // Use AdvancedM3U8Resolver for complex HLS streams like TVNZ
+            const requestUserAgent = req.get('User-Agent') || '';
+            const hasConnectionLimits = stream?.connection_limits === 1 || stream?.connection_limits === true;
+            
+            const resolutionResult = await advancedM3U8Resolver.resolveM3U8Stream(streamUrl, {
+              connectionLimits: hasConnectionLimits,
+              userAgent: requestUserAgent,
+              channelId: channel.id,
+              enableKeepAlive: true
+            });
+            
+            if (resolutionResult.success) {
+              finalStreamUrl = resolutionResult.finalUrl;
+              
+              logger.info('AdvancedM3U8Resolver successfully resolved complex HLS stream', {
+                channelId: channel.id,
+                originalUrl: streamUrl.substring(0, 50) + '...',
+                finalUrl: finalStreamUrl.substring(0, 50) + '...',
+                resolutionTime: resolutionResult.resolutionTime,
+                isMasterPlaylist: resolutionResult.analysis?.isMasterPlaylist,
+                isMediaPlaylist: resolutionResult.analysis?.isMediaPlaylist,
+                variantCount: resolutionResult.analysis?.variants?.length || 0,
+                segmentCount: resolutionResult.analysis?.segments?.length || 0
+              });
+              
+              // If this was a master playlist, we now have the best variant
+              if (resolutionResult.analysis?.isMasterPlaylist && resolutionResult.analysis?.variants?.length > 0) {
+                logger.info('Master playlist resolved to best quality variant', {
+                  channelId: channel.id,
+                  selectedBandwidth: resolutionResult.analysis.variants[0]?.bandwidth,
+                  selectedResolution: resolutionResult.analysis.variants[0]?.resolution,
+                  totalVariants: resolutionResult.analysis.variants.length
+                });
+              }
+            } else {
+              logger.warn('AdvancedM3U8Resolver failed, falling back to original URL', {
+                channelId: channel.id,
+                error: resolutionResult.error,
+                fallbackUrl: resolutionResult.fallbackUrl
+              });
+              
+              // Use fallback URL from resolver
+              finalStreamUrl = resolutionResult.fallbackUrl || streamUrl;
+            }
+          } catch (m3u8Error) {
+            logger.warn('AdvancedM3U8Resolver failed, trying fallback HEAD request', {
+              channelId: channel.id,
+              error: m3u8Error.message
+            });
+            
+            // Fallback to original HEAD request method
+            try {
+              const headResponse = await axios.head(streamUrl, {
+                maxRedirects: 5,
+                timeout: 10000,
+                headers: {
+                  'User-Agent': 'VLC/3.0.20 LibVLC/3.0.20'
+                }
+              });
+              finalStreamUrl = headResponse.request.responseURL || streamUrl;
+              logger.info('Fallback HEAD request succeeded for M3U8 stream', {
+                channelId: channel.id,
+                finalUrl: finalStreamUrl.substring(0, 50) + '...'
+              });
+            } catch (headError) {
+              logger.warn('Fallback HEAD request also failed, using original URL', {
+                channelId: channel.id,
+                error: headError.message
+              });
+            }
+          }
         } else {
           // For other streams, use HEAD request
           const response = await axios.head(streamUrl, {
             maxRedirects: 5,
             timeout: 10000,
             headers: {
-              'User-Agent': 'PlexBridge/1.0'
+              'User-Agent': 'VLC/3.0.20 LibVLC/3.0.20'
             }
           });
           finalStreamUrl = response.request.responseURL || streamUrl;
@@ -2283,20 +2469,36 @@ class StreamManager {
       // Replace [URL] placeholder with actual stream URL
       ffmpegCommand = ffmpegCommand.replace('[URL]', finalStreamUrl);
       
-      // Add HLS-specific arguments if needed
+      // Add optimized HLS-specific arguments for IPTV streams in Plex streaming
       if (finalStreamUrl.includes('.m3u8')) {
-        let hlsArgs = settings?.plexlive?.transcoding?.mpegts?.hlsProtocolArgs || 
-                     config.plexlive?.transcoding?.mpegts?.hlsProtocolArgs ||
-                     '-allowed_extensions ALL -protocol_whitelist file,http,https,tcp,tls,pipe,crypto';
+        // Enhanced HLS arguments specifically optimized for IPTV streams in Plex
+        let hlsArgs = [
+          '-allowed_extensions', 'ALL',
+          '-protocol_whitelist', 'file,http,https,tcp,tls,pipe,crypto',
+          '-user_agent', 'VLC/3.0.20 LibVLC/3.0.20',
+          '-headers', 'Accept: */*\\r\\nConnection: keep-alive\\r\\n',
+          '-live_start_index', '0',
+          '-http_persistent', '0',
+          '-http_seekable', '0',
+          '-multiple_requests', '1',
+          '-reconnect', '1',
+          '-reconnect_at_eof', '1',
+          '-reconnect_streamed', '1',
+          '-reconnect_delay_max', '5',
+          '-timeout', '45000000' // 45 second timeout for slow streams
+        ].join(' ');
         
-        // For redirected streams (like ), add additional HLS options for better compatibility
-        if (finalStreamUrl !== streamUrl) {
-          hlsArgs += ' -http_seekable 0 -multiple_requests 1 -http_persistent 0';
+        // SCALABLE CONNECTION LIMITS: Use stream parameter for IPTV compatibility 
+        const hasConnectionLimits = stream?.connection_limits === 1 || stream?.connection_limits === true;
+        if (finalStreamUrl !== streamUrl || hasConnectionLimits) {
+          hlsArgs += ' -max_reload 3 -http_multiple 1 -analyzeduration 5000000 -probesize 5000000';
           
-          logger.info('Added HLS compatibility options for redirected stream', {
+          logger.info('Added enhanced HLS compatibility options for IPTV Plex stream', {
             channelId: channel.id,
-            originalUrl: streamUrl,
-            finalUrl: finalStreamUrl
+            streamName: stream?.name,
+            connectionLimits: hasConnectionLimits,
+            originalUrl: streamUrl.substring(0, 50) + '...',
+            finalUrl: finalStreamUrl.substring(0, 50) + '...'
           });
         }
         
@@ -2325,10 +2527,14 @@ class StreamManager {
               antiLoop: streamConfig.encoding_profile === 'anti-loop'
             });
             
+            // CRITICAL FIX: Check for HLS streams before applying emergency override
+            const isHLSStream = finalStreamUrl.includes('.m3u8');
+            
             // For anti-loop or emergency profiles, completely replace args to prevent conflicts
-            if (streamConfig.encoding_profile === 'anti-loop' || 
+            // BUT preserve HLS handling for complex streams like TVNZ
+            if ((streamConfig.encoding_profile === 'anti-loop' || 
                 streamConfig.encoding_profile === 'emergency-safe' || 
-                streamConfig.encoding_profile === 'ultra-minimal') {
+                streamConfig.encoding_profile === 'ultra-minimal') && !isHLSStream) {
               args = streamConfig.ffmpeg_options.concat(['-i', finalStreamUrl, 'pipe:1']);
               logger.error('Applied EMERGENCY FFmpeg configuration for H.264 safety', {
                 channelId: channel.id,
@@ -2337,14 +2543,25 @@ class StreamManager {
                 argCount: args.length
               });
             } else {
-              // For other profiles, use enhanced encoding args but ensure proper output
+              // For other profiles OR HLS streams, use enhanced encoding args but ensure proper output
               args = streamConfig.ffmpeg_options.concat(['-i', finalStreamUrl, '-f', 'mpegts', 'pipe:1']);
-              logger.info('Applied enhanced encoding FFmpeg configuration', {
-                channelId: channel.id,
-                channelNumber: channel.number,
-                profile: streamConfig.encoding_profile,
-                argCount: args.length
-              });
+              
+              if (isHLSStream) {
+                logger.info('Applied enhanced encoding FFmpeg configuration for HLS stream', {
+                  channelId: channel.id,
+                  channelNumber: channel.number,
+                  profile: streamConfig.encoding_profile,
+                  argCount: args.length,
+                  emergencyOverrideBypassed: streamConfig.encoding_profile === 'emergency-safe'
+                });
+              } else {
+                logger.info('Applied enhanced encoding FFmpeg configuration', {
+                  channelId: channel.id,
+                  channelNumber: channel.number,
+                  profile: streamConfig.encoding_profile,
+                  argCount: args.length
+                });
+              }
             }
           }
         }
@@ -2543,6 +2760,45 @@ class StreamManager {
         pid: ffmpegProcess.pid,
         clientIP: req.ip
       });
+
+      // CRITICAL PRODUCTION FIX: Add startup timeout to prevent hanging
+      let streamStarted = false;
+      
+      // Adjust timeout based on stream type - TVNZ and complex M3U8 streams need more time
+      const isTVNZStream = finalStreamUrl.includes('i.mjh.nz') || finalStreamUrl.includes('cloudfront.net');
+      const isComplexM3U8 = finalStreamUrl.includes('.m3u8') && (
+        finalStreamUrl.includes('cloudfront') || 
+        finalStreamUrl.includes('mediapackage') ||
+        finalStreamUrl.includes('master.m3u8')
+      );
+      
+      const startupTimeoutMs = isTVNZStream || isComplexM3U8 ? 30000 : 15000; // 30s for complex streams, 15s for others
+      
+      const startupTimeout = setTimeout(() => {
+        if (!streamStarted) {
+          logger.error('FFmpeg startup timeout - process may be hanging', {
+            channelId: channel.id,
+            pid: ffmpegProcess.pid,
+            streamUrl: finalStreamUrl.substring(0, 100) + '...',
+            timeoutMs: startupTimeoutMs,
+            isTVNZStream,
+            isComplexM3U8
+          });
+          
+          // Kill the hanging process
+          if (ffmpegProcess && ffmpegProcess.pid) {
+            ffmpegProcess.kill('SIGKILL');
+          }
+          
+          // Send error response if headers not sent
+          if (!res.headersSent && res.writable) {
+            res.status(503).set({
+              'Content-Type': 'text/plain',
+              'X-PlexBridge-Error': 'Stream startup timeout'
+            }).send('Stream startup timeout');
+          }
+        }
+      }, startupTimeoutMs);
 
       // ===== ADD SESSION TRACKING FOR PLEX STREAMS =====
       const streamSessionManager = require('./streamSessionManager');
@@ -2758,22 +3014,50 @@ class StreamManager {
           });
         }
         
-        // Check for enhanced encoding specific errors
+        // Enhanced error detection for IPTV M3U8 streams and general issues
+        const isM3u8Error = errorOutput.includes('Invalid data found when processing input') ||
+                           errorOutput.includes('Server returned 4') ||
+                           errorOutput.includes('HTTP error 4') ||
+                           errorOutput.includes('Connection refused') ||
+                           errorOutput.includes('Unable to open file') ||
+                           errorOutput.includes('Protocol not found');
+        
         const isEnhancedEncodingError = errorOutput.includes('no frame!') ||
                                       errorOutput.includes('non-existing PPS') ||
                                       errorOutput.includes('decode_slice_header error') ||
                                       errorOutput.includes('mmco: unref short failure');
         
-        // Log all stderr output but don't kill processes aggressively
-        // Let FFmpeg try to recover from transient errors
-        const logLevel = isEnhancedEncodingError ? 'error' : 'info';
+        const isNetworkError = errorOutput.includes('Connection timed out') ||
+                              errorOutput.includes('No route to host') ||
+                              errorOutput.includes('Network is unreachable') ||
+                              errorOutput.includes('Operation timed out');
+        
+        // Enhanced logging for IPTV stream debugging
+        let logLevel = 'info';
+        let errorType = 'unknown';
+        
+        if (isM3u8Error) {
+          logLevel = 'error';
+          errorType = 'iptv_m3u8';
+        } else if (isEnhancedEncodingError) {
+          logLevel = 'error';
+          errorType = 'h264_corruption';
+        } else if (isNetworkError) {
+          logLevel = 'warn';
+          errorType = 'network';
+        }
+        
         logger[logLevel]('FFmpeg MPEG-TS stderr', { 
           channelId: channel.id,
           sessionId,
+          errorType,
           isEnhancedEncoding: stream?.enhanced_encoding || false,
           encodingProfile: stream?.enhanced_encoding_profile,
+          streamUrl: (stream?.connection_limits === 1 || stream?.connection_limits === true) ? 'connection_limits_enabled' : 'standard_stream',
           output: errorOutput.trim(),
-          isEnhancedEncodingError 
+          isM3u8Error,
+          isEnhancedEncodingError,
+          isNetworkError
         });
         
         // Categorize errors into different types for better handling
@@ -2956,11 +3240,41 @@ class StreamManager {
         return;
       }
 
-      // Pipe FFmpeg output directly to response without buffering
-      ffmpegProcess.stdout.pipe(res);
+      // CRITICAL PRODUCTION FIX: Use direct piping without buffering to prevent hanging
+      // This ensures immediate streaming for Plex compatibility
+      ffmpegProcess.stdout.pipe(res, { end: false });
+      
+      // Handle FFmpeg output events for proper cleanup
+      ffmpegProcess.stdout.on('end', () => {
+        if (!res.headersSent && res.writable) {
+          res.end();
+        }
+      });
+      
+      ffmpegProcess.stdout.on('error', (error) => {
+        logger.error('FFmpeg stdout error', {
+          sessionId,
+          channelId: channel.id,
+          error: error.message
+        });
+        if (!res.headersSent && res.writable) {
+          res.end();
+        }
+      });
       
       // Handle FFmpeg stdout with bandwidth tracking
       ffmpegProcess.stdout.on('data', (chunk) => {
+        // CRITICAL: Clear startup timeout when first data arrives
+        if (!streamStarted) {
+          streamStarted = true;
+          clearTimeout(startupTimeout);
+          logger.info('FFmpeg stream startup successful', {
+            channelId: channel.id,
+            sessionId,
+            firstChunkSize: chunk.length
+          });
+        }
+        
         const stats = this.streamStats.get(sessionId);
         if (stats) {
           const now = Date.now();
@@ -3042,7 +3356,7 @@ class StreamManager {
             maxRedirects: 0,
             timeout: 10000,
             validateStatus: (status) => status >= 200 && status < 400,
-            headers: { 'User-Agent': 'PlexBridge/1.0' }
+            headers: { 'User-Agent': 'VLC/3.0.20 LibVLC/3.0.20' }
           });
           if (response.status === 302 && response.headers.location) {
             finalStreamUrl = response.headers.location;
@@ -3555,7 +3869,7 @@ class StreamManager {
       }
       
       const response = await axios.get(finalStreamUrl, {
-        timeout: 30000,
+        timeout: 45000, // Increased for 15-second upstream connections
         responseType: streamType === 'hls' ? 'text' : 'stream', // Get text for HLS to rewrite URLs
         headers: {
           'User-Agent': config.protocols.http.userAgent || 'PlexBridge/1.0'
@@ -3777,7 +4091,7 @@ class StreamManager {
       }
       
       const response = await axios.get(finalStreamUrl, {
-        timeout: 30000,
+        timeout: 45000, // Increased for 15-second upstream connections
         responseType: 'stream',
         headers: {
           'User-Agent': config.protocols.http.userAgent || 'PlexBridge/1.0'
@@ -4340,7 +4654,7 @@ class StreamManager {
           maxContentLength: 1024 * 1024, // 1MB limit
           maxBodyLength: 1024 * 1024,
           headers: {
-            'User-Agent': 'PlexBridge/1.0 FFmpeg-compatible',
+            'User-Agent': 'VLC/3.0.20 LibVLC/3.0.20',
             'Accept': 'application/vnd.apple.mpegurl,application/x-mpegURL,*/*'
           }
         });
@@ -4586,7 +4900,7 @@ class StreamManager {
         timeout: 10000,
         maxContentLength: 2 * 1024 * 1024, // 2MB limit
         headers: {
-          'User-Agent': 'PlexBridge/1.0 FFmpeg-compatible',
+          'User-Agent': 'VLC/3.0.20 LibVLC/3.0.20',
           'Accept': 'application/vnd.apple.mpegurl,application/x-mpegURL,*/*'
         }
       });
