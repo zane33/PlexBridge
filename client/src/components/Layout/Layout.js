@@ -30,6 +30,7 @@ import {
   Settings as SettingsIcon,
   Storage as StorageIcon,
   Close as CloseIcon,
+  Tune as TuneIcon,
 } from '@mui/icons-material';
 
 const drawerWidth = 240;
@@ -39,6 +40,7 @@ const menuItems = [
   { text: 'Channels', icon: <TvIcon />, path: '/channels' },
   { text: 'Streams', icon: <StreamIcon />, path: '/streams' },
   { text: 'EPG', icon: <ScheduleIcon />, path: '/epg' },
+  { text: 'FFmpeg Profiles', icon: <TuneIcon />, path: '/ffmpeg-profiles' },
   { text: 'Logs', icon: <ArticleIcon />, path: '/logs' },
   { text: 'Backup', icon: <StorageIcon />, path: '/backup' },
   { text: 'Settings', icon: <SettingsIcon />, path: '/settings' },

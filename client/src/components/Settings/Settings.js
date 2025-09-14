@@ -838,32 +838,19 @@ function Settings() {
                 </Grid>
 
                 <Grid item xs={12}>
-                  <TextField
-                    fullWidth
-                    multiline
-                    rows={3}
-                    label="FFmpeg Arguments"
-                    placeholder="-hide_banner -loglevel error -reconnect 1 -reconnect_at_eof 1 -reconnect_streamed 1 -reconnect_delay_max 2 -i [URL] -c:v copy -c:a copy -bsf:v dump_extra -f mpegts -mpegts_copyts 1 -avoid_negative_ts make_zero -fflags +genpts+igndts+discardcorrupt -copyts -muxdelay 0 -muxpreload 0 -flush_packets 1 -max_delay 0 -max_muxing_queue_size 9999 pipe:1"
-                    value={getSetting('plexlive.transcoding.mpegts.ffmpegArgs', 
-                      '-hide_banner -loglevel error -reconnect 1 -reconnect_at_eof 1 -reconnect_streamed 1 -reconnect_delay_max 2 -i [URL] -c:v copy -c:a copy -bsf:v dump_extra -f mpegts -mpegts_copyts 1 -avoid_negative_ts make_zero -fflags +genpts+igndts+discardcorrupt -copyts -muxdelay 0 -muxpreload 0 -flush_packets 1 -max_delay 0 -max_muxing_queue_size 9999 pipe:1'
-                    )}
-                    onChange={(e) => updateSetting('plexlive.transcoding.mpegts.ffmpegArgs', e.target.value)}
-                    helperText="Complete FFmpeg command line. Use [URL] placeholder for stream URL. Includes auto-reconnection, timestamp correction, and error resilience for stable streaming."
-                    sx={{ mb: 2 }}
-                  />
-                </Grid>
-
-                <Grid item xs={12}>
-                  <TextField
-                    fullWidth
-                    label="HLS Protocol Arguments"
-                    placeholder="-allowed_extensions ALL -protocol_whitelist file,http,https,tcp,tls"
-                    value={getSetting('plexlive.transcoding.mpegts.hlsProtocolArgs', 
-                      '-allowed_extensions ALL -protocol_whitelist file,http,https,tcp,tls'
-                    )}
-                    onChange={(e) => updateSetting('plexlive.transcoding.mpegts.hlsProtocolArgs', e.target.value)}
-                    helperText="Additional FFmpeg arguments for HLS (.m3u8) streams"
-                  />
+                  <Alert severity="info" sx={{ mb: 2 }}>
+                    <Typography variant="body2">
+                      <strong>FFmpeg profiles have been moved to a dedicated manager!</strong>
+                    </Typography>
+                    <Typography variant="body2" sx={{ mt: 1 }}>
+                      For better organization and client-specific optimization, FFmpeg arguments and HLS protocol settings 
+                      are now managed through the <strong>FFmpeg Profiles</strong> section in the navigation menu.
+                    </Typography>
+                    <Typography variant="body2" sx={{ mt: 1 }}>
+                      You can create custom profiles for different client types (Web Browser, Android TV, Apple TV, etc.) 
+                      and assign them to specific streams for optimal encoding performance.
+                    </Typography>
+                  </Alert>
                 </Grid>
               </Grid>
             </AccordionDetails>

@@ -24,6 +24,7 @@
 
 services:
   plextv:
+    build: .
     image: plexbridge:latest
     container_name: plextv
     restart: unless-stopped
@@ -43,10 +44,10 @@ services:
       - ./config:/app/config:ro
       # Additional bind mount for easy access to data (optional)
       - ./data:/host-data
-      # Server code bind mount for development
-      - ./server:/app/server
-      # Client code bind mount for development (to get validation fix)
-      - ./client:/app/client
+      # Server code bind mount for development (commented out to use Docker-built code)
+      # - ./server:/app/server
+      # Client code bind mount for development (commented out to use Docker-built client)
+      # - ./client:/app/client
     environment:
       # Application environment
       - NODE_ENV=production

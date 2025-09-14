@@ -41,7 +41,9 @@ const streamSchema = Joi.object({
   failure_count: Joi.number().integer().min(0).default(0),
   monitoring_enabled: Joi.number().integer().min(0).max(1).default(0),
   // SCALABLE CONNECTION LIMITS: Replace hardcoded IP detection with flexible parameter
-  connection_limits: Joi.number().integer().min(0).max(1).default(0)
+  connection_limits: Joi.number().integer().min(0).max(1).default(0),
+  // FFmpeg profile support
+  ffmpeg_profile_id: Joi.string().uuid().allow(null, '').optional()
 });
 
 // Define genre options for each primary category
@@ -465,8 +467,8 @@ router.post('/streams', validate(streamSchema), async (req, res) => {
     // CRITICAL FIX: Include enhanced_encoding fields in INSERT to prevent data corruption
     await database.run(`
       INSERT INTO streams (id, channel_id, name, url, type, backup_urls, auth_username, auth_password, headers, protocol_options, enabled,
-                         enhanced_encoding, enhanced_encoding_profile, reliability_score, last_failure, failure_count, monitoring_enabled, connection_limits)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                         enhanced_encoding, enhanced_encoding_profile, reliability_score, last_failure, failure_count, monitoring_enabled, connection_limits, ffmpeg_profile_id)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `, [
       id,
       data.channel_id,
@@ -487,7 +489,9 @@ router.post('/streams', validate(streamSchema), async (req, res) => {
       data.failure_count !== undefined ? data.failure_count : 0,
       data.monitoring_enabled !== undefined ? (data.monitoring_enabled ? 1 : 0) : 0,
       // SCALABLE CONNECTION LIMITS: Add connection_limits support
-      data.connection_limits !== undefined ? (data.connection_limits ? 1 : 0) : 0
+      data.connection_limits !== undefined ? (data.connection_limits ? 1 : 0) : 0,
+      // FFmpeg profile support
+      data.ffmpeg_profile_id || null
     ]);
 
     const stream = await database.get('SELECT * FROM streams WHERE id = ?', [id]);
@@ -528,7 +532,7 @@ router.put('/streams/:id', validate(streamSchema), async (req, res) => {
       SET channel_id = ?, name = ?, url = ?, type = ?, backup_urls = ?, 
           auth_username = ?, auth_password = ?, headers = ?, protocol_options = ?, enabled = ?,
           enhanced_encoding = ?, enhanced_encoding_profile = ?, reliability_score = ?, 
-          last_failure = ?, failure_count = ?, monitoring_enabled = ?, connection_limits = ?
+          last_failure = ?, failure_count = ?, monitoring_enabled = ?, connection_limits = ?, ffmpeg_profile_id = ?
       WHERE id = ?
     `, [
       data.channel_id,
@@ -550,6 +554,8 @@ router.put('/streams/:id', validate(streamSchema), async (req, res) => {
       data.monitoring_enabled !== undefined ? (data.monitoring_enabled ? 1 : 0) : 0,
       // SCALABLE CONNECTION LIMITS: Add connection_limits support
       data.connection_limits !== undefined ? (data.connection_limits ? 1 : 0) : 0,
+      // FFmpeg profile support
+      data.ffmpeg_profile_id || null,
       req.params.id
     ]);
 
@@ -2349,12 +2355,34 @@ router.post('/settings/reset', async (req, res) => {
 // BACKUP/RESTORE API
 router.get('/backup/export', async (req, res) => {
   try {
-    const { format = 'json', includeSettings = false, includePasswords = false, includeEpgData = false, includeLogs = false } = req.query;
+    const { format = 'json', includeSettings = false, includePasswords = false, includeEpgData = false, includeLogs = false, includeFFmpegProfiles = true } = req.query;
     
     // Get all configuration data
     const channels = await database.all('SELECT * FROM channels ORDER BY number');
     const streams = await database.all('SELECT * FROM streams');
     const epgSources = await database.all('SELECT * FROM epg_sources');
+    
+    // Get FFmpeg profiles and their client configurations (exclude system profiles)
+    let ffmpegProfiles = [];
+    let ffmpegProfileClients = [];
+    if (includeFFmpegProfiles === 'true' || includeFFmpegProfiles === true || includeFFmpegProfiles !== 'false') {
+      // Only export custom profiles, not system profiles
+      ffmpegProfiles = await database.all(`
+        SELECT * FROM ffmpeg_profiles 
+        WHERE is_system = 0 
+        ORDER BY is_default DESC, name ASC
+      `);
+      
+      if (ffmpegProfiles.length > 0) {
+        const profileIds = ffmpegProfiles.map(p => p.id);
+        const placeholders = profileIds.map(() => '?').join(',');
+        ffmpegProfileClients = await database.all(`
+          SELECT * FROM ffmpeg_profile_clients 
+          WHERE profile_id IN (${placeholders})
+          ORDER BY profile_id, client_type
+        `, profileIds);
+      }
+    }
     
     // Get settings only if requested
     let settings = [];
@@ -2414,6 +2442,28 @@ router.get('/backup/export', async (req, res) => {
       return streamCopy;
     });
     
+    // Process FFmpeg profiles data - group clients by profile
+    const processedFFmpegProfiles = ffmpegProfiles.map(profile => {
+      const profileCopy = { ...profile };
+      
+      // Convert boolean fields from SQLite integers
+      profileCopy.is_default = Boolean(profile.is_default);
+      profileCopy.is_system = Boolean(profile.is_system);
+      
+      // Group client configurations by client type
+      const profileClients = ffmpegProfileClients.filter(client => client.profile_id === profile.id);
+      profileCopy.clients = {};
+      
+      profileClients.forEach(client => {
+        profileCopy.clients[client.client_type] = {
+          ffmpeg_args: client.ffmpeg_args,
+          hls_args: client.hls_args
+        };
+      });
+      
+      return profileCopy;
+    });
+    
     // Process settings only if included
     let settingsObj = {};
     if (includeSettings === 'true' || includeSettings === true) {
@@ -2435,17 +2485,19 @@ router.get('/backup/export', async (req, res) => {
     }
     
     const backupData = {
-      version: '2.0.0',
+      version: '2.1.0', // Increment version to indicate FFmpeg profiles support
       timestamp: new Date().toISOString(),
       includesSettings: includeSettings === 'true' || includeSettings === true,
       includesPasswords: includePasswords,
       includesEpgData: includeEpgData === 'true' || includeEpgData === true,
       includesLogs: includeLogs === 'true' || includeLogs === true,
+      includesFFmpegProfiles: includeFFmpegProfiles === 'true' || includeFFmpegProfiles === true || includeFFmpegProfiles !== 'false',
       data: {
         channels,
         streams: processedStreams,
         epgSources,
         ...(Object.keys(settingsObj).length > 0 && { settings: settingsObj }),
+        ...(processedFFmpegProfiles.length > 0 && { ffmpegProfiles: processedFFmpegProfiles }),
         ...(epgChannels.length > 0 && { epgChannels }),
         ...(epgPrograms.length > 0 && { epgPrograms }),
         ...(recentLogs.length > 0 && { logs: recentLogs })
@@ -2455,6 +2507,7 @@ router.get('/backup/export', async (req, res) => {
         totalStreams: streams.length,
         totalEpgSources: epgSources.length,
         totalSettings: Object.keys(settingsObj).length,
+        totalFFmpegProfiles: processedFFmpegProfiles.length,
         totalEpgChannels: epgChannels.length,
         totalEpgPrograms: epgPrograms.length,
         totalLogs: recentLogs.length,
@@ -2463,6 +2516,7 @@ router.get('/backup/export', async (req, res) => {
           streams: processedStreams,
           epgSources,
           ...(Object.keys(settingsObj).length > 0 && { settings: settingsObj }),
+          ...(processedFFmpegProfiles.length > 0 && { ffmpegProfiles: processedFFmpegProfiles }),
           epgChannels,
           epgPrograms,
           logs: recentLogs
@@ -2479,9 +2533,11 @@ router.get('/backup/export', async (req, res) => {
     
     logger.info('Configuration backup exported', { 
       includePasswords,
+      includeFFmpegProfiles: includeFFmpegProfiles === 'true' || includeFFmpegProfiles === true || includeFFmpegProfiles !== 'false',
       channels: channels.length,
       streams: streams.length,
-      epgSources: epgSources.length
+      epgSources: epgSources.length,
+      ffmpegProfiles: processedFFmpegProfiles.length
     });
     
     res.json(backupData);
@@ -2501,6 +2557,7 @@ router.post('/backup/import', async (req, res) => {
       importStreams = true,
       importEpgSources = true,
       importSettings = true,
+      importFFmpegProfiles = true,
       importEpgData = false,
       skipValidation = false
     } = options;
@@ -2514,7 +2571,7 @@ router.post('/backup/import', async (req, res) => {
     }
 
     // Version compatibility check
-    const supportedVersions = ['1.0.0', '2.0.0'];
+    const supportedVersions = ['1.0.0', '2.0.0', '2.1.0'];
     if (!supportedVersions.includes(backupData.version)) {
       return res.status(400).json({ 
         error: 'Unsupported backup version', 
@@ -2528,6 +2585,7 @@ router.post('/backup/import', async (req, res) => {
         streams: 0,
         epgSources: 0,
         settings: 0,
+        ffmpegProfiles: 0,
         epgChannels: 0,
         epgPrograms: 0
       },
@@ -2536,6 +2594,7 @@ router.post('/backup/import', async (req, res) => {
         streams: 0,
         epgSources: 0,
         settings: 0,
+        ffmpegProfiles: 0,
         epgChannels: 0,
         epgPrograms: 0
       },
@@ -2552,6 +2611,12 @@ router.post('/backup/import', async (req, res) => {
         if (importChannels) await database.run('DELETE FROM channels');
         if (importEpgSources) await database.run('DELETE FROM epg_sources');
         if (importSettings) await database.run('DELETE FROM settings');
+        if (importFFmpegProfiles) {
+          // Clear ffmpeg profile clients first due to foreign key constraint
+          await database.run('DELETE FROM ffmpeg_profile_clients');
+          // Only clear custom profiles, not system profiles
+          await database.run('DELETE FROM ffmpeg_profiles WHERE is_system = 0');
+        }
         if (importEpgData) {
           await database.run('DELETE FROM epg_programs');
           await database.run('DELETE FROM epg_channels');
@@ -2670,6 +2735,100 @@ router.post('/backup/import', async (req, res) => {
             results.imported.settings++;
           } catch (error) {
             results.errors.push(`Setting ${key}: ${error.message}`);
+          }
+        }
+      }
+
+      // Import FFmpeg profiles
+      if (importFFmpegProfiles && backupData.data.ffmpegProfiles) {
+        // Track imported profiles for default handling
+        let defaultProfileImported = false;
+        const profileNameMapping = new Map(); // old name -> new name for conflict resolution
+        
+        for (const profile of backupData.data.ffmpegProfiles) {
+          try {
+            // Check for name conflicts
+            let finalProfileName = profile.name;
+            const existingProfile = await database.get(
+              'SELECT id FROM ffmpeg_profiles WHERE name = ? AND is_system = 0',
+              [profile.name]
+            );
+            
+            if (existingProfile && !clearExisting) {
+              // Name conflict - append suffix
+              let suffix = 1;
+              let testName = `${profile.name} (${suffix})`;
+              while (await database.get('SELECT id FROM ffmpeg_profiles WHERE name = ?', [testName])) {
+                suffix++;
+                testName = `${profile.name} (${suffix})`;
+              }
+              finalProfileName = testName;
+              profileNameMapping.set(profile.name, finalProfileName);
+            }
+            
+            // Handle default profile conflicts
+            let isDefault = profile.is_default;
+            if (isDefault && defaultProfileImported) {
+              // Only one profile can be default
+              isDefault = false;
+            }
+            
+            // Insert the profile
+            await database.run(`
+              INSERT OR ${clearExisting ? 'REPLACE' : 'IGNORE'} INTO ffmpeg_profiles 
+              (id, name, description, is_default, is_system, created_at, updated_at) 
+              VALUES (?, ?, ?, ?, ?, ?, ?)
+            `, [
+              profile.id,
+              finalProfileName,
+              profile.description,
+              isDefault ? 1 : 0,
+              0, // Never import as system profile
+              profile.created_at || new Date().toISOString(),
+              new Date().toISOString()
+            ]);
+            
+            if (isDefault) {
+              defaultProfileImported = true;
+              // Ensure only this profile is default
+              await database.run(
+                'UPDATE ffmpeg_profiles SET is_default = 0 WHERE id != ? AND is_default = 1',
+                [profile.id]
+              );
+            }
+            
+            // Import client configurations for this profile
+            if (profile.clients) {
+              for (const [clientType, clientConfig] of Object.entries(profile.clients)) {
+                try {
+                  await database.run(`
+                    INSERT OR ${clearExisting ? 'REPLACE' : 'IGNORE'} INTO ffmpeg_profile_clients 
+                    (id, profile_id, client_type, ffmpeg_args, hls_args, created_at, updated_at) 
+                    VALUES (?, ?, ?, ?, ?, ?, ?)
+                  `, [
+                    `${profile.id}_${clientType}`,
+                    profile.id,
+                    clientType,
+                    clientConfig.ffmpeg_args,
+                    clientConfig.hls_args || null,
+                    new Date().toISOString(),
+                    new Date().toISOString()
+                  ]);
+                } catch (clientError) {
+                  if (clientError.code !== 'SQLITE_CONSTRAINT_UNIQUE') {
+                    results.errors.push(`FFmpeg Profile ${finalProfileName} client ${clientType}: ${clientError.message}`);
+                  }
+                }
+              }
+            }
+            
+            results.imported.ffmpegProfiles++;
+          } catch (error) {
+            if (error.code === 'SQLITE_CONSTRAINT_UNIQUE') {
+              results.skipped.ffmpegProfiles++;
+            } else {
+              results.errors.push(`FFmpeg Profile ${profile.name}: ${error.message}`);
+            }
           }
         }
       }
@@ -2795,7 +2954,7 @@ router.post('/backup/validate', async (req, res) => {
     }
 
     // Version compatibility
-    const supportedVersions = ['1.0.0', '2.0.0'];
+    const supportedVersions = ['1.0.0', '2.0.0', '2.1.0'];
     if (backupData.version && !supportedVersions.includes(backupData.version)) {
       validation.isValid = false;
       validation.errors.push(`Unsupported backup version: ${backupData.version}. Supported versions: ${supportedVersions.join(', ')}`);
@@ -2821,6 +2980,11 @@ router.post('/backup/validate', async (req, res) => {
 
     if (data.settings && typeof data.settings !== 'object') {
       validation.errors.push('Settings data must be an object');
+      validation.isValid = false;
+    }
+
+    if (data.ffmpegProfiles && !Array.isArray(data.ffmpegProfiles)) {
+      validation.errors.push('FFmpeg profiles data must be an array');
       validation.isValid = false;
     }
 
@@ -2850,12 +3014,62 @@ router.post('/backup/validate', async (req, res) => {
         });
       }
 
+      // Validate FFmpeg profiles
+      if (data.ffmpegProfiles) {
+        const profileNames = new Set();
+        let defaultProfileCount = 0;
+        
+        data.ffmpegProfiles.forEach((profile, index) => {
+          if (!profile.id || !profile.name) {
+            validation.warnings.push(`FFmpeg Profile ${index + 1}: Missing required fields (id, name)`);
+          }
+          
+          if (profile.name && profileNames.has(profile.name)) {
+            validation.warnings.push(`FFmpeg Profile ${profile.name}: Duplicate profile name`);
+          } else if (profile.name) {
+            profileNames.add(profile.name);
+          }
+          
+          if (profile.is_default) {
+            defaultProfileCount++;
+          }
+          
+          // Validate client configurations
+          if (profile.clients && typeof profile.clients === 'object') {
+            const validClientTypes = ['web_browser', 'android_mobile', 'android_tv', 'ios_mobile', 'apple_tv'];
+            Object.keys(profile.clients).forEach(clientType => {
+              if (!validClientTypes.includes(clientType)) {
+                validation.warnings.push(`FFmpeg Profile ${profile.name || index + 1}: Invalid client type "${clientType}"`);
+              }
+              
+              const clientConfig = profile.clients[clientType];
+              if (!clientConfig.ffmpeg_args || typeof clientConfig.ffmpeg_args !== 'string') {
+                validation.warnings.push(`FFmpeg Profile ${profile.name || index + 1}: Missing or invalid ffmpeg_args for ${clientType}`);
+              }
+            });
+          }
+        });
+        
+        if (defaultProfileCount > 1) {
+          validation.warnings.push(`Multiple default FFmpeg profiles found (${defaultProfileCount}). Only one profile should be marked as default.`);
+        }
+      }
+
       // Check for data consistency
       if (data.channels && data.streams) {
         const channelIds = new Set(data.channels.map(c => c.id));
         const orphanedStreams = data.streams.filter(s => !channelIds.has(s.channel_id));
         if (orphanedStreams.length > 0) {
           validation.warnings.push(`${orphanedStreams.length} stream(s) reference channels that don't exist in the backup`);
+        }
+      }
+      
+      // Check FFmpeg profile references in streams
+      if (data.streams && data.ffmpegProfiles) {
+        const profileIds = new Set(data.ffmpegProfiles.map(p => p.id));
+        const orphanedStreamProfiles = data.streams.filter(s => s.ffmpeg_profile_id && !profileIds.has(s.ffmpeg_profile_id));
+        if (orphanedStreamProfiles.length > 0) {
+          validation.warnings.push(`${orphanedStreamProfiles.length} stream(s) reference FFmpeg profiles that don't exist in the backup`);
         }
       }
 
@@ -2867,12 +3081,14 @@ router.post('/backup/validate', async (req, res) => {
         streams: data.streams ? data.streams.length : 0,
         epgSources: data.epgSources ? data.epgSources.length : 0,
         settings: data.settings ? Object.keys(data.settings).length : 0,
+        ffmpegProfiles: data.ffmpegProfiles ? data.ffmpegProfiles.length : 0,
         epgChannels: data.epgChannels ? data.epgChannels.length : 0,
         epgPrograms: data.epgPrograms ? data.epgPrograms.length : 0,
         logs: data.logs ? data.logs.length : 0,
         includesPasswords: backupData.includesPasswords || false,
         includesEpgData: backupData.includesEpgData || false,
-        includesLogs: backupData.includesLogs || false
+        includesLogs: backupData.includesLogs || false,
+        includesFFmpegProfiles: backupData.includesFFmpegProfiles || false
       };
     }
 

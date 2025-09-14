@@ -495,6 +495,17 @@ const initializeApp = async () => {
       logger.error('EPG service error details:', epgError);
     }
     
+    // Initialize FFmpeg Profile Manager
+    try {
+      logger.info('Initializing FFmpeg Profile Manager...');
+      const ffmpegProfileManager = require('./services/ffmpegProfileManager');
+      await ffmpegProfileManager.initializeDefaultProfiles();
+      logger.info('✅ FFmpeg Profile Manager initialized successfully');
+    } catch (ffmpegError) {
+      logger.warn('Failed to initialize FFmpeg Profile Manager:', ffmpegError.message);
+      logger.error('FFmpeg Profile Manager error details:', ffmpegError);
+    }
+    
     // Initialize Session Persistence Manager for Android TV compatibility
     try {
       logger.info('Initializing Session Persistence Manager...');
@@ -535,6 +546,7 @@ const initializeApp = async () => {
       const diagnosticsRoutes = require('./routes/diagnostics');
       const adminFixRoutes = require('./routes/admin-fix');
       const type5MonitorRoutes = require('./routes/type5-monitor');
+      const ffmpegProfileRoutes = require('./routes/ffmpeg-profiles');
 
       // API Routes - MUST BE BEFORE STATIC FILES
       app.use('/', healthRoutes);  // Health check routes
@@ -545,6 +557,7 @@ const initializeApp = async () => {
       app.use('/api/streams/parse/m3u', m3uRoutes);
       app.use('/api/streams/import/m3u', m3uImportRoutes);
       app.use('/api/streaming', streamingRoutes);  // Enhanced streaming monitoring
+      app.use('/api/ffmpeg-profiles', ffmpegProfileRoutes);  // FFmpeg profile management
       app.use('/api', apiRoutes);
       app.use('/epg', epgRoutes);
       app.use('/', ssdpRoutes);

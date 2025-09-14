@@ -8,7 +8,7 @@ const cacheService = require('./cacheService');
 const settingsService = require('./settingsService');
 const streamSessionManager = require('./streamSessionManager');
 const streamResilienceService = require('./streamResilienceService');
-const ffmpegProfiles = require('../config/ffmpegProfiles');
+const ffmpegProfileManager = require('./ffmpegProfileManager');
 const progressiveStreamHandler = require('./progressiveStreamHandler');
 const advancedM3U8Resolver = require('./advancedM3U8Resolver');
 
@@ -65,65 +65,53 @@ class StreamManager {
     );
   }
 
-  // Build structured FFmpeg arguments for Android TV
-  buildAndroidTVFFmpegArgs(streamUrl, settings = null) {
+  // Get FFmpeg arguments using profile system
+  async getFFmpegArgsForStream(streamUrl, userAgent, profileId = null) {
+    try {
+      // Detect client type from user agent
+      const clientType = ffmpegProfileManager.detectClientType(userAgent);
+      
+      // Get FFmpeg arguments from profile system
+      const args = await ffmpegProfileManager.getFFmpegArgs(profileId, clientType, streamUrl);
+      
+      logger.debug('FFmpeg arguments generated', {
+        profileId: profileId || 'default',
+        clientType,
+        argsCount: args.length,
+        streamUrl: streamUrl.substring(0, 100) + '...'
+      });
+      
+      return args;
+    } catch (error) {
+      logger.error('Failed to get FFmpeg arguments from profile system:', error);
+      // Fallback to basic arguments
+      return this.getFallbackFFmpegArgs(streamUrl);
+    }
+  }
+
+  // Fallback FFmpeg arguments (backward compatibility)
+  getFallbackFFmpegArgs(streamUrl) {
     const baseArgs = [
       '-hide_banner', '-loglevel', 'error',
-      '-analyzeduration', ANDROID_TV_CONFIG.ANALYZE_DURATION.toString(),
-      '-probesize', ANDROID_TV_CONFIG.PROBE_SIZE.toString(),
       '-reconnect', '1',
       '-reconnect_at_eof', '1',
       '-reconnect_streamed', '1',
-      '-reconnect_delay_max', '2',
+      '-reconnect_delay_max', '5',
       '-i', streamUrl,
       '-c:v', 'copy',
       '-c:a', 'copy',
-      '-bsf:v', 'h264_mp4toannexb',
-      '-f', 'segment',
-      '-segment_time', ANDROID_TV_CONFIG.SEGMENT_DURATION.toString(),
-      '-segment_format', 'mpegts',
-      '-segment_list_type', 'flat',
-      '-segment_list', 'pipe:2', // Use stderr instead of /dev/null for better performance
-      '-reset_timestamps', '1',
-      '-avoid_negative_ts', 'make_zero',
-      '-fflags', '+genpts+igndts+discardcorrupt+nobuffer',
-      '-flags', '+low_delay',
-      '-copyts',
-      '-muxdelay', '0',
-      '-muxpreload', '0',
-      '-flush_packets', '1',
-      '-max_delay', '0',
-      '-max_muxing_queue_size', ANDROID_TV_CONFIG.QUEUE_SIZE.toString(),
-      '-rtbufsize', ANDROID_TV_CONFIG.BUFFER_SIZE,
+      '-f', 'mpegts',
+      '-mpegts_copyts', '1',
       'pipe:1'
     ];
-
-    // Add HLS-specific arguments if needed with IPTV optimizations
-    if (streamUrl.includes('.m3u8')) {
-      const hlsArgs = [
-        '-allowed_extensions', 'ALL',
-        '-protocol_whitelist', 'file,http,https,tcp,tls,pipe,crypto',
-        '-user_agent', 'VLC/3.0.20 LibVLC/3.0.20',
-        '-headers', 'Accept: */*\\r\\nConnection: keep-alive\\r\\n',
-        '-live_start_index', '0',
-        '-http_persistent', '0', // Disabled for better IPTV compatibility
-        '-http_seekable', '0',
-        '-multiple_requests', '1',
-        '-timeout', '25000000', // 25 second timeout (increased for slow IPTV)
-        '-reconnect', '1',
-        '-reconnect_at_eof', '1',
-        '-reconnect_streamed', '1',
-        '-reconnect_delay_max', '5'
-      ];
-      
-      // Insert HLS args before the input URL
-      const inputIndex = baseArgs.indexOf('-i');
-      if (inputIndex > -1) {
-        baseArgs.splice(inputIndex, 0, ...hlsArgs);
-      }
-    }
-
+    
     return baseArgs;
+  }
+
+  // Legacy method for backward compatibility
+  buildAndroidTVFFmpegArgs(streamUrl, settings = null) {
+    logger.warn('DEPRECATED: buildAndroidTVFFmpegArgs called. Use getFFmpegArgsForStream instead.');
+    return this.getFallbackFFmpegArgs(streamUrl);
   }
 
   // Validate response stream before piping
@@ -1021,10 +1009,10 @@ class StreamManager {
           break;
         case 'ts':
         case 'mpegts':
-          streamProcess = this.createTSStreamProxy(url, auth, customHeaders);
+          streamProcess = await this.createTSStreamProxy(url, auth, customHeaders, req.headers['user-agent'], streamData?.ffmpeg_profile_id);
           break;
         case 'rtsp':
-          streamProcess = this.createRTSPStreamProxy(url, auth);
+          streamProcess = await this.createRTSPStreamProxy(url, auth, req.headers['user-agent'], streamData?.ffmpeg_profile_id);
           break;
         case 'rtmp':
           streamProcess = this.createRTMPStreamProxy(url, auth);
@@ -1414,71 +1402,24 @@ class StreamManager {
     let args;
     if (isAndroidTV) {
       // Use structured Android TV configuration
-      args = this.buildAndroidTVFFmpegArgs(finalUrl, settings);
+      args = await this.getFFmpegArgsForStream(finalUrl, userAgent);
       
-      logger.info('Using Android TV optimized FFmpeg configuration', { 
+      logger.info('Using FFmpeg profile for Android TV configuration', { 
         clientIP: req.ip,
         userAgent: userAgent,
         analyzeDuration: ANDROID_TV_CONFIG.ANALYZE_DURATION,
         probeSize: ANDROID_TV_CONFIG.PROBE_SIZE
       });
     } else {
-      // Standard FFmpeg configuration for non-Android TV clients
-      const ffmpegCommand = settings?.plexlive?.transcoding?.mpegts?.ffmpegArgs || 
-                           config.plexlive?.transcoding?.mpegts?.ffmpegArgs ||
-                           '-hide_banner -loglevel error -reconnect 1 -reconnect_at_eof 1 -reconnect_streamed 1 -reconnect_delay_max 2 -i [URL] -c:v copy -c:a copy -bsf:v h264_mp4toannexb -f mpegts -mpegts_copyts 1 -avoid_negative_ts make_zero -fflags +genpts+igndts+discardcorrupt -copyts -muxdelay 0 -muxpreload 0 -flush_packets 1 -max_delay 0 -max_muxing_queue_size 9999 pipe:1';
+      // Use FFmpeg profile system for all non-Android TV clients
+      logger.info('Using FFmpeg profile system for standard client', {
+        clientIP: req.ip,
+        profileId: stream?.ffmpeg_profile_id || 'default',
+        streamId: stream?.id
+      });
       
-      // Replace [URL] placeholder with actual stream URL
-      let processedCommand = ffmpegCommand.replace('[URL]', finalUrl);
-      
-      // Add HLS-specific arguments for M3U8 streams (FIXED: Added critical missing parameters)
-      if (finalUrl.includes('.m3u8')) {
-        // HLS arguments with critical parameters restored for TVNZ 1, Three, etc.
-        let hlsArgs = [
-          '-allowed_extensions', 'ALL',
-          '-protocol_whitelist', 'file,http,https,tcp,tls,pipe,crypto',
-          '-user_agent', 'VLC/3.0.20 LibVLC/3.0.20',
-          '-headers', 'Accept: */*\\r\\nConnection: keep-alive\\r\\n',
-          '-live_start_index', '0',
-          '-http_persistent', '0',
-          '-http_seekable', '0',
-          '-multiple_requests', '1',
-          '-timeout', '30000000', // 30 second timeout for web previews
-          '-reconnect', '1',
-          '-reconnect_at_eof', '1',
-          '-reconnect_streamed', '1',
-          '-reconnect_delay_max', '2'
-        ].join(' ');
-        
-        // SCALABLE CONNECTION LIMITS: Use stream parameter instead of hardcoded IP
-        const hasConnectionLimits = streamData?.connection_limits === 1 || streamData?.connection_limits === true;
-        if (hasConnectionLimits) {
-          // ONLY add special handling for streams with connection limits enabled
-          hlsArgs += ' -max_reload 3 -http_multiple 1 -headers "User-Agent: VLC/3.0.20 LibVLC/3.0.20\\r\\nConnection: close\\r\\n"';
-          logger.stream('Applied VLC-compatible headers for connection limits', {
-            streamName: streamData?.name,
-            streamUrl: finalUrl.substring(0, 50) + '...'
-          });
-        }
-        
-        // CRITICAL FIX FOR MJH/TVNZ STREAMS: Add -re flag for i.mjh.nz domains
-        if (finalUrl.includes('i.mjh.nz') || finalUrl.includes('tvnz')) {
-          hlsArgs += ' -re'; // Read input at native frame rate (required for TVNZ stability)
-          logger.info('Added -re flag for mjh/TVNZ stream', {
-            streamUrl: finalUrl.substring(0, 50) + '...'
-          });
-        }
-        
-        // QUALITY OPTIMIZATION: Add arguments to ensure highest bitrate selection
-        hlsArgs += ' -hls_list_size 0 -hls_allow_cache 1 -hls_segment_type mpegts';
-        // DO NOT add extra args for regular redirected streams - this was causing buffering issues
-        
-        // Insert HLS args BEFORE the input URL for proper protocol handling
-        processedCommand = processedCommand.replace('-i ' + finalUrl, hlsArgs + ' -i ' + finalUrl);
-      }
-      
-      // Parse command line into arguments array
-      args = processedCommand.split(' ').filter(arg => arg.trim() !== '');
+      const profileArgs = await this.getFFmpegArgsForStream(finalUrl, userAgent, stream?.ffmpeg_profile_id);
+      args = profileArgs;
     }
 
     // Add authentication if needed
@@ -1503,38 +1444,59 @@ class StreamManager {
     return spawn(config.streams.ffmpegPath, args);
   }
 
-  createTSStreamProxy(url, auth, customHeaders) {
-    // For TS streams, we need to handle them properly for web browser compatibility
-    // TS files often need remuxing or transcoding to be played in browsers
-    const args = [
-      '-y',
-      '-i', url,
-      '-c:v', 'copy',        // Try to copy video codec if compatible
-      '-c:a', 'copy',        // Try to copy audio codec if compatible  
-      '-f', 'mpegts',        // Output as MPEG-TS
-      '-avoid_negative_ts', 'make_zero',
-      '-fflags', '+genpts',  // Generate timestamps for better compatibility
-      '-'
-    ];
+  async createTSStreamProxy(url, auth, customHeaders, userAgent, profileId) {
+    // Use FFmpeg profile system for TS streams
+    try {
+      const args = await this.getFFmpegArgsForStream(url, userAgent, profileId);
+      
+      // Add authentication if needed
+      if (auth && auth.username) {
+        const authHeader = `Authorization: Basic ${Buffer.from(`${auth.username}:${auth.password}`).toString('base64')}`;
+        // Insert headers before the input URL
+        const inputIndex = args.indexOf('-i');
+        if (inputIndex > -1) {
+          args.splice(inputIndex, 0, '-headers', authHeader);
+        }
+      }
 
-    if (auth && auth.username) {
-      args.splice(2, 0, '-headers', `Authorization: Basic ${Buffer.from(`${auth.username}:${auth.password}`).toString('base64')}`);
+      logger.debug('TS stream proxy using profile system', {
+        profileId: profileId || 'default',
+        url: url.substring(0, 50) + '...'
+      });
+
+      return spawn(config.streams.ffmpegPath, args);
+    } catch (error) {
+      logger.error('Failed to create TS stream proxy with profile:', error);
+      // Fallback to basic args
+      const fallbackArgs = this.getFallbackFFmpegArgs(url);
+      return spawn(config.streams.ffmpegPath, fallbackArgs);
     }
-
-    return spawn(config.streams.ffmpegPath, args);
   }
 
-  createRTSPStreamProxy(url, auth) {
-    const args = [
-      '-y',
-      '-rtsp_transport', config.protocols.rtsp.transport,
-      '-i', url,
-      '-c', 'copy',
-      '-f', 'mpegts',
-      '-'
-    ];
+  async createRTSPStreamProxy(url, auth, userAgent, profileId) {
+    // Use FFmpeg profile system for RTSP streams
+    try {
+      const args = await this.getFFmpegArgsForStream(url, userAgent, profileId);
+      
+      logger.debug('RTSP stream proxy using profile system', {
+        profileId: profileId || 'default',
+        url: url.substring(0, 50) + '...'
+      });
 
-    return spawn(config.streams.ffmpegPath, args);
+      return spawn(config.streams.ffmpegPath, args);
+    } catch (error) {
+      logger.error('Failed to create RTSP stream proxy with profile:', error);
+      // Fallback to basic args with RTSP transport
+      const fallbackArgs = [
+        '-y',
+        '-rtsp_transport', config.protocols?.rtsp?.transport || 'tcp',
+        '-i', url,
+        '-c', 'copy',
+        '-f', 'mpegts',
+        '-'
+      ];
+      return spawn(config.streams.ffmpegPath, fallbackArgs);
+    }
   }
 
   createRTMPStreamProxy(url, auth) {
@@ -2451,58 +2413,42 @@ class StreamManager {
       } else if (forceTranscode) {
         // Use high quality transcoding when re-encoding is required
         if (isAndroidTV) {
-          // Android TV specific high quality transcoding
-          const profile = ffmpegProfiles.transcodingHighQuality;
-          const profileArgs = profile.args.join(' ');
-          ffmpegCommand = settings?.plexlive?.transcoding?.androidtv?.transcodingArgs ||
-                         settings?.plexlive?.transcoding?.mpegts?.transcodingArgs || 
-                         config.plexlive?.transcoding?.mpegts?.transcodingArgs ||
-                         profileArgs;
+          // Android TV specific high quality transcoding - use profile system
+          const profileArgs = await this.getFFmpegArgsForStream(finalStreamUrl, userAgent, stream?.ffmpeg_profile_id);
+          ffmpegCommand = profileArgs.join(' ');
           
-          logger.info('Using high quality transcoding for Android TV', { 
+          logger.info('Using FFmpeg profile for Android TV transcoding', { 
             clientIP: req.ip,
-            profile: profile.name
+            profileId: stream?.ffmpeg_profile_id || 'default',
+            streamId: stream?.id
           });
         } else {
-          // Standard high quality transcoding
-          const profile = ffmpegProfiles.transcodingHighQuality;
-          const profileArgs = profile.args.join(' ');
-          ffmpegCommand = settings?.plexlive?.transcoding?.mpegts?.transcodingArgs || 
-                         config.plexlive?.transcoding?.mpegts?.transcodingArgs ||
-                         profileArgs;
+          // Standard high quality transcoding - use profile system
+          const profileArgs = await this.getFFmpegArgsForStream(finalStreamUrl, userAgent, stream?.ffmpeg_profile_id);
+          ffmpegCommand = profileArgs.join(' ');
         }
       } else {
         // Use quality-preserving profiles for streams that don't need transcoding
         if (isAndroidTV) {
-          // Android TV specific - use stream-type-aware optimized profile
-          const streamFormat = await this.detectStreamFormat(finalStreamUrl);
-          const profile = ffmpegProfiles.selectProfile(userAgent, finalStreamUrl, streamFormat?.type);
-          const profileArgs = profile.args.join(' ');
-          ffmpegCommand = settings?.plexlive?.transcoding?.androidtv?.ffmpegArgs ||
-                         config.plexlive?.transcoding?.androidtv?.ffmpegArgs ||
-                         profileArgs;
+          // Android TV specific - use FFmpeg profile system
+          const profileArgs = await this.getFFmpegArgsForStream(finalStreamUrl, userAgent, stream?.ffmpeg_profile_id);
+          ffmpegCommand = profileArgs.join(' ');
           
-          logger.info('Using stream-type-optimized profile for Android TV', { 
+          logger.info('Using FFmpeg profile for Android TV streaming', { 
             clientIP: req.ip,
-            profile: profile.name,
-            description: profile.description,
-            streamType: streamFormat?.type,
+            profileId: stream?.ffmpeg_profile_id || 'default',
+            streamId: stream?.id,
             url: finalStreamUrl.substring(0, 50) + '...'
           });
         } else {
-          // Use stream-type-specific optimized profiles
-          const streamFormat = await this.detectStreamFormat(finalStreamUrl);
-          const profile = ffmpegProfiles.getStreamTypeProfile(finalStreamUrl, streamFormat?.type);
-          const profileArgs = profile.args.join(' ');
-          ffmpegCommand = settings?.plexlive?.transcoding?.mpegts?.ffmpegArgs || 
-                         config.plexlive?.transcoding?.mpegts?.ffmpegArgs ||
-                         profileArgs;
+          // Use FFmpeg profile system
+          const profileArgs = await this.getFFmpegArgsForStream(finalStreamUrl, userAgent, stream?.ffmpeg_profile_id);
+          ffmpegCommand = profileArgs.join(' ');
           
-          logger.info('Using stream-type-optimized profile', { 
+          logger.info('Using FFmpeg profile for streaming', { 
             clientIP: req.ip,
-            profile: profile.name,
-            description: profile.description,
-            streamType: streamFormat?.type,
+            profileId: stream?.ffmpeg_profile_id || 'default',
+            streamId: stream?.id,
             url: finalStreamUrl.substring(0, 50) + '...'
           });
         }
@@ -3701,8 +3647,8 @@ class StreamManager {
       const settingsService = require('./settingsService');
       const settings = await settingsService.getSettings();
       
-      // Use the new structured Android TV args
-      const args = this.buildAndroidTVFFmpegArgs(streamUrl, settings);
+      // Use FFmpeg profile system for Android TV
+      const args = await this.getFFmpegArgsForStream(streamUrl, 'android tv');
       const { spawn } = require('child_process');
       
       const newFFmpegProcess = spawn(config.streams.ffmpegPath, args);

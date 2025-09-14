@@ -58,6 +58,7 @@ import {
   CloudUpload as ImportIcon,
   List as ListIcon,
   ContentCopy as ContentCopyIcon,
+  Star as StarIcon,
 } from '@mui/icons-material';
 import { useSnackbar } from 'notistack';
 import api, { m3uApi } from '../../services/api';
@@ -81,6 +82,7 @@ const STREAM_TYPES = [
 function StreamManager() {
   const [streams, setStreams] = useState([]);
   const [channels, setChannels] = useState([]);
+  const [ffmpegProfiles, setFFmpegProfiles] = useState([]);
   const [loading, setLoading] = useState(true);
   const [dialogOpen, setDialogOpen] = useState(false);
   const [editingStream, setEditingStream] = useState(null);
@@ -131,9 +133,7 @@ function StreamManager() {
     headers: {},
     protocol_options: {},
     enabled: true,
-    // CRITICAL FIX: Add enhanced encoding fields to prevent web UI corruption
-    enhanced_encoding: false,
-    enhanced_encoding_profile: 'standard-reliability',
+    ffmpeg_profile_id: '', // FFmpeg profile selection
     reliability_score: 1.0,
     last_failure: null,
     failure_count: 0,
@@ -182,6 +182,7 @@ function StreamManager() {
   useEffect(() => {
     fetchStreams();
     fetchChannels();
+    fetchFFmpegProfiles();
   }, []);
 
   // Refresh data when component becomes visible (user navigates back to streams page)
@@ -336,6 +337,17 @@ function StreamManager() {
     }
   };
 
+  const fetchFFmpegProfiles = async () => {
+    try {
+      const response = await api.get('/api/ffmpeg-profiles');
+      console.log('Fetched FFmpeg profiles with counts:', response.data);
+      setFFmpegProfiles(response.data);
+    } catch (error) {
+      console.error('Failed to fetch FFmpeg profiles:', error);
+      // Don't show error snackbar for profiles as they're optional
+    }
+  };
+
   const handleCreate = () => {
     setEditingStream(null);
     setValidationResult(null);
@@ -350,9 +362,7 @@ function StreamManager() {
       headers: {},
       protocol_options: {},
       enabled: true,
-      // CRITICAL FIX: Initialize enhanced encoding fields
-      enhanced_encoding: false,
-      enhanced_encoding_profile: 'standard-reliability',
+      ffmpeg_profile_id: '', // Initialize FFmpeg profile selection
       reliability_score: 1.0,
       last_failure: null,
       failure_count: 0,
@@ -388,7 +398,7 @@ function StreamManager() {
       type: stream.type || 'hls',
       auth_username: stream.auth_username || '',
       auth_password: stream.auth_password || '',
-      enhanced_encoding_profile: stream.enhanced_encoding_profile || 'standard-reliability',
+      ffmpeg_profile_id: stream.ffmpeg_profile_id || '',
       
       // Arrays and objects - parse if they're JSON strings
       backup_urls: Array.isArray(stream.backup_urls) ? stream.backup_urls : parseJsonField(stream.backup_urls, []),
@@ -397,7 +407,6 @@ function StreamManager() {
       
       // Boolean fields - database stores as 0/1 or true/false
       enabled: stream.enabled === 1 || stream.enabled === true,
-      enhanced_encoding: stream.enhanced_encoding === 1 || stream.enhanced_encoding === true,
       monitoring_enabled: stream.monitoring_enabled === 1 || stream.monitoring_enabled === true,
       connection_limits: stream.connection_limits === 1 || stream.connection_limits === true,
       
@@ -508,13 +517,12 @@ function StreamManager() {
         // Optional string fields that can be null or empty
         auth_username: formData.auth_username || null,
         auth_password: formData.auth_password || null,
-        enhanced_encoding_profile: formData.enhanced_encoding_profile || 'standard-reliability',
+        ffmpeg_profile_id: formData.ffmpeg_profile_id || null,
         
         // Boolean field (API expects boolean, not number)
         enabled: Boolean(formData.enabled),
         
         // Number fields that need to be converted from boolean to 0/1
-        enhanced_encoding: formData.enhanced_encoding ? 1 : 0,
         monitoring_enabled: formData.monitoring_enabled ? 1 : 0,
         connection_limits: formData.connection_limits ? 1 : 0,
         
@@ -535,7 +543,6 @@ function StreamManager() {
       console.log('Data types check:', {
         channel_id: typeof data.channel_id,
         enabled: typeof data.enabled,
-        enhanced_encoding: typeof data.enhanced_encoding,
         monitoring_enabled: typeof data.monitoring_enabled,
         backup_urls: Array.isArray(data.backup_urls),
         headers: typeof data.headers,
@@ -554,6 +561,7 @@ function StreamManager() {
 
       setDialogOpen(false);
       fetchStreams();
+      fetchFFmpegProfiles(); // Refresh profile counts
     } catch (error) {
       console.error('Stream save error:', error.response?.data);
       
@@ -1255,30 +1263,6 @@ function StreamManager() {
                               color="primary"
                               variant="outlined"
                             />
-                            {(() => {
-                              try {
-                                const options = typeof stream.protocol_options === 'string' 
-                                  ? JSON.parse(stream.protocol_options || '{}')
-                                  : stream.protocol_options || {};
-                                return options.forceTranscode === true;
-                              } catch {
-                                return false;
-                              }
-                            })() && (
-                              <Chip
-                                label="🔄 Enhanced"
-                                size="small"
-                                color="success"
-                                variant="filled"
-                                sx={{ 
-                                  fontSize: '0.65rem',
-                                  height: '18px',
-                                  '& .MuiChip-label': {
-                                    px: 0.5
-                                  }
-                                }}
-                              />
-                            )}
                           </Box>
                         </TableCell>
                         <TableCell sx={{ display: { xs: 'none', md: 'table-cell' } }}>
@@ -1570,6 +1554,125 @@ function StreamManager() {
               </Grid>
             )}
             
+            <Grid item xs={12} sm={8}>
+              <FormControl fullWidth variant="outlined">
+                <InputLabel>FFmpeg Profile</InputLabel>
+                <Select
+                  value={formData.ffmpeg_profile_id}
+                  onChange={(e) => handleInputChange('ffmpeg_profile_id', e.target.value)}
+                  label="FFmpeg Profile"
+                  disabled={saving}
+                  data-testid="ffmpeg-profile-select"
+                  MenuProps={{
+                    PaperProps: {
+                      sx: {
+                        maxHeight: isMobile ? 300 : 400,
+                        '& .MuiMenuItem-root': {
+                          minHeight: isMobile ? 56 : 48,
+                          padding: isMobile ? '12px 16px' : '8px 16px',
+                        }
+                      }
+                    }
+                  }}
+                >
+                  <MenuItem value="">
+                    <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, width: '100%' }}>
+                      <Box sx={{ flexGrow: 1 }}>
+                        <Typography variant="body2" sx={{ fontStyle: 'italic', color: 'text.secondary' }}>
+                          Use Default Profile
+                        </Typography>
+                        <Typography variant="caption" color="text.secondary">
+                          Automatically selects the default system profile
+                        </Typography>
+                      </Box>
+                    </Box>
+                  </MenuItem>
+                  {ffmpegProfiles.map((profile) => (
+                    <MenuItem key={profile.id} value={profile.id}>
+                      <Box sx={{ 
+                        display: 'flex', 
+                        alignItems: 'center', 
+                        gap: 1, 
+                        width: '100%',
+                        py: isMobile ? 0.5 : 0
+                      }}>
+                        {profile.is_default && (
+                          <Tooltip title="Default Profile">
+                            <StarIcon sx={{ 
+                              fontSize: isMobile ? 18 : 16, 
+                              color: 'primary.main',
+                              flexShrink: 0
+                            }} />
+                          </Tooltip>
+                        )}
+                        <Box sx={{ flexGrow: 1, minWidth: 0 }}>
+                          <Typography 
+                            variant={isMobile ? 'body1' : 'body2'} 
+                            sx={{ 
+                              fontWeight: profile.is_default ? 'bold' : 'normal',
+                              overflow: 'hidden',
+                              textOverflow: 'ellipsis',
+                              whiteSpace: 'nowrap'
+                            }}
+                          >
+                            {profile.name}
+                          </Typography>
+                          <Typography 
+                            variant={isMobile ? 'body2' : 'caption'} 
+                            color="text.secondary"
+                            sx={{
+                              overflow: 'hidden',
+                              textOverflow: 'ellipsis',
+                              whiteSpace: 'nowrap'
+                            }}
+                          >
+                            {profile.stream_count || 0} stream{(profile.stream_count || 0) !== 1 ? 's' : ''} using this profile
+                          </Typography>
+                        </Box>
+                        <Box sx={{ display: 'flex', gap: 0.5, flexShrink: 0 }}>
+                          {profile.is_system && (
+                            <Chip 
+                              label="System" 
+                              size={isMobile ? 'medium' : 'small'} 
+                              variant="outlined" 
+                              sx={{ fontSize: isMobile ? '0.75rem' : '0.65rem' }}
+                            />
+                          )}
+                          {profile.is_default && (
+                            <Chip 
+                              label="Default" 
+                              size={isMobile ? 'medium' : 'small'} 
+                              color="primary"
+                              sx={{ fontSize: isMobile ? '0.75rem' : '0.65rem' }}
+                            />
+                          )}
+                          {(profile.stream_count || 0) > 0 && (
+                            <Chip 
+                              label={profile.stream_count}
+                              size={isMobile ? 'medium' : 'small'} 
+                              color="info"
+                              variant="outlined"
+                              sx={{ 
+                                fontSize: isMobile ? '0.75rem' : '0.65rem',
+                                minWidth: isMobile ? 32 : 24,
+                                height: isMobile ? 24 : 20
+                              }}
+                            />
+                          )}
+                        </Box>
+                      </Box>
+                    </MenuItem>
+                  ))}
+                </Select>
+                <Typography variant={isMobile ? 'body2' : 'caption'} sx={{ mt: 0.5, display: 'block' }}>
+                  {formData.ffmpeg_profile_id 
+                    ? `Using custom profile: ${ffmpegProfiles.find(p => p.id === formData.ffmpeg_profile_id)?.name || 'Selected Profile'}`
+                    : 'Will use the default FFmpeg profile for encoding'
+                  }
+                </Typography>
+              </FormControl>
+            </Grid>
+            
             <Grid item xs={12} sm={4}>
               <Box display="flex" gap={1}>
                 <FormControl fullWidth variant="outlined">
@@ -1647,89 +1750,7 @@ function StreamManager() {
                       />
                     </Grid>
                     
-                    <Grid item xs={12}>
-                      <Box sx={{ mt: 2, mb: 1 }}>
-                        <FormControlLabel
-                          control={
-                            <Switch
-                              checked={(() => {
-                                try {
-                                  const options = typeof formData.protocol_options === 'string' 
-                                    ? JSON.parse(formData.protocol_options || '{}')
-                                    : formData.protocol_options || {};
-                                  return options.forceTranscode === true;
-                                } catch {
-                                  return false;
-                                }
-                              })()}
-                              onChange={(e) => {
-                                try {
-                                  const currentOptions = typeof formData.protocol_options === 'string' 
-                                    ? JSON.parse(formData.protocol_options || '{}')
-                                    : formData.protocol_options || {};
-                                  
-                                  const newOptions = {
-                                    ...currentOptions,
-                                    forceTranscode: e.target.checked
-                                  };
-                                  
-                                  // Remove the key if false to keep the JSON clean
-                                  if (!e.target.checked) {
-                                    delete newOptions.forceTranscode;
-                                  }
-                                  
-                                  handleInputChange('protocol_options', newOptions);
-                                } catch (error) {
-                                  console.error('Error updating forceTranscode:', error);
-                                  // Fallback: create new options object
-                                  handleInputChange('protocol_options', {
-                                    forceTranscode: e.target.checked
-                                  });
-                                }
-                              }}
-                              disabled={saving}
-                              color="primary"
-                            />
-                          }
-                          label={
-                            <Box>
-                              <Typography variant="body1" component="div">
-                                🔄 Force Enhanced Transcoding
-                              </Typography>
-                              <Typography variant="caption" color="text.secondary">
-                                Enables enhanced transcoding with optimized headers for IPTV providers (recommended for  Sports,  Sports, etc.)
-                              </Typography>
-                            </Box>
-                          }
-                        />
-                      </Box>
-                    </Grid>
                     
-                    {/* CRITICAL FIX: Add enhanced encoding control to prevent web UI corruption */}
-                    <Grid item xs={12}>
-                      <Box sx={{ mt: 2, mb: 1 }}>
-                        <FormControlLabel
-                          control={
-                            <Switch
-                              checked={formData.enhanced_encoding}
-                              onChange={(e) => handleInputChange('enhanced_encoding', e.target.checked)}
-                              disabled={saving}
-                              color="success"
-                            />
-                          }
-                          label={
-                            <Box>
-                              <Typography variant="body1" component="div">
-                                ⚡ Enhanced Stream Encoding
-                              </Typography>
-                              <Typography variant="caption" color="text.secondary">
-                                Enables advanced stream processing with error recovery, anti-loop protection, and H.264 compatibility fixes. Recommended for unreliable IPTV sources.
-                              </Typography>
-                            </Box>
-                          }
-                        />
-                      </Box>
-                    </Grid>
                     
                     {/* IPTV CONNECTION LIMITS: User-controlled toggle for connection management */}
                     <Grid item xs={12}>
