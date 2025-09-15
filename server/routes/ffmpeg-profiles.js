@@ -264,4 +264,88 @@ router.get('/available-streams/:id?', async (req, res) => {
   }
 });
 
+// Administrative cleanup endpoint for system profiles
+router.post('/admin/cleanup-system-profiles', async (req, res) => {
+  try {
+    const database = require('../services/database');
+
+    // Get all system profiles that are NOT default
+    const systemProfiles = await database.all(
+      'SELECT * FROM ffmpeg_profiles WHERE is_system = 1 AND is_default = 0'
+    );
+
+    if (systemProfiles.length === 0) {
+      return res.json({
+        success: true,
+        message: 'No extra system profiles found to remove',
+        removed: []
+      });
+    }
+
+    const removed = [];
+
+    // Begin transaction
+    await database.run('BEGIN TRANSACTION');
+
+    try {
+      for (const profile of systemProfiles) {
+        // Check if any streams are assigned to this profile
+        const streamCount = await database.get(
+          'SELECT COUNT(*) as count FROM streams WHERE ffmpeg_profile_id = ?',
+          [profile.id]
+        );
+
+        if (streamCount.count > 0) {
+          logger.warn(`Skipping profile ${profile.name} - has ${streamCount.count} streams assigned`);
+          continue;
+        }
+
+        // Delete client configurations first
+        await database.run(
+          'DELETE FROM ffmpeg_profile_clients WHERE profile_id = ?',
+          [profile.id]
+        );
+
+        // Delete the profile
+        await database.run(
+          'DELETE FROM ffmpeg_profiles WHERE id = ?',
+          [profile.id]
+        );
+
+        removed.push({
+          id: profile.id,
+          name: profile.name,
+          description: profile.description
+        });
+
+        logger.info(`Removed system profile: ${profile.name} (${profile.id})`);
+      }
+
+      // Commit transaction
+      await database.run('COMMIT');
+
+      // Clear FFmpeg profile manager cache
+      ffmpegProfileManager.invalidateCache();
+
+      res.json({
+        success: true,
+        message: `Successfully removed ${removed.length} extra system profile(s)`,
+        removed: removed
+      });
+
+    } catch (error) {
+      // Rollback on error
+      await database.run('ROLLBACK');
+      throw error;
+    }
+
+  } catch (error) {
+    logger.error('Failed to cleanup system profiles:', error);
+    res.status(500).json({
+      error: 'Failed to cleanup system profiles',
+      message: error.message
+    });
+  }
+});
+
 module.exports = router;
