@@ -712,6 +712,14 @@ class DatabaseService {
     }
   }
 
+  // Transaction wrapper method
+  transaction(fn) {
+    if (!this.isInitialized || !this.db) {
+      throw new Error('Database not initialized');
+    }
+    return this.db.transaction(fn);
+  }
+
   // Cleanup
   async cleanup() {
     try {
