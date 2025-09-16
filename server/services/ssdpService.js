@@ -469,7 +469,7 @@ class SSDPService {
         SignalQuality: 100,
         SymbolQuality: 100,
         NetworkRate: 19392636,
-        TargetIP: `${localIP}:5004`
+        TargetIP: `${localIP}:${config.server?.port || process.env.HTTP_PORT || process.env.PORT || 3000}`
       });
     }
 
