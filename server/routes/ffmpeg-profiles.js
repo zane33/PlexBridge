@@ -88,7 +88,7 @@ router.put('/:id', async (req, res) => {
       return res.status(400).json({ error: 'Profile name is required' });
     }
 
-    // Enhanced validation for client configurations
+    // Basic validation for client configurations - FFmpeg validation removed per user request
     if (profileData.clients) {
       for (const [clientType, config] of Object.entries(profileData.clients)) {
         if (config && !config.ffmpeg_args) {
@@ -97,8 +97,9 @@ router.put('/:id', async (req, res) => {
             error: `FFmpeg arguments are required for client type: ${clientType}`
           });
         }
+        // Note: FFmpeg argument content validation removed - accepts any valid string
       }
-      logger.info(`Validated ${Object.keys(profileData.clients).length} client configurations`);
+      logger.info(`Validated ${Object.keys(profileData.clients).length} client configurations (content validation disabled)`);
     }
 
     const profile = await ffmpegProfileManager.updateProfile(profileId, profileData);

@@ -133,18 +133,18 @@ class FFmpegValidator {
     return result;
   }
 
-  // Process FFmpeg arguments safely
+  // Process FFmpeg arguments safely - FFmpeg validation removed per user request
   static processFFmpegArgs(ffmpegArgs, hlsArgs, streamUrl) {
-    // Validate stream URL
+    // Validate stream URL (keeping URL validation for security)
     const urlValidation = this.isValidUrl(streamUrl);
     if (!urlValidation.valid) {
       throw new Error(`Invalid stream URL: ${urlValidation.error}`);
     }
 
-    // Validate FFmpeg arguments
-    const argsValidation = this.validateFFmpegArgs(ffmpegArgs);
-    if (!argsValidation.valid) {
-      throw new Error(`Invalid FFmpeg arguments: ${argsValidation.error}`);
+    // FFmpeg argument validation removed - accept any arguments
+    // Basic type checking only
+    if (!ffmpegArgs || typeof ffmpegArgs !== 'string') {
+      throw new Error('FFmpeg arguments must be a non-empty string');
     }
 
     // Escape the stream URL properly
@@ -155,9 +155,10 @@ class FFmpegValidator {
 
     // If HLS args are provided and the stream is HLS, insert them before -i
     if (hlsArgs && streamUrl.toLowerCase().includes('.m3u8')) {
-      const hlsValidation = this.validateFFmpegArgs(hlsArgs);
-      if (!hlsValidation.valid) {
-        throw new Error(`Invalid HLS arguments: ${hlsValidation.error}`);
+      // HLS argument validation removed - accept any arguments
+      // Basic type checking only
+      if (typeof hlsArgs !== 'string') {
+        throw new Error('HLS arguments must be a string');
       }
 
       const inputIndex = processedArgs.indexOf('-i ');
@@ -169,7 +170,7 @@ class FFmpegValidator {
     return this.parseFFmpegArgs(processedArgs);
   }
 
-  // Validate profile data using Joi
+  // Validate profile data - FFmpeg validation removed per user request
   static validateProfileData(data) {
     const CLIENT_TYPES = ['web_browser', 'android_mobile', 'android_tv', 'ios_mobile', 'apple_tv'];
 
@@ -186,27 +187,13 @@ class FFmpegValidator {
       clients: Joi.object().pattern(
         Joi.string().valid(...CLIENT_TYPES),
         Joi.object({
+          // VALIDATION REMOVED: Accept any FFmpeg arguments without restrictions
           ffmpeg_args: Joi.string()
-            .max(5000)
-            .custom((value, helpers) => {
-              const validation = this.validateFFmpegArgs(value);
-              if (!validation.valid) {
-                return helpers.error('any.invalid', { message: validation.error });
-              }
-              return value;
-            })
+            .max(10000) // Increased limit for complex FFmpeg configurations
             .required(),
+          // VALIDATION REMOVED: Accept any HLS arguments without restrictions
           hls_args: Joi.string()
-            .max(1000)
-            .custom((value, helpers) => {
-              if (value) {
-                const validation = this.validateFFmpegArgs(value);
-                if (!validation.valid) {
-                  return helpers.error('any.invalid', { message: validation.error });
-                }
-              }
-              return value;
-            })
+            .max(5000) // Increased limit for complex HLS configurations
             .allow('')
             .optional()
         })
