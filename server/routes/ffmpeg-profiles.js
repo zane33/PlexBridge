@@ -74,27 +74,42 @@ router.post('/', async (req, res) => {
 router.put('/:id', async (req, res) => {
   try {
     const profileData = req.body;
-    
+    const profileId = req.params.id;
+
+    logger.info(`Profile update request for ${profileId}`, {
+      profileId,
+      name: profileData.name,
+      clientTypes: profileData.clients ? Object.keys(profileData.clients) : [],
+      isDefault: profileData.is_default
+    });
+
     // Validate required fields
     if (!profileData.name) {
       return res.status(400).json({ error: 'Profile name is required' });
     }
-    
-    // Validate client configurations if provided
+
+    // Enhanced validation for client configurations
     if (profileData.clients) {
       for (const [clientType, config] of Object.entries(profileData.clients)) {
         if (config && !config.ffmpeg_args) {
-          return res.status(400).json({ 
-            error: `FFmpeg arguments are required for client type: ${clientType}` 
+          logger.warn(`Invalid client configuration for ${clientType}:`, config);
+          return res.status(400).json({
+            error: `FFmpeg arguments are required for client type: ${clientType}`
           });
         }
       }
+      logger.info(`Validated ${Object.keys(profileData.clients).length} client configurations`);
     }
-    
-    const profile = await ffmpegProfileManager.updateProfile(req.params.id, profileData);
+
+    const profile = await ffmpegProfileManager.updateProfile(profileId, profileData);
+    logger.info(`Profile ${profileId} updated successfully`);
     res.json(profile);
   } catch (error) {
-    logger.error('Failed to update FFmpeg profile:', error);
+    logger.error('Failed to update FFmpeg profile:', {
+      profileId: req.params.id,
+      error: error.message,
+      stack: error.stack
+    });
     if (error.message === 'Profile not found') {
       return res.status(404).json({ error: 'Profile not found' });
     }

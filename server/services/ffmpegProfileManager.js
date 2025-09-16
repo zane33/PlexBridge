@@ -243,33 +243,39 @@ class FFmpegProfileManager {
       const profileId = uuidv4();
       const now = new Date().toISOString();
 
-      // Insert profile
-      await database.run(`
-        INSERT INTO ffmpeg_profiles (id, name, description, is_default, is_system, created_at, updated_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?)
-      `, [
-        profileId,
-        profileData.name,
-        profileData.description || '',
-        profileData.is_default ? 1 : 0,
-        0, // User-created profiles are not system profiles
-        now,
-        now
-      ]);
+      // CRITICAL FIX: Use database transaction for atomic profile creation
+      const result = database.transaction(() => {
+        // Insert profile
+        database.run(`
+          INSERT INTO ffmpeg_profiles (id, name, description, is_default, is_system, created_at, updated_at)
+          VALUES (?, ?, ?, ?, ?, ?, ?)
+        `, [
+          profileId,
+          profileData.name,
+          profileData.description || '',
+          profileData.is_default ? 1 : 0,
+          0, // User-created profiles are not system profiles
+          now,
+          now
+        ]);
 
-      // Insert client configurations
-      if (profileData.clients) {
-        await this.updateProfileClients(profileId, profileData.clients);
-      }
+        // Insert client configurations using synchronous method
+        if (profileData.clients) {
+          this.updateProfileClientsSync(profileId, profileData.clients);
+        }
 
-      // If this is set as default, update other profiles
-      if (profileData.is_default) {
-        await this.setDefaultProfile(profileId);
-      }
+        // If this is set as default, update other profiles using sync method
+        if (profileData.is_default) {
+          this.setDefaultProfileSync(profileId);
+        }
 
-      // Invalidate cache after successful transaction
+        return profileId;
+      })();
+
+      // Only invalidate cache after successful transaction
       this.invalidateCache(profileId);
 
+      logger.info(`Profile ${profileId} created successfully in transaction`);
       return await this.getProfile(profileId);
     } catch (error) {
       logger.error('Failed to create FFmpeg profile:', error);
@@ -298,32 +304,38 @@ class FFmpegProfileManager {
 
       const now = new Date().toISOString();
 
-      // Update profile
-      await database.run(`
-        UPDATE ffmpeg_profiles
-        SET name = ?, description = ?, is_default = ?, updated_at = ?
-        WHERE id = ?
-      `, [
-        profileData.name,
-        profileData.description || '',
-        profileData.is_default ? 1 : 0,
-        now,
-        profileId
-      ]);
+      // CRITICAL FIX: Use database transaction for atomic operations
+      const result = database.transaction(() => {
+        // Update profile metadata
+        database.run(`
+          UPDATE ffmpeg_profiles
+          SET name = ?, description = ?, is_default = ?, updated_at = ?
+          WHERE id = ?
+        `, [
+          profileData.name,
+          profileData.description || '',
+          profileData.is_default ? 1 : 0,
+          now,
+          profileId
+        ]);
 
-      // Update client configurations
-      if (profileData.clients) {
-        await this.updateProfileClients(profileId, profileData.clients);
-      }
+        // Update client configurations using synchronous method
+        if (profileData.clients) {
+          this.updateProfileClientsSync(profileId, profileData.clients);
+        }
 
-      // If this is set as default, update other profiles
-      if (profileData.is_default) {
-        await this.setDefaultProfile(profileId);
-      }
+        // If this is set as default, update other profiles using sync method
+        if (profileData.is_default) {
+          this.setDefaultProfileSync(profileId);
+        }
 
-      // Invalidate cache after successful transaction
+        return true;
+      })();
+
+      // Only invalidate cache after successful transaction
       this.invalidateCache(profileId);
 
+      logger.info(`Profile ${profileId} updated successfully in transaction`);
       return await this.getProfile(profileId);
     } catch (error) {
       logger.error('Failed to update FFmpeg profile:', error);
@@ -369,19 +381,28 @@ class FFmpegProfileManager {
   // Synchronous version for transactions
   updateProfileClientsSync(profileId, clients) {
     try {
+      logger.info(`Updating client configurations for profile ${profileId}`, {
+        profileId,
+        clientCount: Object.keys(clients).length,
+        clientTypes: Object.keys(clients)
+      });
+
       // Delete existing client configurations
-      database.run(
+      const deleteResult = database.run(
         'DELETE FROM ffmpeg_profile_clients WHERE profile_id = ?',
         [profileId]
       );
 
+      logger.info(`Deleted ${deleteResult.changes} existing client configurations for profile ${profileId}`);
+
       // Insert new client configurations
+      let insertCount = 0;
       for (const [clientType, config] of Object.entries(clients)) {
         if (config && config.ffmpeg_args) {
           const clientId = uuidv4();
           const now = new Date().toISOString();
 
-          database.run(`
+          const insertResult = database.run(`
             INSERT INTO ffmpeg_profile_clients (id, profile_id, client_type, ffmpeg_args, hls_args, created_at, updated_at)
             VALUES (?, ?, ?, ?, ?, ?, ?)
           `, [
@@ -393,10 +414,21 @@ class FFmpegProfileManager {
             now,
             now
           ]);
+
+          insertCount++;
+          logger.info(`Inserted client configuration for ${clientType} (${insertResult.lastInsertRowid})`);
+        } else {
+          logger.warn(`Skipping invalid client configuration for ${clientType}:`, config);
         }
       }
+
+      logger.info(`Successfully updated ${insertCount} client configurations for profile ${profileId}`);
     } catch (error) {
-      logger.error('Failed to update profile clients (sync):', error);
+      logger.error('Failed to update profile clients (sync):', {
+        profileId,
+        error: error.message,
+        clientData: clients
+      });
       throw error;
     }
   }

@@ -51,11 +51,22 @@ const io = socketIo(server, {
   }
 });
 
-// Security middleware
+// Security middleware - Enhanced for HTTP compatibility
 app.use(helmet({
   contentSecurityPolicy: false, // Disable for streaming content
-  crossOriginEmbedderPolicy: false
+  crossOriginEmbedderPolicy: false,
+  crossOriginOpenerPolicy: false, // Disable COOP to prevent HTTP warnings
+  originAgentCluster: false, // Disable origin-keyed agent cluster warnings
+  // Disable additional headers that cause issues with HTTP
+  hsts: false, // Disable HSTS for HTTP compatibility
+  frameguard: { action: 'sameorigin' } // Allow same-origin framing
 }));
+
+// Remove Origin-Agent-Cluster header completely
+app.use((req, res, next) => {
+  res.removeHeader('Origin-Agent-Cluster');
+  next();
+});
 
 // Rate limiting
 const limiter = rateLimit({
@@ -67,11 +78,24 @@ const limiter = rateLimit({
 });
 app.use('/api', limiter);
 
-// CORS configuration - Enhanced for streaming
+// CORS configuration - Enhanced for streaming and local network access
 app.use(cors({
-  origin: process.env.NODE_ENV === 'production' 
-    ? [process.env.ALLOWED_ORIGINS?.split(',') || []]
-    : ['http://localhost:3000'],
+  origin: function(origin, callback) {
+    // Allow requests with no origin (same-origin, mobile apps, Postman, etc)
+    if (!origin) return callback(null, true);
+
+    // Allow localhost and local network IPs
+    const allowedPatterns = [
+      /^http:\/\/localhost(:\d+)?$/,
+      /^http:\/\/127\.0\.0\.1(:\d+)?$/,
+      /^http:\/\/192\.168\.\d{1,3}\.\d{1,3}(:\d+)?$/,
+      /^http:\/\/10\.\d{1,3}\.\d{1,3}\.\d{1,3}(:\d+)?$/,
+      /^http:\/\/172\.(1[6-9]|2\d|3[01])\.\d{1,3}\.\d{1,3}(:\d+)?$/
+    ];
+
+    const isAllowed = allowedPatterns.some(pattern => pattern.test(origin));
+    callback(null, isAllowed);
+  },
   credentials: true,
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
   allowedHeaders: ['Content-Type', 'Authorization', 'Range', 'Accept', 'User-Agent'],
