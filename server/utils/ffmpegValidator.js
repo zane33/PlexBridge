@@ -79,46 +79,14 @@ class FFmpegValidator {
     return arg;
   }
 
-  // Validate FFmpeg arguments
+  // Validate FFmpeg arguments - VALIDATION DISABLED per user request
   static validateFFmpegArgs(args) {
     if (!args || typeof args !== 'string') {
       return { valid: false, error: 'Invalid FFmpeg arguments format' };
     }
 
-    // Check length
-    if (args.length > 5000) {
-      return { valid: false, error: 'FFmpeg arguments too long (max 5000 characters)' };
-    }
-
-    // Check for dangerous patterns
-    for (const pattern of this.DANGEROUS_PATTERNS) {
-      if (pattern.test(args)) {
-        return { valid: false, error: 'Dangerous pattern detected in FFmpeg arguments' };
-      }
-    }
-
-    // Parse and validate individual arguments
-    const parsedArgs = this.parseFFmpegArgs(args);
-
-    for (let i = 0; i < parsedArgs.length; i++) {
-      const arg = parsedArgs[i];
-
-      // Skip URL placeholder and pipe output
-      if (arg === '[URL]' || arg === 'pipe:1' || arg === 'pipe:0') {
-        continue;
-      }
-
-      // Check if it's a flag
-      if (arg.startsWith('-')) {
-        if (!this.ALLOWED_FLAGS.includes(arg)) {
-          return {
-            valid: false,
-            error: `Forbidden FFmpeg flag: ${arg}. Please use only whitelisted flags.`
-          };
-        }
-      }
-    }
-
+    // VALIDATION COMPLETELY DISABLED per user request
+    // Allow any FFmpeg arguments without restrictions
     return { valid: true };
   }
 
