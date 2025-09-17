@@ -11,6 +11,7 @@ const streamResilienceService = require('./streamResilienceService');
 const ffmpegProfileManager = require('./ffmpegProfileManager');
 const progressiveStreamHandler = require('./progressiveStreamHandler');
 const advancedM3U8Resolver = require('./advancedM3U8Resolver');
+const upstreamMonitor = require('./upstreamMonitor');
 
 // Android TV Configuration Constants - Optimized for faster startup
 const ANDROID_TV_CONFIG = {
@@ -54,6 +55,7 @@ class StreamManager {
     this.channelStreams = new Map(); // Track streams per channel
     this.clientSessions = new Map(); // Track client sessions to prevent sharing
     this.streamTimeouts = new Map(); // Track stream timeouts
+    this.cleanupLocks = new Set(); // Track sessions being cleaned up to prevent race conditions
   }
 
   // Android TV Detection Utility
@@ -918,7 +920,6 @@ class StreamManager {
       const { url, type, auth, headers: customHeaders = {} } = streamData;
       
       // Check for existing session to prevent duplicates
-      const streamSessionManager = require('./streamSessionManager');
       const existingSession = streamSessionManager.getActiveSessionByClientAndStream(clientIdentifier, streamId);
       
       logger.info('Duplicate session check', {
@@ -970,7 +971,7 @@ class StreamManager {
       }
 
       // Check global concurrent stream limit - use config fallback since this needs to be sync
-      const maxConcurrent = parseInt(process.env.MAX_CONCURRENT_STREAMS) || config.streams?.maxConcurrent || 10;
+      const maxConcurrent = parseInt(process.env.MAX_CONCURRENT_STREAMS) || config.streams?.maxConcurrent || 5;
       
       if (this.activeStreams.size >= maxConcurrent) {
         logger.stream('Maximum concurrent streams reached', { 
@@ -1122,14 +1123,20 @@ class StreamManager {
       // Handle stream events with detailed bandwidth tracking
       streamProcess.stdout.on('data', (chunk) => {
         const stats = this.streamStats.get(sessionId);
+        const stream = this.activeStreams.get(sessionId);
         if (stats) {
           const now = Date.now();
           const deltaTime = now - stats.lastUpdateTime;
           const deltaBytes = chunk.length;
-          
+
           // Update basic metrics
           stats.bytesTransferred += deltaBytes;
           stats.lastUpdateTime = now;
+
+          // Update last activity time for orphan detection (throttled for performance)
+          if (stream && (now - (stream.lastActivity || 0)) > 1000) {
+            stream.lastActivity = now;
+          }
           
           // Calculate current bitrate (bits per second)
           if (deltaTime > 0) {
@@ -1441,7 +1448,19 @@ class StreamManager {
     // Connection pre-warming is now handled by the progressive stream handler
     // Regular streams don't need pre-warming as it can cause buffering issues
 
-    return spawn(config.streams.ffmpegPath, args);
+    const ffmpegProcess = spawn(config.streams.ffmpegPath, args);
+
+    // Enable upstream monitoring if available
+    if (upstreamMonitor && ffmpegProcess.pid) {
+      upstreamMonitor.monitorFFmpegProcess(
+        `stream_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
+        ffmpegProcess,
+        finalUrl,
+        { streamType: 'http', userAgent, profileId }
+      );
+    }
+
+    return ffmpegProcess;
   }
 
   async createTSStreamProxy(url, auth, customHeaders, userAgent, profileId) {
@@ -1594,26 +1613,62 @@ class StreamManager {
   }
 
   cleanupStream(sessionId, reason = 'manual') {
-    const stream = this.activeStreams.get(sessionId);
-    
-    // Clear Android TV reset timer if it exists
-    if (stream && stream.androidTVResetTimer) {
-      clearTimeout(stream.androidTVResetTimer);
-      delete stream.androidTVResetTimer;
-      logger.debug('Cleared Android TV reset timer', { sessionId, reason });
+    // CRITICAL FIX: Prevent concurrent cleanup operations
+    if (this.cleanupLocks.has(sessionId)) {
+      logger.debug('Cleanup already in progress for session', { sessionId, reason });
+      return;
     }
-    
+
+    this.cleanupLocks.add(sessionId);
+
+    try {
+      const stream = this.activeStreams.get(sessionId);
+
+      // Clear Android TV reset timer if it exists
+      if (stream && stream.androidTVResetTimer) {
+        clearTimeout(stream.androidTVResetTimer);
+        delete stream.androidTVResetTimer;
+        logger.debug('Cleared Android TV reset timer', { sessionId, reason });
+      }
+
     // CRITICAL FIX: Enhanced session persistence during errors
-    // Only terminate sessions for intentional disconnects, keep alive during all errors
+    // Define intentional disconnect reasons that ALWAYS terminate
+    const intentionalDisconnects = [
+      'disconnect',           // Generic client disconnect
+      'client_disconnect',    // Explicit client disconnect
+      'manual',              // Manual termination
+      'user_requested',      // User requested stop
+      'shutdown',            // System shutdown
+      'forced',              // Forced cleanup
+      'orphaned',            // Orphaned session cleanup
+      'stale'                // Stale session cleanup
+    ];
+
+    // Define error reasons that may maintain sessions for recovery
     const errorReasons = [
       'ffmpeg_error', 'process_closed', 'stream_failed', 'timeout',
-      'response_invalid', 'restart_error', 'restart_failed', 
+      'response_invalid', 'restart_error', 'restart_failed',
       'response_invalid_during_restart', 'response_closed'
     ];
-    
-    const shouldMaintainSession = errorReasons.includes(reason) || 
-                                 process.env.SESSION_KEEP_ALIVE === 'true';
-    
+
+    // CRITICAL: Intentional disconnects ALWAYS terminate, regardless of environment variables
+    const isIntentionalDisconnect = intentionalDisconnects.includes(reason);
+
+    // Only maintain session for errors when SESSION_KEEP_ALIVE is true AND it's not an intentional disconnect
+    const shouldMaintainSession = !isIntentionalDisconnect &&
+                                 (errorReasons.includes(reason) ||
+                                  process.env.SESSION_KEEP_ALIVE === 'true');
+
+    // Log the decision for debugging
+    logger.info('Session cleanup decision', {
+      sessionId,
+      reason,
+      isIntentionalDisconnect,
+      shouldMaintainSession,
+      SESSION_KEEP_ALIVE: process.env.SESSION_KEEP_ALIVE,
+      streamExists: !!stream
+    });
+
     if (stream && shouldMaintainSession) {
       // Track error count for automatic resilience upgrade
       if (!stream.errorCount) {
@@ -1791,29 +1846,41 @@ class StreamManager {
         }
       });
       
-      // Emit Socket.IO event for real-time dashboard updates
+      // Emit Socket.IO event for real-time dashboard updates with enhanced error handling
       if (global.io) {
-        const streamEndEventData = {
-          sessionId,
-          streamId: stream.streamId,
-          clientIP: stream.clientIP,
-          duration,
-          bytesTransferred: stats?.bytesTransferred || 0,
-          avgBitrate: stats?.avgBitrate || 0,
-          peakBitrate: stats?.peakBitrate || 0,
-          reason,
-          timestamp: new Date().toISOString()
-        };
-        
-        global.io.emit('stream:stopped', streamEndEventData);
-        logger.stream('Emitted stream:stopped event', { sessionId });
-        
-        // Emit metrics update to the metrics room
-        this.emitMetricsUpdate();
+        try {
+          const streamEndEventData = {
+            sessionId,
+            streamId: stream.streamId,
+            clientIP: stream.clientIP,
+            duration,
+            bytesTransferred: stats?.bytesTransferred || 0,
+            avgBitrate: stats?.avgBitrate || 0,
+            peakBitrate: stats?.peakBitrate || 0,
+            reason,
+            timestamp: new Date().toISOString()
+          };
+
+          global.io.emit('stream:stopped', streamEndEventData);
+          logger.stream('Emitted stream:stopped event', { sessionId });
+
+          // Emit metrics update to the metrics room
+          this.emitMetricsUpdate();
+        } catch (error) {
+          logger.error('Failed to emit WebSocket events during cleanup', {
+            sessionId,
+            error: error.message
+          });
+          // Continue cleanup - don't let WebSocket failures prevent session cleanup
+        }
       }
     }
-    
+
     logger.stream('Stream cleaned up', { sessionId, reason, streamId: stream?.streamId });
+    } finally {
+      // CRITICAL FIX: Always release the cleanup lock
+      this.cleanupLocks.delete(sessionId);
+    }
   }
 
   async getActiveStreams() {
@@ -1891,9 +1958,9 @@ class StreamManager {
     const totalStreams = this.activeStreams.size;
     
     // Use provided maxConcurrentStreams or fall back to environment/default
-    const maxConcurrent = (maxConcurrentStreams !== null && maxConcurrentStreams !== undefined) 
-      ? parseInt(maxConcurrentStreams) || 10
-      : parseInt(process.env.MAX_CONCURRENT_STREAMS) || 10;
+    const maxConcurrent = (maxConcurrentStreams !== null && maxConcurrentStreams !== undefined)
+      ? parseInt(maxConcurrentStreams) || 5
+      : parseInt(process.env.MAX_CONCURRENT_STREAMS) || 5;
     
     const channelCounts = new Map();
     
@@ -1989,12 +2056,15 @@ class StreamManager {
   async proxyPlexCompatibleStream(streamUrl, channel, stream, req, res) {
     try {
       // Debug logging to track where failures occur
-      console.log('DEBUG: proxyPlexCompatibleStream called', { 
-        streamUrl, 
-        channelId: channel?.id, 
-        channelName: channel?.name 
+      console.log('DEBUG: proxyPlexCompatibleStream called', {
+        streamUrl,
+        channelId: channel?.id,
+        channelName: channel?.name
       });
-      
+
+      // Declare sessionId early to avoid temporal dead zone errors
+      let sessionId;
+
       // CRITICAL: Detect Plex Web Client specifically
       const userAgent = req.get('User-Agent') || '';
       const clientIdentifier = req.headers['x-plex-client-identifier'] || '';
@@ -2705,11 +2775,27 @@ class StreamManager {
       res.set(responseHeaders);
       
       const ffmpegProcess = spawn(config.streams.ffmpegPath, args);
-      
+
       logger.info('FFmpeg process spawned', {
         channelId: channel.id,
         pid: ffmpegProcess.pid
       });
+
+      // Enable upstream monitoring for this streaming session
+      if (upstreamMonitor && ffmpegProcess.pid) {
+        upstreamMonitor.monitorFFmpegProcess(
+          sessionId,
+          ffmpegProcess,
+          finalStreamUrl,
+          {
+            streamType: 'mpeg-ts',
+            channelId: channel.id,
+            channelName: channel.name,
+            userAgent: req.get('User-Agent'),
+            clientIP: req.ip
+          }
+        );
+      }
       
       if (!ffmpegProcess.pid) {
         console.log('DEBUG: FFmpeg failed to start');
@@ -2764,7 +2850,6 @@ class StreamManager {
       }, startupTimeoutMs);
 
       // ===== ADD SESSION TRACKING FOR PLEX STREAMS =====
-      const streamSessionManager = require('./streamSessionManager');
       const sessionClientIdentifier = this.generateClientIdentifier(req);
       
       // Check for existing session to prevent duplicates
@@ -2777,8 +2862,7 @@ class StreamManager {
         userAgent: req.get('User-Agent'),
         clientIP: req.ip
       });
-      
-      let sessionId;
+
       if (existingSession) {
         logger.info('Found existing Plex session - ending it to prevent duplicates', {
           existingSessionId: existingSession.sessionId,
@@ -3434,14 +3518,29 @@ class StreamManager {
 
       const { spawn } = require('child_process');
       const ffmpegProcess = spawn(config.streams.ffmpegPath, ffmpegArgs);
-      
+
       streamInfo.process = ffmpegProcess;
-      
+
       logger.info('FFmpeg HLS transcoding started for web client', {
         sessionId,
         pid: ffmpegProcess.pid,
         channelId: channel.id
       });
+
+      // Enable upstream monitoring for HLS transcoding
+      if (upstreamMonitor && ffmpegProcess.pid) {
+        upstreamMonitor.monitorFFmpegProcess(
+          sessionId,
+          ffmpegProcess,
+          streamUrl,
+          {
+            streamType: 'hls-transcode',
+            channelId: channel.id,
+            channelName: channel.name,
+            clientType: 'web'
+          }
+        );
+      }
 
       // Set proper headers for HLS streaming
       res.set({
@@ -3763,7 +3862,6 @@ class StreamManager {
       });
       
       // Create session for bandwidth tracking
-      const streamSessionManager = require('./streamSessionManager');
       const clientIdentifier = this.generateClientIdentifier(req);
       sessionId = `${channel.id}_${clientIdentifier}_${Date.now()}`;
       
@@ -4009,7 +4107,6 @@ class StreamManager {
       // End session on error - only if sessionId was successfully created
       if (sessionId) {
         try {
-          const streamSessionManager = require('./streamSessionManager');
           await streamSessionManager.endSession(sessionId, 'error');
         } catch (sessionEndError) {
           logger.warn('Failed to end session during error cleanup', {
@@ -4199,19 +4296,36 @@ class StreamManager {
       }
 
       const ffmpegProcess = spawn(config.streams.ffmpegPath, args);
-      
+
       if (!ffmpegProcess.pid) {
         throw new Error('Failed to start FFmpeg transcoding process');
       }
 
-      logger.info('Started transcoding process with channel context', { 
+      logger.info('Started transcoding process with channel context', {
         channelId: channel.id,
         channelName: channel.name,
-        url: streamUrl, 
+        url: streamUrl,
         pid: ffmpegProcess.pid,
         streamType,
         clientIP: req.ip
       });
+
+      // Enable upstream monitoring for transcoded stream
+      if (upstreamMonitor && ffmpegProcess.pid) {
+        const monitoringSessionId = `transcoded_${channel.id}_${Date.now()}`;
+        upstreamMonitor.monitorFFmpegProcess(
+          monitoringSessionId,
+          ffmpegProcess,
+          streamUrl,
+          {
+            streamType: `transcoded-${streamType}`,
+            channelId: channel.id,
+            channelName: channel.name,
+            clientIP: req.ip,
+            userAgent: req.get('User-Agent')
+          }
+        );
+      }
 
       // Pipe FFmpeg output to response
       ffmpegProcess.stdout.pipe(res);
@@ -4317,16 +4431,31 @@ class StreamManager {
       }
 
       const ffmpegProcess = spawn(config.streams.ffmpegPath, args);
-      
+
       if (!ffmpegProcess.pid) {
         throw new Error('Failed to start FFmpeg transcoding process');
       }
 
-      logger.stream('Started transcoding process', { 
-        url: streamUrl, 
+      logger.stream('Started transcoding process', {
+        url: streamUrl,
         pid: ffmpegProcess.pid,
-        streamType 
+        streamType
       });
+
+      // Enable upstream monitoring for transcoding
+      if (upstreamMonitor && ffmpegProcess.pid) {
+        const monitoringSessionId = `proxy_${streamType}_${Date.now()}`;
+        upstreamMonitor.monitorFFmpegProcess(
+          monitoringSessionId,
+          ffmpegProcess,
+          streamUrl,
+          {
+            streamType: `proxy-${streamType}`,
+            clientIP: req.ip,
+            userAgent: req.get('User-Agent')
+          }
+        );
+      }
 
       // Pipe FFmpeg output to response
       ffmpegProcess.stdout.pipe(res);
@@ -5206,18 +5335,67 @@ StreamManager.prototype.upgradeToResilientStream = async function(sessionId, str
   }
 };
 
-// Periodic cleanup of stale sessions (every 5 minutes)
-setInterval(() => {
-  const now = Date.now();
-  const maxSessionAge = 60 * 60 * 1000; // 1 hour (original value)
-  
-  for (const [sessionId, stream] of streamManager.activeStreams) {
-    if (now - stream.startTime > maxSessionAge) {
-      logger.stream('Cleaning up stale session', { sessionId, age: now - stream.startTime });
-      streamManager.cleanupStream(sessionId, 'stale');
+// Enhanced periodic cleanup with adaptive intervals based on load
+function getAdaptiveCleanupInterval() {
+  const sessionCount = streamManager.activeStreams.size;
+  if (sessionCount > 50) return 60 * 1000; // 1 minute for high load
+  if (sessionCount > 10) return 30 * 1000; // 30 seconds for medium load
+  return 15 * 1000; // 15 seconds for low load
+}
+
+function scheduleNextCleanup() {
+  const interval = getAdaptiveCleanupInterval();
+
+  setTimeout(() => {
+    const now = Date.now();
+    const maxSessionAge = 60 * 60 * 1000; // 1 hour for very old sessions
+    const orphanedSessionTimeout = 60 * 1000; // 1 minute for sessions without activity
+
+    for (const [sessionId, stream] of streamManager.activeStreams) {
+      const sessionAge = now - stream.startTime;
+      const lastActivity = stream.lastActivity || stream.startTime;
+      const inactiveTime = now - lastActivity;
+
+      // Force cleanup very old sessions
+      if (sessionAge > maxSessionAge) {
+        logger.warn('Force cleaning very old session', {
+          sessionId,
+          age: sessionAge,
+          channelName: stream.channelName || 'Unknown'
+        });
+        streamManager.cleanupStream(sessionId, 'forced');
+      }
+      // Clean up orphaned sessions (no activity for 1 minute)
+      else if (inactiveTime > orphanedSessionTimeout && !stream.isResilient) {
+        logger.warn('Cleaning up orphaned session with no activity', {
+          sessionId,
+          inactiveTime,
+          channelName: stream.channelName || 'Unknown'
+        });
+        streamManager.cleanupStream(sessionId, 'orphaned');
+      }
     }
-  }
-}, 5 * 60 * 1000);
+
+    // Also check streamSessionManager for orphaned sessions
+    const activeSessions = streamSessionManager.getActiveSessions();
+    for (const session of activeSessions) {
+      // If session exists in sessionManager but not in streamManager, it's orphaned
+      if (!streamManager.activeStreams.has(session.sessionId)) {
+        logger.warn('Found orphaned session in sessionManager', {
+          sessionId: session.sessionId,
+          channelName: session.channelName
+        });
+        streamSessionManager.endSession(session.sessionId, 'orphaned');
+      }
+    }
+
+    // Schedule next cleanup with adaptive interval
+    scheduleNextCleanup();
+  }, interval);
+}
+
+// Start adaptive cleanup
+scheduleNextCleanup();
 
 // Periodic bandwidth updates for real-time monitoring (every 2 seconds)
 setInterval(async () => {
@@ -5407,10 +5585,10 @@ streamManager.emitMetricsUpdate = async function() {
     const epgService = require('./epgService');
     
     // Get max concurrent streams from settings
-    let maxConcurrentStreams = 10;
+    let maxConcurrentStreams = 5;
     try {
-      maxConcurrentStreams = await settingsService.getSetting('plexlive.streaming.maxConcurrentStreams', 10);
-      maxConcurrentStreams = parseInt(maxConcurrentStreams) || 10;
+      maxConcurrentStreams = await settingsService.getSetting('plexlive.streaming.maxConcurrentStreams', 5);
+      maxConcurrentStreams = parseInt(maxConcurrentStreams) || 5;
     } catch (err) {
       logger.warn('Failed to get max concurrent streams for metrics update:', err);
     }

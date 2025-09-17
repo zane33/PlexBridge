@@ -3,8 +3,10 @@ const router = express.Router();
 const database = require('../services/database');
 const cacheService = require('../services/cacheService');
 const streamManager = require('../services/streamManager');
+const streamSessionManager = require('../services/streamSessionManager');
 const epgService = require('../services/epgService');
 const settingsService = require('../services/settingsService');
+const upstreamMonitor = require('../services/upstreamMonitor');
 const logger = require('../utils/logger');
 const { v4: uuidv4 } = require('uuid');
 const Joi = require('joi');
@@ -85,7 +87,7 @@ const plexliveSettingsSchema = Joi.object({
     deviceDescription: Joi.string().max(255).default('IPTV to Plex Bridge Interface')
   }).default(),
   streaming: Joi.object({
-    maxConcurrentStreams: Joi.number().integer().min(1).max(100).default(10),
+    maxConcurrentStreams: Joi.number().integer().min(1).max(100).default(5),
     streamTimeout: Joi.number().integer().min(5000).max(300000).default(30000),
     reconnectAttempts: Joi.number().integer().min(0).max(10).default(3),
     bufferSize: Joi.number().integer().min(1024).max(1048576).default(65536),
@@ -1632,7 +1634,6 @@ router.get('/streams/active', async (req, res) => {
     }
     
     logger.info('Getting active streams...');
-    const streamSessionManager = require('../services/streamSessionManager');
     const activeSessions = streamSessionManager.getActiveSessions();
     const activeStreams = activeSessions || [];
     logger.info('Getting streams by channel...');
@@ -1673,14 +1674,54 @@ router.delete('/streams/active/client/:clientId', async (req, res) => {
   try {
     const { clientId } = req.params;
     const { reason = 'admin' } = req.body;
-    
+
     streamManager.cleanupClientSessions(clientId, reason);
-    
+
     logger.info('Client sessions terminated', { clientId, reason });
     res.json({ message: 'Client sessions terminated successfully', clientId });
   } catch (error) {
     logger.error('Client session termination error:', error);
     res.status(500).json({ error: 'Failed to terminate client sessions' });
+  }
+});
+
+// Upstream monitoring endpoints
+router.get('/upstream/status', async (req, res) => {
+  try {
+    const monitoringStatus = upstreamMonitor.getMonitoringStatus();
+    const upstreamStats = upstreamMonitor.getUpstreamStats();
+
+    res.json({
+      monitoring: monitoringStatus,
+      statistics: upstreamStats,
+      timestamp: new Date().toISOString()
+    });
+  } catch (error) {
+    logger.error('Upstream monitoring status error:', error);
+    res.status(500).json({ error: 'Failed to fetch upstream monitoring status' });
+  }
+});
+
+router.get('/upstream/stats', async (req, res) => {
+  try {
+    const upstreamStats = upstreamMonitor.getUpstreamStats();
+
+    res.json({
+      domains: upstreamStats,
+      summary: {
+        totalDomains: upstreamStats.length,
+        totalIssues: upstreamStats.reduce((total, domain) =>
+          total + Object.values(domain.issues).reduce((sum, count) => sum + count, 0), 0
+        ),
+        activeProblems: upstreamStats.filter(domain =>
+          domain.lastIssue && (Date.now() - domain.lastIssue) < 3600000 // Last hour
+        ).length
+      },
+      timestamp: new Date().toISOString()
+    });
+  } catch (error) {
+    logger.error('Upstream statistics error:', error);
+    res.status(500).json({ error: 'Failed to fetch upstream statistics' });
   }
 });
 
@@ -1711,13 +1752,13 @@ router.get('/metrics', async (req, res) => {
     }
 
     // Get real max concurrent streams from settings first
-    let maxConcurrentStreams = 10; // fallback default
+    let maxConcurrentStreams = 5; // fallback default
     try {
-      maxConcurrentStreams = await settingsService.getSetting('plexlive.streaming.maxConcurrentStreams', 10);
-      maxConcurrentStreams = parseInt(maxConcurrentStreams) || 10;
+      maxConcurrentStreams = await settingsService.getSetting('plexlive.streaming.maxConcurrentStreams', 5);
+      maxConcurrentStreams = parseInt(maxConcurrentStreams) || 5;
     } catch (settingsError) {
       logger.warn('Failed to get max concurrent streams from settings, using fallback:', settingsError);
-      maxConcurrentStreams = parseInt(process.env.MAX_CONCURRENT_STREAMS) || 10;
+      maxConcurrentStreams = parseInt(process.env.MAX_CONCURRENT_STREAMS) || 5;
     }
 
     // Get active streams safely
@@ -1834,14 +1875,14 @@ router.get('/metrics', async (req, res) => {
     logger.error('Metrics error:', error);
     
     // Get max concurrent streams for fallback
-    let fallbackMaxStreams = 10;
+    let fallbackMaxStreams = 5;
     try {
       const streamingSetting = await database.get('SELECT value FROM settings WHERE key = ?', ['plexlive.streaming.maxConcurrentStreams']);
       if (streamingSetting) {
-        fallbackMaxStreams = parseInt(streamingSetting.value) || 10;
+        fallbackMaxStreams = parseInt(streamingSetting.value) || 5;
       }
     } catch (settingsError) {
-      fallbackMaxStreams = parseInt(process.env.MAX_CONCURRENT_STREAMS) || 10;
+      fallbackMaxStreams = parseInt(process.env.MAX_CONCURRENT_STREAMS) || 5;
     }
     
     // Return fallback metrics structure on error
@@ -2550,6 +2591,15 @@ router.get('/backup/export', async (req, res) => {
 // Backup import and restore
 router.post('/backup/import', async (req, res) => {
   try {
+    // Debug logging to understand what we're receiving
+    logger.debug('Backup import request received', {
+      hasBackupData: !!req.body.backupData,
+      hasOptions: !!req.body.options,
+      bodyKeys: Object.keys(req.body),
+      backupDataType: typeof req.body.backupData,
+      backupDataKeys: req.body.backupData ? Object.keys(req.body.backupData) : 'none'
+    });
+
     const { backupData, options = {} } = req.body;
     const { 
       clearExisting = false, 
@@ -2691,15 +2741,29 @@ router.post('/backup/import', async (req, res) => {
       if (importEpgSources && backupData.data.epgSources) {
         for (const epgSource of backupData.data.epgSources) {
           try {
+            // Convert refresh_interval if it's in seconds format (like "3600.0") to proper format
+            let refreshInterval = epgSource.refresh_interval;
+            if (refreshInterval && typeof refreshInterval === 'string' && refreshInterval.match(/^\d+(\.\d+)?$/)) {
+              // Convert seconds to hours format (most common)
+              const seconds = parseFloat(refreshInterval);
+              const hours = Math.round(seconds / 3600);
+              refreshInterval = hours > 0 ? `${hours}h` : '1h'; // Default to 1h if calculation results in 0
+              logger.debug('EPG import: Converted interval', {
+                original: epgSource.refresh_interval,
+                converted: refreshInterval,
+                source: epgSource.name
+              });
+            }
+
             await database.run(`
-              INSERT OR ${clearExisting ? 'REPLACE' : 'IGNORE'} INTO epg_sources 
-              (id, name, url, refresh_interval, enabled, last_refresh, created_at, updated_at, last_error, last_success, category) 
+              INSERT OR ${clearExisting ? 'REPLACE' : 'IGNORE'} INTO epg_sources
+              (id, name, url, refresh_interval, enabled, last_refresh, created_at, updated_at, last_error, last_success, category)
               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             `, [
               epgSource.id,
               epgSource.name,
               epgSource.url,
-              epgSource.refresh_interval,
+              refreshInterval,
               epgSource.enabled,
               epgSource.last_refresh || null,
               epgSource.created_at || new Date().toISOString(),
@@ -2713,6 +2777,7 @@ router.post('/backup/import', async (req, res) => {
             if (error.code === 'SQLITE_CONSTRAINT_UNIQUE') {
               results.skipped.epgSources++;
             } else {
+              logger.error('EPG source import error:', { source: epgSource.name, error: error.message });
               results.errors.push(`EPG Source ${epgSource.name}: ${error.message}`);
             }
           }

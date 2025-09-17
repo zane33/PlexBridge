@@ -334,7 +334,7 @@ class SettingsService {
         deviceDescription: 'IPTV to Plex Bridge Interface'
       },
       streaming: {
-        maxConcurrentStreams: 10,
+        maxConcurrentStreams: 5,
         streamTimeout: 30000,
         reconnectAttempts: 3,
         bufferSize: 65536,
@@ -425,15 +425,28 @@ class SettingsService {
   setNestedValue(obj, path, value) {
     const keys = path.split('.');
     let current = obj;
-    
+
     for (let i = 0; i < keys.length - 1; i++) {
+      // Check if current path conflicts with existing value
+      if (current[keys[i]] && typeof current[keys[i]] !== 'object') {
+        logger.warn(`Settings conflict: Cannot create nested path '${path}' because '${keys.slice(0, i + 1).join('.')}' already exists as non-object value:`, current[keys[i]]);
+        return; // Skip this setting to avoid error
+      }
+
       if (!current[keys[i]]) {
         current[keys[i]] = {};
       }
       current = current[keys[i]];
     }
-    
-    current[keys[keys.length - 1]] = value;
+
+    // Check if the final assignment would conflict with existing nested structure
+    const finalKey = keys[keys.length - 1];
+    if (current[finalKey] && typeof current[finalKey] === 'object' && typeof value !== 'object') {
+      logger.warn(`Settings conflict: Cannot set '${path}' to primitive value because it already has nested structure:`, current[finalKey]);
+      return; // Skip this setting to avoid overwriting nested structure
+    }
+
+    current[finalKey] = value;
   }
 
   /**

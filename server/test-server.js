@@ -59,7 +59,7 @@ let streamData = [];
 // Function to get real metrics
 function getRealMetrics() {
   const memUsage = process.memoryUsage();
-  const maxStreams = savedSettings?.plexlive?.streaming?.maxConcurrentStreams || 10;
+  const maxStreams = savedSettings?.plexlive?.streaming?.maxConcurrentStreams || 5;
   
   return {
     streams: {
@@ -501,7 +501,7 @@ let savedSettings = {
       deviceDescription: 'IPTV to Plex Bridge Interface'
     },
     streaming: {
-      maxConcurrentStreams: 10,
+      maxConcurrentStreams: 5,
       streamTimeout: 30000,
       reconnectAttempts: 3,
       bufferSize: 65536,

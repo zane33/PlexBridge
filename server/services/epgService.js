@@ -144,9 +144,25 @@ class EPGService {
   }
 
   parseInterval(intervalStr) {
+    // Handle legacy format (seconds like "3600.0")
+    if (intervalStr && typeof intervalStr === 'string' && intervalStr.match(/^\d+(\.\d+)?$/)) {
+      const seconds = parseFloat(intervalStr);
+      const hours = Math.round(seconds / 3600);
+      const validHours = hours > 0 ? hours : 1; // Default to 1h if calculation results in 0
+      logger.warn('EPG parseInterval: Converting legacy seconds format', {
+        original: intervalStr,
+        converted: `${validHours}h`
+      });
+      return { value: validHours, unit: 'hours' };
+    }
+
     const match = intervalStr.match(/^(\d+)([hmd])$/);
     if (!match) {
-      throw new Error(`Invalid interval format: ${intervalStr}`);
+      logger.warn('EPG parseInterval: Invalid format, using default', {
+        intervalStr,
+        defaulting: '4h'
+      });
+      return { value: 4, unit: 'hours' }; // Default fallback
     }
 
     const value = parseInt(match[1]);
@@ -156,7 +172,13 @@ class EPGService {
       case 'h': return { value, unit: 'hours' };
       case 'd': return { value, unit: 'days' };
       case 'm': return { value, unit: 'minutes' };
-      default: throw new Error(`Invalid interval unit: ${unit}`);
+      default: {
+        logger.warn('EPG parseInterval: Invalid unit, using default', {
+          unit,
+          defaulting: '4h'
+        });
+        return { value: 4, unit: 'hours' }; // Default fallback
+      }
     }
   }
 

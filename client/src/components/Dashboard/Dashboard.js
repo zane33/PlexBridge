@@ -35,6 +35,8 @@ import {
   DialogContent,
   DialogActions,
   DialogContentText,
+  ToggleButton,
+  ToggleButtonGroup,
 } from '@mui/material';
 import {
   Stream as StreamIcon,
@@ -60,6 +62,8 @@ import {
   DataUsage as DataUsageIcon,
   Warning as WarningIcon,
   CheckCircle as CheckCircleIcon,
+  ViewList as ViewListIcon,
+  ViewModule as ViewModuleIcon,
 } from '@mui/icons-material';
 import { Chart as ChartJS, CategoryScale, LinearScale, PointElement, LineElement, Title, Tooltip as ChartTooltip, Legend, ArcElement } from 'chart.js';
 import { Doughnut } from 'react-chartjs-2';
@@ -67,6 +71,7 @@ import { format } from 'date-fns';
 import api from '../../services/api';
 import socketService from '../../services/socket';
 import { useSnackbar } from 'notistack';
+import SessionCard from './SessionCard';
 
 ChartJS.register(CategoryScale, LinearScale, PointElement, LineElement, Title, ChartTooltip, Legend, ArcElement);
 
@@ -85,6 +90,7 @@ function Dashboard() {
   const [streamingStats, setStreamingStats] = useState(null);
   const [streamingBandwidth, setStreamingBandwidth] = useState(null);
   const [terminateDialog, setTerminateDialog] = useState({ open: false, sessionId: null, sessionData: null });
+  const [sessionViewMode, setSessionViewMode] = useState('cards'); // 'table' or 'cards'
   const theme = useTheme();
   const isMobile = useMediaQuery(theme.breakpoints.down('md'));
   const { enqueueSnackbar } = useSnackbar();
@@ -1221,21 +1227,61 @@ function Dashboard() {
               </Box>
             </Box>
             
-            {/* Real-time update indicator */}
-            <Box sx={{ display: 'flex', alignItems: 'center' }}>
-              <Box
-                sx={{
-                  width: 8,
-                  height: 8,
-                  borderRadius: '50%',
-                  bgcolor: socketService.isConnected() ? 'success.main' : 'error.main',
-                  mr: 1,
-                  animation: socketService.isConnected() ? 'pulse 2s infinite' : 'none'
+            {/* View Toggle and Real-time Update Indicator */}
+            <Box sx={{ display: 'flex', alignItems: 'center', gap: 2 }}>
+              {/* View Mode Toggle */}
+              <ToggleButtonGroup
+                value={sessionViewMode}
+                exclusive
+                onChange={(event, newMode) => {
+                  if (newMode !== null) {
+                    setSessionViewMode(newMode);
+                  }
                 }}
-              />
-              <Typography variant="caption" sx={{ color: 'text.secondary' }}>
-                {socketService.isConnected() ? 'Live' : 'Offline'}
-              </Typography>
+                size="small"
+                sx={{
+                  '& .MuiToggleButton-root': {
+                    border: '1px solid rgba(99, 102, 241, 0.3)',
+                    color: '#6366f1',
+                    '&.Mui-selected': {
+                      backgroundColor: 'rgba(99, 102, 241, 0.1)',
+                      color: '#6366f1',
+                      borderColor: '#6366f1',
+                    },
+                    '&:hover': {
+                      backgroundColor: 'rgba(99, 102, 241, 0.05)',
+                    }
+                  }
+                }}
+              >
+                <ToggleButton value="cards" aria-label="card view">
+                  <Tooltip title="Card View">
+                    <ViewModuleIcon fontSize="small" />
+                  </Tooltip>
+                </ToggleButton>
+                <ToggleButton value="table" aria-label="table view">
+                  <Tooltip title="Table View">
+                    <ViewListIcon fontSize="small" />
+                  </Tooltip>
+                </ToggleButton>
+              </ToggleButtonGroup>
+
+              {/* Real-time update indicator */}
+              <Box sx={{ display: 'flex', alignItems: 'center' }}>
+                <Box
+                  sx={{
+                    width: 8,
+                    height: 8,
+                    borderRadius: '50%',
+                    bgcolor: socketService.isConnected() ? 'success.main' : 'error.main',
+                    mr: 1,
+                    animation: socketService.isConnected() ? 'pulse 2s infinite' : 'none'
+                  }}
+                />
+                <Typography variant="caption" sx={{ color: 'text.secondary' }}>
+                  {socketService.isConnected() ? 'Live' : 'Offline'}
+                </Typography>
+              </Box>
             </Box>
           </Box>
           
@@ -1249,7 +1295,23 @@ function Dashboard() {
                 Streaming sessions will appear here when users start watching channels
               </Typography>
             </Box>
+          ) : sessionViewMode === 'cards' ? (
+            /* Enhanced Card View */
+            <Grid container spacing={3} sx={{ mt: 2 }} data-testid="live-streaming-sessions">
+              {streamingSessions.map((session) => (
+                <Grid item xs={12} md={6} lg={4} key={session.sessionId}>
+                  <SessionCard
+                    session={session}
+                    onTerminate={openTerminateDialog}
+                    formatDuration={formatSessionDuration}
+                    formatBitrate={formatBitrate}
+                    formatBytes={formatBytes}
+                  />
+                </Grid>
+              ))}
+            </Grid>
           ) : (
+            /* Traditional Table View */
             <TableContainer component={Paper} sx={{ mt: 2 }} data-testid="live-streaming-sessions">
               <Table>
                 <TableHead>
@@ -1268,11 +1330,11 @@ function Dashboard() {
                     <TableRow key={session.sessionId}>
                       <TableCell>
                         <Box sx={{ display: 'flex', alignItems: 'center' }}>
-                          <Avatar 
-                            sx={{ 
-                              bgcolor: session.isAndroidTV ? 'success.main' : 'primary.main', 
-                              width: 32, 
-                              height: 32, 
+                          <Avatar
+                            sx={{
+                              bgcolor: session.isAndroidTV ? 'success.main' : 'primary.main',
+                              width: 32,
+                              height: 32,
                               mr: 2,
                               fontSize: '0.875rem'
                             }}
@@ -1284,7 +1346,7 @@ function Dashboard() {
                               {session.clientIP}
                             </Typography>
                             <Typography variant="caption" color="text.secondary">
-                              {session.hostname || 'Resolving...'}
+                              {session.clientHostname || session.hostname || 'Resolving...'}
                             </Typography>
                             {session.isAndroidTV && (
                               <Chip
@@ -1311,6 +1373,12 @@ function Dashboard() {
                             <Typography variant="caption" color="text.secondary" sx={{ display: 'flex', alignItems: 'center' }}>
                               <PersonPinIcon sx={{ fontSize: 12, mr: 0.5 }} />
                               {session.plexUsername || session.plexUser}
+                            </Typography>
+                          )}
+                          {session.plexProduct && (
+                            <Typography variant="caption" color="text.secondary" sx={{ display: 'block' }}>
+                              {session.plexProduct}
+                              {session.plexVersion && ` v${session.plexVersion}`}
                             </Typography>
                           )}
                         </Box>
@@ -1665,7 +1733,7 @@ function Dashboard() {
                   <strong>Date Format:</strong> {currentSettings?.plexlive?.localization?.dateFormat || 'YYYY-MM-DD'}
                 </Typography>
                 <Typography variant="body2">
-                  <strong>Max Concurrent Streams:</strong> {currentSettings?.plexlive?.streaming?.maxConcurrentStreams || 10}
+                  <strong>Max Concurrent Streams:</strong> {currentSettings?.plexlive?.streaming?.maxConcurrentStreams || 5}
                 </Typography>
                 <Typography variant="body2">
                   <strong>Stream Timeout:</strong> {currentSettings?.plexlive?.streaming?.streamTimeout || 30000}ms

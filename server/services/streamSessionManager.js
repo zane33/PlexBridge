@@ -363,7 +363,7 @@ class StreamSessionManager {
   /**
    * Get capacity and utilization metrics
    */
-  getCapacityMetrics(maxConcurrentStreams = 10) {
+  getCapacityMetrics(maxConcurrentStreams = 5) {
     const activeCount = this.activeSessions.size;
     const utilization = Math.round((activeCount / maxConcurrentStreams) * 100);
 
@@ -611,21 +611,37 @@ class StreamSessionManager {
   }
 
   /**
-   * Emit real-time updates via Socket.IO
+   * Emit real-time updates via Socket.IO with enhanced error handling
    */
   emitSessionUpdate(event, data) {
     if (global.io) {
-      // Emit to streaming room for targeted updates
-      global.io.to('streaming').emit(event, {
-        timestamp: new Date().toISOString(),
-        ...data
-      });
-      
-      // Also emit to metrics room for dashboard updates
-      global.io.to('metrics').emit(event, {
-        timestamp: new Date().toISOString(),
-        ...data
-      });
+      try {
+        const payload = {
+          timestamp: new Date().toISOString(),
+          ...data
+        };
+
+        // Emit to streaming room for targeted updates
+        global.io.to('streaming').emit(event, payload);
+
+        // Also emit to metrics room for dashboard updates
+        global.io.to('metrics').emit(event, payload);
+
+        logger.debug('WebSocket event emitted successfully', {
+          event,
+          payloadSize: JSON.stringify(payload).length,
+          targetRooms: ['streaming', 'metrics']
+        });
+      } catch (error) {
+        logger.error('Failed to emit WebSocket event', {
+          event,
+          error: error.message,
+          dataSize: data ? JSON.stringify(data).length : 0
+        });
+        // Continue execution - don't let WebSocket failures crash the app
+      }
+    } else {
+      logger.debug('WebSocket not available for event emission', { event });
     }
   }
 
@@ -639,24 +655,53 @@ class StreamSessionManager {
         const bandwidth = this.getBandwidthStats();
         const sessions = this.getActiveSessions();
 
-        // Emit comprehensive monitoring update
+        // Emit comprehensive monitoring update with complete session data including Plex headers
         this.emitSessionUpdate('monitoring:update', {
           capacity,
           bandwidth,
           sessions: sessions.map(session => ({
+            // Core session data
             sessionId: session.sessionId,
             streamId: session.streamId,
             channelName: session.channelName,
             channelNumber: session.channelNumber,
+            streamUrl: session.streamUrl,
+            streamType: session.streamType,
+
+            // Client connection data
             clientIP: session.clientIP,
             clientHostname: session.clientHostname,
+            userAgent: session.userAgent,
+            clientIdentifier: session.clientIdentifier,
+
+            // Timing and duration
+            startTime: session.startTime,
             duration: session.duration,
             durationFormatted: session.durationFormatted,
+            lastUpdate: session.lastUpdate,
+
+            // Performance metrics
             currentBitrate: session.currentBitrate,
             avgBitrate: session.avgBitrate,
             peakBitrate: session.peakBitrate,
             bytesTransferred: session.bytesTransferred,
-            errorCount: session.errorCount
+            errorCount: session.errorCount,
+            status: session.status,
+
+            // IMPORTANT: Include all Plex headers for dashboard display
+            plexUsername: session.plexUsername,
+            plexDeviceName: session.plexDeviceName,
+            plexFriendlyName: session.plexFriendlyName,
+            plexClientName: session.plexClientName,
+            plexProduct: session.plexProduct,
+            plexVersion: session.plexVersion,
+            plexPlatform: session.plexPlatform,
+            displayName: session.displayName,
+
+            // Additional fields for compatibility
+            hostname: session.clientHostname, // Backward compatibility
+            plexDevice: session.plexDeviceName, // Alternative field name
+            plexUser: session.plexUsername // Alternative field name
           }))
         });
       }

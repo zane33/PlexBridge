@@ -62,7 +62,7 @@ const defaultConfig = {
     description: 'IPTV to Plex Bridge Interface'
   },
   streams: {
-    maxConcurrent: parseInt(process.env.MAX_CONCURRENT_STREAMS) || 10,
+    maxConcurrent: parseInt(process.env.MAX_CONCURRENT_STREAMS) || 5,
     transcodeEnabled: process.env.TRANSCODE_ENABLED === 'true',
     ffmpegPath: process.env.FFMPEG_PATH || '/usr/bin/ffmpeg',
     supportedFormats: (process.env.SUPPORTED_FORMATS || 'hls,dash,rtsp,rtmp,udp,http,mms,srt').split(','),

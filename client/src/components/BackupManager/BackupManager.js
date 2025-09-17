@@ -170,13 +170,13 @@ function BackupManager() {
     try {
       const response = await backupApi.importBackup(backupData, importOptions);
       setImportResults(response.data);
-      
-      const { summary } = response.data;
+
+      const { results, summary } = response.data;
       enqueueSnackbar(
-        `Import completed! ${summary.totalImported} items imported, ${summary.totalSkipped} skipped, ${summary.totalErrors} errors`, 
+        `Import completed! ${summary.totalImported} items imported, ${summary.totalSkipped} skipped, ${summary.totalErrors} errors`,
         { variant: summary.totalErrors > 0 ? 'warning' : 'success' }
       );
-      
+
       // Reset form
       setImportFile(null);
       setBackupData(null);
@@ -442,11 +442,21 @@ function BackupManager() {
       </Dialog>
 
       {/* Import Dialog */}
-      <Dialog 
-        open={importDialogOpen} 
+      <Dialog
+        open={importDialogOpen}
         onClose={() => setImportDialogOpen(false)}
         maxWidth="md"
         fullWidth
+        maxHeight="90vh"
+        scroll="paper"
+        PaperProps={{
+          sx: {
+            height: 'auto',
+            maxHeight: '90vh',
+            display: 'flex',
+            flexDirection: 'column'
+          }
+        }}
       >
         <DialogTitle>
           <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
@@ -454,7 +464,13 @@ function BackupManager() {
             Import Backup Configuration
           </Box>
         </DialogTitle>
-        <DialogContent>
+        <DialogContent
+          sx={{
+            flex: 1,
+            overflow: 'auto',
+            padding: 2
+          }}
+        >
           {!importFile && (
             <Box sx={{ textAlign: 'center', py: 4 }}>
               <input
@@ -728,7 +744,7 @@ function BackupManager() {
             <Accordion defaultExpanded>
               <AccordionSummary expandIcon={<ExpandMoreIcon />}>
                 <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-                  {importResults.summary.totalErrors === 0 ? (
+                  {importResults.summary?.totalErrors === 0 ? (
                     <CheckCircleIcon color="success" />
                   ) : (
                     <WarningIcon color="warning" />
@@ -747,14 +763,14 @@ function BackupManager() {
                       </TableRow>
                     </TableHead>
                     <TableBody>
-                      {Object.entries(importResults.imported).map(([key, value]) => (
+                      {Object.entries(importResults.results?.imported || {}).map(([key, value]) => (
                         <TableRow key={key}>
                           <TableCell>{key.charAt(0).toUpperCase() + key.slice(1)}</TableCell>
                           <TableCell align="right">
                             <Chip label={value} color="success" size="small" />
                           </TableCell>
                           <TableCell align="right">
-                            <Chip label={importResults.skipped[key]} color="default" size="small" />
+                            <Chip label={importResults.results?.skipped?.[key] || 0} color="default" size="small" />
                           </TableCell>
                         </TableRow>
                       ))}
@@ -762,11 +778,11 @@ function BackupManager() {
                   </Table>
                 </TableContainer>
 
-                {importResults.errors.length > 0 && (
+                {importResults.results?.errors?.length > 0 && (
                   <Alert severity="error">
                     <Typography variant="subtitle2" gutterBottom>Import Errors:</Typography>
                     <ul style={{ margin: 0, paddingLeft: '20px' }}>
-                      {importResults.errors.map((error, index) => (
+                      {(importResults.results?.errors || []).map((error, index) => (
                         <li key={index}>{error}</li>
                       ))}
                     </ul>
@@ -776,7 +792,14 @@ function BackupManager() {
             </Accordion>
           )}
         </DialogContent>
-        <DialogActions>
+        <DialogActions
+          sx={{
+            flexShrink: 0,
+            padding: 2,
+            borderTop: '1px solid',
+            borderColor: 'divider'
+          }}
+        >
           <Button onClick={() => {
             setImportDialogOpen(false);
             setImportFile(null);

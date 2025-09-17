@@ -4,6 +4,9 @@ const database = require('../services/database');
 const streamManager = require('../services/streamManager');
 const streamSessionManager = require('../services/streamSessionManager');
 const streamPreviewService = require('../services/streamPreviewService');
+const settingsService = require('../services/settingsService');
+const coordinatedSessionManager = require('../services/coordinatedSessionManager');
+const config = require('../config');
 const logger = require('../utils/logger');
 const { createStreamingSession } = require('../utils/streamingDecisionFix');
 const { getSessionManager, sessionKeepAlive, addStreamHeaders } = require('../utils/sessionPersistenceFix');
@@ -14,12 +17,19 @@ const hlsQualitySelector = require('../services/hlsQualitySelector');
 const androidTVSessionManager = require('../services/androidTVSessionManager');
 const hlsSegmentResolver = require('../services/hlsSegmentResolver');
 const { getInstance: getAndroidTVSegmentRecovery } = require('../utils/androidTVSegmentRecovery');
+const os = require('os');
+const crypto = require('crypto');
+const axios = require('axios');
+const fs = require('fs');
+const path = require('path');
+const { spawn } = require('child_process');
 
 // Apply session keep-alive middleware to all stream endpoints
 router.use(sessionKeepAlive());
 
 // Apply Android TV segment recovery middleware
 router.use(getAndroidTVSegmentRecovery().createRecoveryMiddleware());
+
 
 /**
  * Determine if resilient streaming should be used based on request and stream characteristics
@@ -39,17 +49,17 @@ function shouldUseResilientStreaming(req, stream) {
   
   // CRITICAL FIX: Check environment variable first for resilience by default
   if (process.env.RESILIENT_BY_DEFAULT === 'true' || process.env.STREAM_RESILIENCE_ENABLED === 'true') {
-    return { 
-      enabled: false, 
-      reason: 'resilience_disabled_for_stability_env',
+    return {
+      enabled: true,
+      reason: 'resilience_enabled_by_env',
       layer: 'environment_configuration'
     };
   }
   
   // Check for explicit resilience request
   if (req.query.resilient === 'true' || req.query.resilience === 'true') {
-    return { 
-      enabled: false, 
+    return {
+      enabled: true,
       reason: 'explicit_request',
       layer: 'user_requested'
     };
@@ -66,8 +76,8 @@ function shouldUseResilientStreaming(req, stream) {
   
   // Enable for Android TV clients (prone to connection issues)
   if (isAndroidTV) {
-    return { 
-      enabled: false, 
+    return {
+      enabled: true,
       reason: 'android_tv_client',
       layer: 'client_optimization'
     };
@@ -77,8 +87,8 @@ function shouldUseResilientStreaming(req, stream) {
   if (isPlexClient && stream) {
     const problematicTypes = ['rtsp', 'rtmp', 'udp', 'mms', 'srt'];
     if (problematicTypes.includes(stream.type)) {
-      return { 
-        enabled: false, 
+      return {
+        enabled: true,
         reason: 'problematic_stream_type',
         layer: 'protocol_optimization',
         streamType: stream.type
@@ -91,8 +101,8 @@ function shouldUseResilientStreaming(req, stream) {
       stream.url.includes('backup') ||
       stream.url.includes('fallback')
     )) {
-      return { 
-        enabled: false, 
+      return {
+        enabled: true,
         reason: 'unreliable_source',
         layer: 'source_optimization'
       };
@@ -101,15 +111,14 @@ function shouldUseResilientStreaming(req, stream) {
   
   // Enable based on system load (when regular streams are struggling)
   try {
-    const os = require('os');
     const loadAverage = os.loadavg()[0]; // 1-minute load average
     const cpuCount = os.cpus().length;
     const loadPercentage = (loadAverage / cpuCount) * 100;
     
     // If system is under high load, use resilient streaming to help recovery
     if (loadPercentage > 80) {
-      return { 
-        enabled: false, 
+      return {
+        enabled: true,
         reason: 'high_system_load',
         layer: 'system_optimization',
         loadPercentage: Math.round(loadPercentage)
@@ -126,15 +135,14 @@ function shouldUseResilientStreaming(req, stream) {
   if (connectionHeader.toLowerCase().includes('unstable') || 
       userNetworkHints.toLowerCase().includes('cellular') ||
       userNetworkHints.toLowerCase().includes('wifi-weak')) {
-    return { 
-      enabled: false, 
+    return {
+      enabled: true,
       reason: 'network_instability',
       layer: 'network_optimization'
     };
   }
   
   // CRITICAL FIX: Default to enabled unless explicitly disabled in config
-  const config = require('../config');
   
   // Only disable if explicitly set to false in config AND not overridden by env
   if (config.streams?.resilience?.enabled === false && 
@@ -146,10 +154,10 @@ function shouldUseResilientStreaming(req, stream) {
     };
   }
   
-  // CRITICAL FIX: Disable resilient streaming by default until fully tested
-  return { 
-    enabled: false, 
-    reason: 'resilience_disabled_for_stability',
+  // CRITICAL FIX: Temporarily disable resilient streaming to fix VLC
+  return {
+    enabled: false,
+    reason: 'resilience_disabled_for_vlc_fix',
     layer: 'stability_fix'
   };
 }
@@ -157,6 +165,7 @@ function shouldUseResilientStreaming(req, stream) {
 // Stream proxy endpoint for Plex - handles both main playlist and sub-files
 router.get('/stream/:channelId/:filename?', async (req, res) => {
   try {
+    console.log('DEBUG: Stream route hit', { channelId: req.params.channelId, userAgent: req.get('User-Agent') });
     const { channelId, filename } = req.params;
     const isSubFile = !!filename;
     
@@ -359,7 +368,6 @@ router.get('/stream/:channelId/:filename?', async (req, res) => {
       };
       
       // Generate collision-resistant session ID using crypto
-      const crypto = require('crypto');
       const uniqueSessionId = `session_${channelId}_${crypto.randomBytes(8).toString('hex')}_${Date.now()}`;
       
       // Create or get existing persistent session
@@ -552,7 +560,6 @@ router.get('/stream/:channelId/:filename?', async (req, res) => {
       } else {
         // For other sub-files (like .m3u8 variants), try to resolve redirect using curl-like approach
         try {
-          const axios = require('axios');
           
           // First, do a HEAD request to get the redirect location
           const headResponse = await axios.request({
@@ -639,7 +646,6 @@ router.get('/stream/:channelId/:filename?', async (req, res) => {
           
           // FALLBACK: Direct proxy attempt if segment handler fails
           try {
-            const axios = require('axios');
             const response = await axios.get(targetUrl, {
               responseType: 'arraybuffer',
               timeout: 10000,
@@ -682,13 +688,11 @@ router.get('/stream/:channelId/:filename?', async (req, res) => {
       }
       
       try {
-        const axios = require('axios');
         
         // CRITICAL FIX: Enhanced session activity tracking for HLS segments
         // This prevents sessions from being marked as "no consumer" during active streaming
         const consumerManager = getConsumerManager();
         const sessionManager = getSessionManager();
-        const coordinatedSessionManager = require('../services/coordinatedSessionManager');
         
         // Extract session ID from multiple possible sources (more comprehensive)
         const streamingSessionId = req.query.session || 
@@ -1012,8 +1016,6 @@ router.get('/stream/playlist/:playlistId', async (req, res) => {
 router.get('/api/streams/segment/:sessionId/:filename', async (req, res) => {
   try {
     const { sessionId, filename } = req.params;
-    const fs = require('fs');
-    const path = require('path');
     
     logger.debug('HLS segment request', { sessionId, filename });
     
@@ -1167,7 +1169,6 @@ router.get('/streams/resilience', async (req, res) => {
 router.get('/streams/active', async (req, res) => {
   try {
     // Get max concurrent streams from settings
-    const settingsService = require('../services/settingsService');
     const settings = await settingsService.getSettings();
     const maxConcurrent = settings?.plexlive?.streaming?.maxConcurrentStreams || 5;
     
@@ -1211,7 +1212,6 @@ router.get('/test/ffmpeg/:streamUrl', async (req, res) => {
     logger.info('FFmpeg test endpoint called', { testStreamUrl });
     
     // Resolve redirect manually
-    const axios = require('axios');
     let finalUrl = testStreamUrl;
     try {
       const response = await axios.head(testStreamUrl, {
@@ -1233,8 +1233,6 @@ router.get('/test/ffmpeg/:streamUrl', async (req, res) => {
     });
     
     // Get FFmpeg arguments from settings (same as main implementation)
-    const settingsService = require('../services/settingsService');
-    const config = require('../config');
     const settings = await settingsService.getSettings();
     
     // Get configurable FFmpeg command line
@@ -1257,8 +1255,6 @@ router.get('/test/ffmpeg/:streamUrl', async (req, res) => {
     
     // Parse command line into arguments array
     const args = ffmpegCommand.split(' ').filter(arg => arg.trim() !== '');
-    
-    const { spawn } = require('child_process');
     
     logger.info('Test FFmpeg command', { command: `ffmpeg ${args.join(' ')}` });
     
