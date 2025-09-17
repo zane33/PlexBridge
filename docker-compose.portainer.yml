@@ -96,6 +96,30 @@ services:
       # Health monitoring
       - HEALTH_CHECK_INTERVAL=60000       # Check health every minute
       - DB_HEALTH_CHECK_INTERVAL=60000    # Database health check interval
+
+      # Stream resilience configuration for H.264 corruption and upstream issues
+      - STREAM_RESILIENCE_ENABLED=true        # Enable stream resilience system
+      - STREAM_RESILIENCE_LEVEL=maximum       # Use maximum resilience for production stability
+      - H264_CORRUPTION_TOLERANCE=maximum     # Handle H.264 corruption gracefully
+      - ERROR_RECOVERY_MODE=smart             # Smart error recovery with multi-layer attempts
+      - CONTINUOUS_BUFFERING=true             # Maintain buffering during recovery
+      - UPSTREAM_MONITORING=true              # Monitor upstream for proactive recovery
+
+      # Critical session persistence settings
+      - STREAM_MAX_RECOVERY_ATTEMPTS=10       # Maximum recovery attempts before giving up
+      - STREAM_RECOVERY_DELAY=2000            # Delay between recovery attempts (ms)
+      - SESSION_KEEP_ALIVE=true               # Keep sessions alive during errors
+      - AUTO_UPGRADE_TO_RESILIENT=true        # Auto upgrade struggling streams
+      - RESILIENT_BY_DEFAULT=true             # Use resilient streaming by default
+      - SESSION_TIMEOUT_GRACE=30000           # Grace period before terminating (ms)
+
+      # Android TV specific configuration for crash prevention
+      - ANDROID_TV_SEGMENT_RECOVERY=true      # Enable Android TV segment recovery system
+      - ANDROID_TV_CACHE_SIZE=50              # Segment cache size (number of segments)
+      - ANDROID_TV_CACHE_TTL=600000           # Cache TTL in milliseconds (10 minutes)
+      - ANDROID_TV_RECOVERY_TIMEOUT=30000     # Recovery timeout in milliseconds (30 seconds)
+      - ANDROID_TV_SEGMENT_TIMEOUT=6000       # Individual segment timeout in milliseconds (6 seconds)
+      - ENHANCED_XML_METADATA=true            # Enable enhanced XML metadata for transcode decisions
       
       # Device identification
       - DEVICE_UUID=plextv-local-stable-uuid-001

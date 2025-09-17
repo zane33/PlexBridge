@@ -201,23 +201,43 @@ async function generateRobustTranscodeDecision(req, res) {
     const streamKey = session || metadataId || `fallback_${Date.now()}`;
     const timestamp = Math.floor(Date.now() / 1000);
     
-    // Generate comprehensive MediaContainer XML response
+    // Generate comprehensive MediaContainer XML response with Android TV compatibility
     const transcodeDecisionXML = `<?xml version="1.0" encoding="UTF-8"?>
-<MediaContainer size="1" identifier="com.plexapp.plugins.library">
-  <Video 
-    ratingKey="${escapeXML(metadataId)}" 
-    key="/library/metadata/${escapeXML(metadataId)}" 
-    type="clip" 
-    title="${escapeXML(displayTitle)}" 
-    summary="${escapeXML(channelInfo?.description || 'Live television programming')}" 
-    duration="86400000" 
-    live="1" 
-    addedAt="${timestamp}" 
+<MediaContainer size="1" identifier="com.plexapp.plugins.library" librarySectionID="1" librarySectionTitle="Live TV" machineIdentifier="plexbridge" totalSize="1">
+  <Video
+    ratingKey="${escapeXML(metadataId)}"
+    key="/library/metadata/${escapeXML(metadataId)}"
+    type="clip"
+    title="${escapeXML(displayTitle)}"
+    titleSort="${escapeXML(displayTitle)}"
+    summary="${escapeXML(channelInfo?.description || 'Live television programming')}"
+    duration="86400000"
+    live="1"
+    addedAt="${timestamp}"
     updatedAt="${timestamp}"
     year="${new Date().getFullYear()}"
     contentRating="TV-PG"
     index="1"
-    parentIndex="1">
+    parentIndex="1"
+    librarySectionID="1"
+    librarySectionTitle="Live TV"
+    thumb="/thumb/${escapeXML(metadataId)}"
+    art="/art/${escapeXML(metadataId)}"
+    guid="tv.plex.xmltv://${escapeXML(metadataId)}"
+    originallyAvailableAt="${new Date().toISOString().split('T')[0]}"
+    viewCount="0"
+    skipCount="0"
+    lastViewedAt="0"
+    audienceRating="7.5"
+    audienceRatingImage="rottentomatoes://image.rating.upright"
+    chapterSource="media"
+    primaryExtraKey="/library/metadata/${escapeXML(metadataId)}/extras"
+    ratingImage="mpaa://TV-PG"
+    studio="${escapeXML(channelInfo?.name || 'PlexBridge')}"
+    tagline="Live Television Programming"
+    userRating="0"
+    viewOffset="0"
+    skipParent="0">
     <Media 
       id="1" 
       duration="86400000" 
@@ -308,22 +328,43 @@ async function generateRobustTranscodeDecision(req, res) {
     
     // CRITICAL: Always return valid XML even on complete failure
     // This prevents the HTML error responses that crash Android TV
+    // ANDROID TV FIX: Ensure all required attributes are present to prevent NullPointerException
     const fallbackXML = `<?xml version="1.0" encoding="UTF-8"?>
-<MediaContainer size="1" identifier="com.plexapp.plugins.library">
-  <Video 
-    ratingKey="fallback-live-tv" 
-    key="/library/metadata/fallback-live-tv" 
-    type="clip" 
-    title="Live TV" 
-    summary="Live television programming" 
-    duration="86400000" 
-    live="1" 
-    addedAt="${Math.floor(Date.now() / 1000)}" 
+<MediaContainer size="1" identifier="com.plexapp.plugins.library" librarySectionID="1" librarySectionTitle="Live TV" machineIdentifier="plexbridge" totalSize="1">
+  <Video
+    ratingKey="fallback-live-tv"
+    key="/library/metadata/fallback-live-tv"
+    type="clip"
+    title="Live TV"
+    titleSort="Live TV"
+    summary="Live television programming"
+    duration="86400000"
+    live="1"
+    addedAt="${Math.floor(Date.now() / 1000)}"
     updatedAt="${Math.floor(Date.now() / 1000)}"
     year="${new Date().getFullYear()}"
     contentRating="TV-PG"
     index="1"
-    parentIndex="1">
+    parentIndex="1"
+    librarySectionID="1"
+    librarySectionTitle="Live TV"
+    thumb="/thumb/fallback"
+    art="/art/fallback"
+    guid="tv.plex.fallback://fallback-live-tv"
+    originallyAvailableAt="${new Date().toISOString().split('T')[0]}"
+    viewCount="0"
+    skipCount="0"
+    lastViewedAt="0"
+    audienceRating="7.5"
+    audienceRatingImage="rottentomatoes://image.rating.upright"
+    chapterSource="media"
+    primaryExtraKey="/library/metadata/fallback-live-tv/extras"
+    ratingImage="mpaa://TV-PG"
+    studio="PlexBridge"
+    tagline="Live Television Programming"
+    userRating="0"
+    viewOffset="0"
+    skipParent="0">
     <Media 
       id="1" 
       duration="86400000" 

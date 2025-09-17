@@ -5242,6 +5242,162 @@ setInterval(async () => {
   }
 }, 2000); // Update every 2 seconds for real-time feel
 
+/**
+ * Generate a resilient segment for Android TV recovery
+ * Used by AndroidTVSegmentRecovery system
+ */
+streamManager.generateSegment = async function(options) {
+  const {
+    input,
+    duration = 6,
+    startTime = 0,
+    profile = 'androidTVOptimized',
+    resilience = {},
+    androidTV = {}
+  } = options;
+
+  return new Promise((resolve, reject) => {
+    try {
+      logger.debug('Generating resilient segment for Android TV', {
+        input: input.substring(0, 100),
+        duration,
+        startTime,
+        profile
+      });
+
+      // Build FFmpeg arguments for segment generation
+      const args = [
+        '-hide_banner', '-loglevel', 'error',
+
+        // Input with resilience settings
+        '-reconnect', '1',
+        '-reconnect_at_eof', '1',
+        '-reconnect_streamed', '1',
+        '-reconnect_delay_max', '15',
+
+        // Android TV specific resilience
+        '-err_detect', 'ignore_err',
+        '-fflags', 'discardcorrupt',
+        '-skip_frame', 'noref',
+
+        '-ss', startTime.toString(),
+        '-i', input,
+
+        // Segment duration
+        '-t', duration.toString(),
+
+        // Output format optimized for Android TV
+        '-c', 'copy',
+        '-avoid_negative_ts', 'make_zero',
+        '-f', 'mpegts',
+
+        // Android TV ExoPlayer optimizations
+        '-mpegts_flags', '+resend_headers',
+        '-muxrate', '50000000',
+
+        // Output to stdout
+        '-'
+      ];
+
+      const ffmpeg = spawn('ffmpeg', args);
+      const chunks = [];
+      let totalSize = 0;
+
+      ffmpeg.stdout.on('data', (chunk) => {
+        chunks.push(chunk);
+        totalSize += chunk.length;
+
+        // Prevent excessive memory usage
+        if (totalSize > 50 * 1024 * 1024) { // 50MB limit
+          logger.warn('Segment generation exceeded size limit', {
+            totalSize,
+            input: input.substring(0, 100)
+          });
+          ffmpeg.kill('SIGTERM');
+          reject(new Error('Segment too large'));
+        }
+      });
+
+      ffmpeg.stderr.on('data', (data) => {
+        const error = data.toString();
+        logger.debug('FFmpeg segment generation stderr', {
+          error: error.substring(0, 200)
+        });
+      });
+
+      ffmpeg.on('close', (code) => {
+        if (code === 0 && chunks.length > 0) {
+          const segmentData = Buffer.concat(chunks);
+          logger.debug('Segment generation completed successfully', {
+            size: segmentData.length,
+            chunks: chunks.length,
+            duration
+          });
+          resolve(segmentData);
+        } else {
+          logger.warn('Segment generation failed', {
+            code,
+            chunksLength: chunks.length,
+            totalSize
+          });
+          reject(new Error(`FFmpeg segment generation failed with code ${code}`));
+        }
+      });
+
+      ffmpeg.on('error', (error) => {
+        logger.error('FFmpeg segment generation process error', {
+          error: error.message,
+          input: input.substring(0, 100)
+        });
+        reject(error);
+      });
+
+      // Timeout after 30 seconds
+      setTimeout(() => {
+        if (!ffmpeg.killed) {
+          ffmpeg.kill('SIGTERM');
+          reject(new Error('Segment generation timeout'));
+        }
+      }, 30000);
+
+    } catch (error) {
+      logger.error('Failed to start segment generation', {
+        error: error.message,
+        input: input?.substring(0, 100)
+      });
+      reject(error);
+    }
+  });
+};
+
+/**
+ * Get stream by channel ID for recovery purposes
+ */
+streamManager.getStreamByChannelId = function(channelId) {
+  // Look for active stream for this channel
+  for (const [sessionId, stream] of this.activeStreams) {
+    if (stream.channelId === channelId || stream.channel?.id === channelId) {
+      return {
+        url: stream.url || stream.stream?.url,
+        type: stream.type || stream.stream?.type,
+        sessionId: sessionId
+      };
+    }
+  }
+
+  // If no active stream, try to find from channel streams mapping
+  const channelStream = this.channelStreams.get(channelId);
+  if (channelStream) {
+    return {
+      url: channelStream.url,
+      type: channelStream.type,
+      sessionId: null
+    };
+  }
+
+  return null;
+};
+
 // Emit metrics update to connected clients
 streamManager.emitMetricsUpdate = async function() {
   try {
