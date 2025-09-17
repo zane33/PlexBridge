@@ -51,11 +51,22 @@ const io = socketIo(server, {
   }
 });
 
-// Security middleware
+// Security middleware - Enhanced for HTTP compatibility
 app.use(helmet({
   contentSecurityPolicy: false, // Disable for streaming content
-  crossOriginEmbedderPolicy: false
+  crossOriginEmbedderPolicy: false,
+  crossOriginOpenerPolicy: false, // Disable COOP to prevent HTTP warnings
+  originAgentCluster: false, // Disable origin-keyed agent cluster warnings
+  // Disable additional headers that cause issues with HTTP
+  hsts: false, // Disable HSTS for HTTP compatibility
+  frameguard: { action: 'sameorigin' } // Allow same-origin framing
 }));
+
+// Remove Origin-Agent-Cluster header completely
+app.use((req, res, next) => {
+  res.removeHeader('Origin-Agent-Cluster');
+  next();
+});
 
 // Rate limiting
 const limiter = rateLimit({
@@ -67,11 +78,24 @@ const limiter = rateLimit({
 });
 app.use('/api', limiter);
 
-// CORS configuration - Enhanced for streaming
+// CORS configuration - Enhanced for streaming and local network access
 app.use(cors({
-  origin: process.env.NODE_ENV === 'production' 
-    ? [process.env.ALLOWED_ORIGINS?.split(',') || []]
-    : ['http://localhost:3000'],
+  origin: function(origin, callback) {
+    // Allow requests with no origin (same-origin, mobile apps, Postman, etc)
+    if (!origin) return callback(null, true);
+
+    // Allow localhost and local network IPs
+    const allowedPatterns = [
+      /^http:\/\/localhost(:\d+)?$/,
+      /^http:\/\/127\.0\.0\.1(:\d+)?$/,
+      /^http:\/\/192\.168\.\d{1,3}\.\d{1,3}(:\d+)?$/,
+      /^http:\/\/10\.\d{1,3}\.\d{1,3}\.\d{1,3}(:\d+)?$/,
+      /^http:\/\/172\.(1[6-9]|2\d|3[01])\.\d{1,3}\.\d{1,3}(:\d+)?$/
+    ];
+
+    const isAllowed = allowedPatterns.some(pattern => pattern.test(origin));
+    callback(null, isAllowed);
+  },
   credentials: true,
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
   allowedHeaders: ['Content-Type', 'Authorization', 'Range', 'Accept', 'User-Agent'],
@@ -96,6 +120,10 @@ app.use(plexResponseHeaders());
 // Add Plex request logging middleware
 const { plexRequestLogger, malformedRequestHandler } = require('./middleware/plexRequestLogger');
 app.use(plexRequestLogger());
+
+// Add Android TV robust transcode decision middleware - CRITICAL FIX
+const { robustTranscodeDecisionMiddleware } = require('./utils/robustTranscodeDecision');
+app.use(robustTranscodeDecisionMiddleware());
 
 // Make io accessible to routes
 app.set('io', io);
@@ -172,9 +200,82 @@ setInterval(() => {
   logger.debug(`Active WebSocket connections: ${sockets.size}`);
 }, 60000); // Every minute
 
-// Error handling middleware
+// Error handling middleware with Android TV transcode decision protection
 app.use((err, req, res, next) => {
   logger.error('Unhandled error:', err);
+
+  // CRITICAL ANDROID TV FIX: Global safety net for transcode decision requests
+  // If any transcode decision request reaches the global error handler, return XML instead of JSON
+  const isTranscodeDecisionRequest = req.path === '/video/:/transcode/universal/decision' ||
+                                   req.originalUrl.includes('/video/:/transcode/universal/decision') ||
+                                   req.path.includes('/transcode/universal/decision');
+
+  if (isTranscodeDecisionRequest) {
+    logger.error('CRITICAL: Transcode decision request reached global error handler - providing emergency XML', {
+      path: req.path,
+      originalUrl: req.originalUrl,
+      error: err.message,
+      userAgent: req.get('User-Agent'),
+      emergencyInterception: true
+    });
+
+    res.set({
+      'Content-Type': 'application/xml; charset=utf-8',
+      'Cache-Control': 'no-cache, no-store, must-revalidate',
+      'X-Emergency-Global-Handler': 'true',
+      'X-Android-TV-Protection': 'active'
+    });
+
+    const globalFallbackXML = `<?xml version="1.0" encoding="UTF-8"?>
+<MediaContainer size="1" identifier="com.plexapp.plugins.library" librarySectionID="1" librarySectionTitle="Live TV" machineIdentifier="plexbridge" totalSize="1">
+  <Video
+    ratingKey="global-fallback"
+    key="/library/metadata/global-fallback"
+    type="clip"
+    title="Live TV Global Fallback"
+    summary="Global error handler fallback to prevent crashes"
+    duration="86400000"
+    live="1"
+    addedAt="${Math.floor(Date.now() / 1000)}"
+    updatedAt="${Math.floor(Date.now() / 1000)}"
+    year="${new Date().getFullYear()}"
+    contentRating="TV-PG"
+    index="1"
+    parentIndex="1"
+    librarySectionID="1"
+    librarySectionTitle="Live TV">
+    <Media
+      id="1"
+      duration="86400000"
+      bitrate="5000"
+      width="1920"
+      height="1080"
+      aspectRatio="1.78"
+      audioChannels="2"
+      audioCodec="aac"
+      videoCodec="h264"
+      videoResolution="1080"
+      container="mpegts"
+      videoFrameRate="25p"
+      optimizedForStreaming="1">
+      <Part
+        id="1"
+        key="/stream/global-fallback"
+        duration="86400000"
+        file="/stream/global-fallback"
+        size="999999999"
+        container="mpegts">
+        <Stream id="1" streamType="1" codec="h264" index="0" bitrate="4000" language="eng" height="1080" width="1920" frameRate="25.0" />
+        <Stream id="2" streamType="2" codec="aac" index="1" channels="2" bitrate="128" language="eng" samplingRate="48000" />
+      </Part>
+    </Media>
+  </Video>
+</MediaContainer>`;
+
+    return res.status(200).send(globalFallbackXML);
+  }
+
+  // For non-transcode decision requests, return normal JSON error
   res.status(500).json({
     error: 'Internal server error',
     message: process.env.NODE_ENV === 'development' ? err.message : undefined
@@ -495,6 +596,17 @@ const initializeApp = async () => {
       logger.error('EPG service error details:', epgError);
     }
     
+    // Initialize FFmpeg Profile Manager
+    try {
+      logger.info('Initializing FFmpeg Profile Manager...');
+      const ffmpegProfileManager = require('./services/ffmpegProfileManager');
+      await ffmpegProfileManager.initializeDefaultProfiles();
+      logger.info('✅ FFmpeg Profile Manager initialized successfully');
+    } catch (ffmpegError) {
+      logger.warn('Failed to initialize FFmpeg Profile Manager:', ffmpegError.message);
+      logger.error('FFmpeg Profile Manager error details:', ffmpegError);
+    }
+    
     // Initialize Session Persistence Manager for Android TV compatibility
     try {
       logger.info('Initializing Session Persistence Manager...');
@@ -535,6 +647,7 @@ const initializeApp = async () => {
       const diagnosticsRoutes = require('./routes/diagnostics');
       const adminFixRoutes = require('./routes/admin-fix');
       const type5MonitorRoutes = require('./routes/type5-monitor');
+      const ffmpegProfileRoutes = require('./routes/ffmpeg-profiles');
 
       // API Routes - MUST BE BEFORE STATIC FILES
       app.use('/', healthRoutes);  // Health check routes
@@ -545,6 +658,7 @@ const initializeApp = async () => {
       app.use('/api/streams/parse/m3u', m3uRoutes);
       app.use('/api/streams/import/m3u', m3uImportRoutes);
       app.use('/api/streaming', streamingRoutes);  // Enhanced streaming monitoring
+      app.use('/api/ffmpeg-profiles', ffmpegProfileRoutes);  // FFmpeg profile management
       app.use('/api', apiRoutes);
       app.use('/epg', epgRoutes);
       app.use('/', ssdpRoutes);

@@ -24,6 +24,7 @@
 
 services:
   plextv:
+    build: .
     image: plexbridge:latest
     container_name: plextv
     restart: unless-stopped
@@ -43,10 +44,10 @@ services:
       - ./config:/app/config:ro
       # Additional bind mount for easy access to data (optional)
       - ./data:/host-data
-      # Server code bind mount for development
-      - ./server:/app/server
-      # Client code bind mount for development (to get validation fix)
-      - ./client:/app/client
+      # Server code bind mount for development (commented out to use Docker-built code)
+      # - ./server:/app/server
+      # Client code bind mount for development (commented out to use Docker-built client)
+      # - ./client:/app/client
     environment:
       # Application environment
       - NODE_ENV=production
@@ -101,6 +102,14 @@ services:
       - AUTO_UPGRADE_TO_RESILIENT=true        # Auto upgrade struggling streams
       - RESILIENT_BY_DEFAULT=true             # Use resilient streaming by default
       - SESSION_TIMEOUT_GRACE=30000           # Grace period before terminating (ms)
+
+      # Android TV specific configuration for crash prevention
+      - ANDROID_TV_SEGMENT_RECOVERY=true      # Enable Android TV segment recovery system
+      - ANDROID_TV_CACHE_SIZE=50              # Segment cache size (number of segments)
+      - ANDROID_TV_CACHE_TTL=600000           # Cache TTL in milliseconds (10 minutes)
+      - ANDROID_TV_RECOVERY_TIMEOUT=30000     # Recovery timeout in milliseconds (30 seconds)
+      - ANDROID_TV_SEGMENT_TIMEOUT=6000       # Individual segment timeout in milliseconds (6 seconds)
+      - ENHANCED_XML_METADATA=true            # Enable enhanced XML metadata for transcode decisions
       
       # Device identification
       - DEVICE_UUID=plextv-local-stable-uuid-001

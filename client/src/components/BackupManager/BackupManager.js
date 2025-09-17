@@ -74,6 +74,7 @@ function BackupManager() {
     importStreams: true,
     importEpgSources: true,
     importSettings: true,
+    importFFmpegProfiles: true,
     importEpgData: false,
   });
   const [loading, setLoading] = useState(false);
@@ -329,6 +330,12 @@ function BackupManager() {
                   </ListItemIcon>
                   <ListItemText primary="EPG Sources" secondary="Electronic Program Guide sources" />
                 </ListItem>
+                <ListItem disablePadding>
+                  <ListItemIcon sx={{ minWidth: 32 }}>
+                    <SettingsIcon fontSize="small" color="primary" />
+                  </ListItemIcon>
+                  <ListItemText primary="FFmpeg Profiles" secondary="Custom video transcoding profiles and client configurations" />
+                </ListItem>
               </List>
             </Paper>
 
@@ -523,6 +530,12 @@ function BackupManager() {
                             <TableCell>Settings</TableCell>
                             <TableCell align="right">{validation.summary.settings}</TableCell>
                           </TableRow>
+                          {validation.summary.ffmpegProfiles > 0 && (
+                            <TableRow>
+                              <TableCell>FFmpeg Profiles</TableCell>
+                              <TableCell align="right">{validation.summary.ffmpegProfiles}</TableCell>
+                            </TableRow>
+                          )}
                           {validation.summary.epgChannels > 0 && (
                             <TableRow>
                               <TableCell>EPG Channels</TableCell>
@@ -665,6 +678,22 @@ function BackupManager() {
                           label="Settings"
                         />
                       </Grid>
+                      {validation.summary?.ffmpegProfiles > 0 && (
+                        <Grid item xs={6}>
+                          <FormControlLabel
+                            control={
+                              <Checkbox
+                                checked={importOptions.importFFmpegProfiles}
+                                onChange={(e) => setImportOptions(prev => ({ 
+                                  ...prev, 
+                                  importFFmpegProfiles: e.target.checked 
+                                }))}
+                              />
+                            }
+                            label="FFmpeg Profiles"
+                          />
+                        </Grid>
+                      )}
                       {validation.summary?.epgChannels > 0 && (
                         <Grid item xs={12}>
                           <FormControlLabel

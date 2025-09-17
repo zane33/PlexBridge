@@ -201,23 +201,43 @@ async function generateRobustTranscodeDecision(req, res) {
     const streamKey = session || metadataId || `fallback_${Date.now()}`;
     const timestamp = Math.floor(Date.now() / 1000);
     
-    // Generate comprehensive MediaContainer XML response
+    // Generate comprehensive MediaContainer XML response with Android TV compatibility
     const transcodeDecisionXML = `<?xml version="1.0" encoding="UTF-8"?>
-<MediaContainer size="1" identifier="com.plexapp.plugins.library">
-  <Video 
-    ratingKey="${escapeXML(metadataId)}" 
-    key="/library/metadata/${escapeXML(metadataId)}" 
-    type="clip" 
-    title="${escapeXML(displayTitle)}" 
-    summary="${escapeXML(channelInfo?.description || 'Live television programming')}" 
-    duration="86400000" 
-    live="1" 
-    addedAt="${timestamp}" 
+<MediaContainer size="1" identifier="com.plexapp.plugins.library" librarySectionID="1" librarySectionTitle="Live TV" machineIdentifier="plexbridge" totalSize="1">
+  <Video
+    ratingKey="${escapeXML(metadataId)}"
+    key="/library/metadata/${escapeXML(metadataId)}"
+    type="clip"
+    title="${escapeXML(displayTitle)}"
+    titleSort="${escapeXML(displayTitle)}"
+    summary="${escapeXML(channelInfo?.description || 'Live television programming')}"
+    duration="86400000"
+    live="1"
+    addedAt="${timestamp}"
     updatedAt="${timestamp}"
     year="${new Date().getFullYear()}"
     contentRating="TV-PG"
     index="1"
-    parentIndex="1">
+    parentIndex="1"
+    librarySectionID="1"
+    librarySectionTitle="Live TV"
+    thumb="/thumb/${escapeXML(metadataId)}"
+    art="/art/${escapeXML(metadataId)}"
+    guid="tv.plex.xmltv://${escapeXML(metadataId)}"
+    originallyAvailableAt="${new Date().toISOString().split('T')[0]}"
+    viewCount="0"
+    skipCount="0"
+    lastViewedAt="0"
+    audienceRating="7.5"
+    audienceRatingImage="rottentomatoes://image.rating.upright"
+    chapterSource="media"
+    primaryExtraKey="/library/metadata/${escapeXML(metadataId)}/extras"
+    ratingImage="mpaa://TV-PG"
+    studio="${escapeXML(channelInfo?.name || 'PlexBridge')}"
+    tagline="Live Television Programming"
+    userRating="0"
+    viewOffset="0"
+    skipParent="0">
     <Media 
       id="1" 
       duration="86400000" 
@@ -308,22 +328,43 @@ async function generateRobustTranscodeDecision(req, res) {
     
     // CRITICAL: Always return valid XML even on complete failure
     // This prevents the HTML error responses that crash Android TV
+    // ANDROID TV FIX: Ensure all required attributes are present to prevent NullPointerException
     const fallbackXML = `<?xml version="1.0" encoding="UTF-8"?>
-<MediaContainer size="1" identifier="com.plexapp.plugins.library">
-  <Video 
-    ratingKey="fallback-live-tv" 
-    key="/library/metadata/fallback-live-tv" 
-    type="clip" 
-    title="Live TV" 
-    summary="Live television programming" 
-    duration="86400000" 
-    live="1" 
-    addedAt="${Math.floor(Date.now() / 1000)}" 
+<MediaContainer size="1" identifier="com.plexapp.plugins.library" librarySectionID="1" librarySectionTitle="Live TV" machineIdentifier="plexbridge" totalSize="1">
+  <Video
+    ratingKey="fallback-live-tv"
+    key="/library/metadata/fallback-live-tv"
+    type="clip"
+    title="Live TV"
+    titleSort="Live TV"
+    summary="Live television programming"
+    duration="86400000"
+    live="1"
+    addedAt="${Math.floor(Date.now() / 1000)}"
     updatedAt="${Math.floor(Date.now() / 1000)}"
     year="${new Date().getFullYear()}"
     contentRating="TV-PG"
     index="1"
-    parentIndex="1">
+    parentIndex="1"
+    librarySectionID="1"
+    librarySectionTitle="Live TV"
+    thumb="/thumb/fallback"
+    art="/art/fallback"
+    guid="tv.plex.fallback://fallback-live-tv"
+    originallyAvailableAt="${new Date().toISOString().split('T')[0]}"
+    viewCount="0"
+    skipCount="0"
+    lastViewedAt="0"
+    audienceRating="7.5"
+    audienceRatingImage="rottentomatoes://image.rating.upright"
+    chapterSource="media"
+    primaryExtraKey="/library/metadata/fallback-live-tv/extras"
+    ratingImage="mpaa://TV-PG"
+    studio="PlexBridge"
+    tagline="Live Television Programming"
+    userRating="0"
+    viewOffset="0"
+    skipParent="0">
     <Media 
       id="1" 
       duration="86400000" 
@@ -386,30 +427,140 @@ async function generateRobustTranscodeDecision(req, res) {
 }
 
 /**
- * Enhanced middleware for transcode decision handling
+ * Enhanced middleware for transcode decision handling with comprehensive logging
+ * CRITICAL: This middleware prevents HTML error responses that crash Android TV clients
  */
 function robustTranscodeDecisionMiddleware() {
   return async (req, res, next) => {
+    const requestId = `req_${Date.now()}_${Math.random().toString(36).substring(2, 8)}`;
+    const startTime = Date.now();
+
     try {
-      // Only handle the transcode decision endpoint
-      if (req.path === '/video/:/transcode/universal/decision') {
+      // Log all requests for debugging routing issues
+      logger.debug('Transcode decision middleware called', {
+        requestId,
+        path: req.path,
+        originalUrl: req.originalUrl,
+        method: req.method,
+        userAgent: req.get('User-Agent'),
+        query: req.query,
+        isTranscodeDecisionPath: req.path === '/video/:/transcode/universal/decision'
+      });
+
+      // Handle both exact path match and pattern matching for robustness
+      const isTranscodeDecisionRequest = req.path === '/video/:/transcode/universal/decision' ||
+                                       req.originalUrl.includes('/video/:/transcode/universal/decision') ||
+                                       req.path.includes('/transcode/universal/decision');
+
+      if (isTranscodeDecisionRequest) {
+        logger.info('ANDROID TV FIX: Intercepting transcode decision request', {
+          requestId,
+          path: req.path,
+          originalUrl: req.originalUrl,
+          userAgent: req.get('User-Agent'),
+          isAndroidTV: (req.get('User-Agent') || '').toLowerCase().includes('android'),
+          queryParams: req.query,
+          interceptReason: 'prevent_html_error_response'
+        });
+
+        // CRITICAL: Generate robust XML response instead of letting it fall through to HTML error
         await generateRobustTranscodeDecision(req, res);
+
+        const responseTime = Date.now() - startTime;
+        logger.info('ANDROID TV FIX: Robust XML response sent successfully', {
+          requestId,
+          responseTime,
+          preventedHtmlError: true,
+          xmlGenerated: true
+        });
+
         return; // Don't call next() - we've handled the response
       } else {
+        // Not a transcode decision request, continue to next middleware
         next();
       }
     } catch (error) {
-      logger.error('Robust transcode decision middleware error', {
+      const responseTime = Date.now() - startTime;
+
+      logger.error('CRITICAL: Transcode decision middleware error - providing emergency XML fallback', {
+        requestId,
         error: error.message,
-        path: req.path
+        stack: error.stack,
+        path: req.path,
+        originalUrl: req.originalUrl,
+        responseTime,
+        emergencyMode: true
       });
-      
-      // Even middleware errors should return XML for transcode decision endpoint
-      if (req.path === '/video/:/transcode/universal/decision') {
+
+      // CRITICAL: Even middleware errors should return XML for transcode decision endpoint
+      // This is the absolute last line of defense against HTML error responses
+      const isTranscodeDecisionRequest = req.path === '/video/:/transcode/universal/decision' ||
+                                       req.originalUrl.includes('/video/:/transcode/universal/decision') ||
+                                       req.path.includes('/transcode/universal/decision');
+
+      if (isTranscodeDecisionRequest) {
+        // EMERGENCY XML RESPONSE - prevents Android TV NullPointerException
         res.set({
-          'Content-Type': 'application/xml; charset=utf-8'
+          'Content-Type': 'application/xml; charset=utf-8',
+          'Cache-Control': 'no-cache, no-store, must-revalidate',
+          'X-Emergency-Response': 'true',
+          'X-Android-TV-Fallback': 'emergency-xml'
         });
-        res.status(200).send('<?xml version="1.0" encoding="UTF-8"?><MediaContainer size="0" identifier="com.plexapp.plugins.library" />');
+
+        const emergencyXML = `<?xml version="1.0" encoding="UTF-8"?>
+<MediaContainer size="1" identifier="com.plexapp.plugins.library" librarySectionID="1" librarySectionTitle="Live TV" machineIdentifier="plexbridge" totalSize="1">
+  <Video
+    ratingKey="emergency-fallback"
+    key="/library/metadata/emergency-fallback"
+    type="clip"
+    title="Live TV Emergency Fallback"
+    summary="Emergency response to prevent client crashes"
+    duration="86400000"
+    live="1"
+    addedAt="${Math.floor(Date.now() / 1000)}"
+    updatedAt="${Math.floor(Date.now() / 1000)}"
+    year="${new Date().getFullYear()}"
+    contentRating="TV-PG"
+    index="1"
+    parentIndex="1"
+    librarySectionID="1"
+    librarySectionTitle="Live TV">
+    <Media
+      id="1"
+      duration="86400000"
+      bitrate="5000"
+      width="1920"
+      height="1080"
+      aspectRatio="1.78"
+      audioChannels="2"
+      audioCodec="aac"
+      videoCodec="h264"
+      videoResolution="1080"
+      container="mpegts"
+      videoFrameRate="25p"
+      optimizedForStreaming="1">
+      <Part
+        id="1"
+        key="/stream/emergency"
+        duration="86400000"
+        file="/stream/emergency"
+        size="999999999"
+        container="mpegts">
+        <Stream id="1" streamType="1" codec="h264" index="0" bitrate="4000" language="eng" height="1080" width="1920" frameRate="25.0" />
+        <Stream id="2" streamType="2" codec="aac" index="1" channels="2" bitrate="128" language="eng" samplingRate="48000" />
+      </Part>
+    </Media>
+  </Video>
+</MediaContainer>`;
+
+        res.status(200).send(emergencyXML);
+
+        logger.warn('ANDROID TV FIX: Emergency XML fallback sent', {
+          requestId,
+          responseTime,
+          emergencyXmlSent: true,
+          preventedCrash: true
+        });
       } else {
         next(error);
       }

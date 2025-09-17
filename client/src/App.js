@@ -6,6 +6,7 @@ import Dashboard from './components/Dashboard/Dashboard';
 import ChannelManager from './components/ChannelManager/ChannelManager';
 import StreamManager from './components/StreamManager/StreamManager';
 import EPGManager from './components/EPGManager/EPGManager';
+import FFmpegProfileManager from './components/FFmpegProfileManager/FFmpegProfileManager';
 import LogViewer from './components/LogViewer/LogViewer';
 import Settings from './components/Settings/Settings';
 import BackupManager from './components/BackupManager/BackupManager';
@@ -37,6 +38,11 @@ function App() {
             <Route path="/epg" element={
               <ErrorBoundary>
                 <EPGManager />
+              </ErrorBoundary>
+            } />
+            <Route path="/ffmpeg-profiles" element={
+              <ErrorBoundary>
+                <FFmpegProfileManager />
               </ErrorBoundary>
             } />
             <Route path="/logs" element={

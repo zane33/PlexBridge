@@ -13,9 +13,13 @@ const segmentHandler = require('../services/segmentHandler');
 const hlsQualitySelector = require('../services/hlsQualitySelector');
 const androidTVSessionManager = require('../services/androidTVSessionManager');
 const hlsSegmentResolver = require('../services/hlsSegmentResolver');
+const { getInstance: getAndroidTVSegmentRecovery } = require('../utils/androidTVSegmentRecovery');
 
 // Apply session keep-alive middleware to all stream endpoints
 router.use(sessionKeepAlive());
+
+// Apply Android TV segment recovery middleware
+router.use(getAndroidTVSegmentRecovery().createRecoveryMiddleware());
 
 /**
  * Determine if resilient streaming should be used based on request and stream characteristics

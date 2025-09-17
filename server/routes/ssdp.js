@@ -2117,11 +2117,57 @@ router.post('/lineup.post', async (req, res) => {
   }
 });
 
+// HDHomeRun auto-tuning endpoint - handles /auto/v[channel] format
+router.get('/auto/v:channelNumber', async (req, res) => {
+  try {
+    const channelNumber = req.params.channelNumber;
+
+    logger.info('HDHomeRun auto-tuning request', {
+      channelNumber,
+      userAgent: req.get('User-Agent'),
+      clientIP: req.ip
+    });
+
+    // Find channel by number
+    const channel = await database.get('SELECT * FROM channels WHERE number = ? AND enabled = 1', [channelNumber]);
+
+    if (!channel) {
+      logger.error('Channel not found for HDHomeRun auto-tuning', { channelNumber });
+      return res.status(404).send('Channel not found');
+    }
+
+    // Get associated stream
+    const stream = await database.get('SELECT * FROM streams WHERE channel_id = ? AND enabled = 1', [channel.id]);
+
+    if (!stream) {
+      logger.error('Stream not found for HDHomeRun auto-tuning channel', {
+        channelNumber,
+        channelId: channel.id
+      });
+      return res.status(404).send('Stream not found');
+    }
+
+    logger.info('Redirecting HDHomeRun auto-tuning to stream endpoint', {
+      channelNumber,
+      channelId: channel.id,
+      streamUrl: `/stream/${channel.id}`
+    });
+
+    // Redirect to the actual stream endpoint
+    // This allows Plex to directly tune to the channel
+    res.redirect(302, `/stream/${channel.id}?format=mpegts&raw=true`);
+
+  } catch (error) {
+    logger.error('HDHomeRun auto-tuning error:', error);
+    res.status(500).send('Auto-tuning failed');
+  }
+});
+
 // Auto-discovery endpoint (alternative)
 router.get('/auto/:device', async (req, res) => {
   try {
     const device = req.params.device;
-    
+
     if (device === 'hdhr') {
       const discovery = await ssdpService.generateDiscoveryResponse();
       res.json(discovery);

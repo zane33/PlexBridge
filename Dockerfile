@@ -48,7 +48,7 @@ WORKDIR /app/client
 # Configure npm for Alpine Linux and build client
 RUN npm config set registry https://registry.npmjs.org/ && \
     npm config set strict-ssl false && \
-    npm install --only=production --no-audit && \
+    npm install --no-audit && \
     npm run build
 
 WORKDIR /app
