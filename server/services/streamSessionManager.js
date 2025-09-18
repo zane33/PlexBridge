@@ -27,6 +27,9 @@ class StreamSessionManager {
     
     // Start periodic updates
     this.startPeriodicUpdates();
+
+    // Start automatic cleanup of stale sessions every 2 minutes
+    this.startAutomaticCleanup();
   }
 
   /**
@@ -706,6 +709,97 @@ class StreamSessionManager {
         });
       }
     }, this.updateIntervalMs);
+  }
+
+  /**
+   * Start automatic cleanup of stale streaming sessions
+   */
+  startAutomaticCleanup() {
+    const cleanup = async () => {
+      const startTime = Date.now();
+
+      try {
+        const now = Date.now();
+        const staleThreshold = 5 * 60 * 1000; // 5 minutes (same as API)
+        let cleanedCount = 0;
+        const staleSessions = [];
+
+        // Find stale sessions
+        for (const [sessionId, session] of this.activeSessions) {
+          if (now - session.lastUpdate > staleThreshold) {
+            staleSessions.push({ sessionId, session });
+          }
+        }
+
+        // Clean up stale sessions using proper streamManager coordination
+        if (staleSessions.length > 0) {
+          logger.info('Automatic cleanup of stale streaming sessions', {
+            staleSessionCount: staleSessions.length,
+            staleThresholdMinutes: Math.floor(staleThreshold / 60000)
+          });
+
+          for (const { sessionId, session } of staleSessions) {
+            try {
+              // CRITICAL: Use streamManager's cleanup which handles locks properly
+              const streamManager = require('./streamManager');
+
+              // Check if session is already being cleaned up to avoid race conditions
+              if (!streamManager.isCleaningUp || !streamManager.isCleaningUp(sessionId)) {
+                streamManager.cleanupStream(sessionId, 'auto_cleanup_stale');
+                cleanedCount++;
+
+                logger.debug('Automatically cleaned up stale session', {
+                  sessionId,
+                  channelName: session.channelName,
+                  clientIP: session.clientIP,
+                  inactiveMinutes: Math.floor((now - session.lastUpdate) / 60000)
+                });
+              } else {
+                logger.debug('Skipping session already being cleaned up', {
+                  sessionId,
+                  channelName: session.channelName
+                });
+              }
+
+            } catch (error) {
+              logger.error('Error during automatic session cleanup', {
+                sessionId,
+                error: error.message,
+                stack: error.stack
+              });
+            }
+          }
+
+          if (cleanedCount > 0) {
+            logger.info('Automatic session cleanup completed', {
+              cleanedCount,
+              remainingActive: this.activeSessions.size,
+              executionTime: Date.now() - startTime
+            });
+          }
+        }
+
+      } catch (error) {
+        logger.error('Failed to execute automatic cleanup', {
+          error: error.message,
+          stack: error.stack
+        });
+      }
+
+      // Schedule next cleanup with dynamic interval based on load
+      const nextInterval = this.activeSessions.size > 10 ? 60000 : 120000; // 1-2 minutes based on load
+      setTimeout(cleanup, nextInterval);
+    };
+
+    // Start the cleanup cycle
+    setTimeout(cleanup, 2 * 60 * 1000);
+
+    logger.info('Automatic session cleanup scheduler started', {
+      initialInterval: '2 minutes',
+      staleThreshold: '5 minutes',
+      adaptiveInterval: true,
+      purpose: 'Remove inactive streaming sessions automatically'
+    });
   }
 
   /**

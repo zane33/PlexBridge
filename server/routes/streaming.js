@@ -243,7 +243,7 @@ router.delete('/sessions/:sessionId', async (req, res) => {
     logger.info('Terminating streaming session', { sessionId });
 
     // End session in session manager
-    const finalStats = await streamSessionManager.endSession(sessionId, 'manual_termination');
+    const finalStats = await streamSessionManager.endSession(sessionId, 'manual');
     
     if (!finalStats) {
       return res.status(404).json({
@@ -254,7 +254,7 @@ router.delete('/sessions/:sessionId', async (req, res) => {
     }
 
     // Also cleanup in stream manager
-    streamManager.cleanupStream(sessionId, 'api_termination');
+    streamManager.cleanupStream(sessionId, 'manual');
 
     const response = {
       success: true,
@@ -301,8 +301,8 @@ router.delete('/sessions/client/:clientId', async (req, res) => {
 
     const terminatedSessions = [];
     for (const session of clientSessions) {
-      const finalStats = await streamSessionManager.endSession(session.sessionId, 'client_cleanup');
-      streamManager.cleanupStream(session.sessionId, 'api_client_cleanup');
+      const finalStats = await streamSessionManager.endSession(session.sessionId, 'manual');
+      streamManager.cleanupStream(session.sessionId, 'manual');
       terminatedSessions.push({
         sessionId: session.sessionId,
         finalStats
@@ -469,7 +469,7 @@ router.post('/cleanup', async (req, res) => {
 
     const activeSessions = streamSessionManager.getActiveSessions();
     const now = Date.now();
-    const staleThreshold = 60 * 60 * 1000; // 1 hour
+    const staleThreshold = 5 * 60 * 1000; // 5 minutes
     
     let cleanedCount = 0;
     const staleSessions = activeSessions.filter(session => 
@@ -477,8 +477,8 @@ router.post('/cleanup', async (req, res) => {
     );
 
     for (const session of staleSessions) {
-      await streamSessionManager.endSession(session.sessionId, 'cleanup_stale');
-      streamManager.cleanupStream(session.sessionId, 'api_cleanup');
+      await streamSessionManager.endSession(session.sessionId, 'stale');
+      streamManager.cleanupStream(session.sessionId, 'stale');
       cleanedCount++;
     }
 
