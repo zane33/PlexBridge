@@ -361,11 +361,14 @@ const SessionCard = ({
                 <LinearProgress
                   variant="determinate"
                   value={connectionQuality.score}
-                  color={connectionQuality.color}
+                  color={connectionQuality.color === 'default' ? 'inherit' : connectionQuality.color}
                   sx={{
                     height: 6,
                     borderRadius: 3,
                     backgroundColor: 'rgba(0, 0, 0, 0.1)',
+                    '& .MuiLinearProgress-bar': {
+                      backgroundColor: connectionQuality.color === 'default' ? '#9e9e9e' : undefined
+                    }
                   }}
                 />
               </Box>
