@@ -145,8 +145,10 @@ class StreamResilienceService extends EventEmitter {
     const { streamId, streamUrl, options } = resilienceState;
     
     const ffmpegArgs = [
+      // REAL-TIME PROCESSING (must come before input)
+      '-re', // Read input at native frame rate
       '-i', streamUrl,
-      
+
       // ENHANCED RECONNECTION PARAMETERS
       '-reconnect', '1',
       '-reconnect_at_eof', '1',
@@ -154,13 +156,13 @@ class StreamResilienceService extends EventEmitter {
       '-reconnect_delay_max', '30', // Max 30 second delay
       '-reconnect_on_network_error', '1',
       '-reconnect_on_http_error', '4xx,5xx',
-      
+
       // AGGRESSIVE TIMEOUT SETTINGS
       '-timeout', this.config.ffmpeg.networkTimeoutMs * 1000, // microseconds
       '-tcp_nodelay', '1',
       '-fflags', '+genpts+igndts',
       '-avoid_negative_ts', 'make_zero',
-      
+
       // EXPONENTIAL BACKOFF FOR RETRIES
       '-reconnect_delay_max', Math.min(
         this.config.ffmpeg.reconnectDelayMs * Math.pow(
@@ -169,23 +171,22 @@ class StreamResilienceService extends EventEmitter {
         ),
         30000 // Cap at 30 seconds
       ).toString(),
-      
+
       // OUTPUT FORMAT OPTIMIZATION
       '-f', 'mpegts',
       '-c:v', 'copy',
       '-c:a', 'copy',
       '-copyts',
       '-start_at_zero',
-      
+
       // BUFFER OPTIMIZATION
       '-buffer_size', '4096k',
       '-max_delay', '5000000', // 5 seconds max delay
       '-fflags', '+flush_packets',
-      
-      // REAL-TIME PROCESSING
-      '-re', // Read input at native frame rate
+
+      // PROCESSING THREADS
       '-threads', '2', // Limit threads for stability
-      
+
       // OUTPUT TO STDOUT
       'pipe:1'
     ];

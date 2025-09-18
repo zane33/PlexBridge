@@ -930,19 +930,19 @@ class StreamManager {
         clientIP: req.ip
       });
       
-      let sessionId;
+      // Create session ID for this stream request
+      const sessionId = `${streamId}_${clientIdentifier}_${Date.now()}`;
+
       if (existingSession) {
         logger.info('Found existing session - ending it to prevent duplicates', {
           existingSessionId: existingSession.sessionId,
           streamId,
           clientIdentifier
         });
-        
+
         // End the existing session and create a new one (client likely reconnected)
         await streamSessionManager.endSession(existingSession.sessionId, 'client_reconnect');
       }
-      
-      sessionId = `${streamId}_${clientIdentifier}_${Date.now()}`;
       
       // Get channel information for real-time updates
       let channelInfo = null;
@@ -2065,6 +2065,10 @@ class StreamManager {
       // Declare sessionId early to avoid temporal dead zone errors
       let sessionId;
 
+      // Generate session client identifier and initialize sessionId immediately
+      const sessionClientIdentifier = this.generateClientIdentifier(req);
+      sessionId = `plex_${channel.id}_${sessionClientIdentifier}_${Date.now()}`;
+
       // CRITICAL: Detect Plex Web Client specifically
       const userAgent = req.get('User-Agent') || '';
       const clientIdentifier = req.headers['x-plex-client-identifier'] || '';
@@ -2850,8 +2854,8 @@ class StreamManager {
       }, startupTimeoutMs);
 
       // ===== ADD SESSION TRACKING FOR PLEX STREAMS =====
-      const sessionClientIdentifier = this.generateClientIdentifier(req);
-      
+      // sessionClientIdentifier and sessionId already initialized above
+
       // Check for existing session to prevent duplicates
       const existingSession = streamSessionManager.getActiveSessionByClientAndStream(sessionClientIdentifier, channel.id);
       
@@ -2873,9 +2877,7 @@ class StreamManager {
         // End the existing session and create a new one (Plex likely reconnected)
         await streamSessionManager.endSession(existingSession.sessionId, 'plex_reconnect');
       }
-      
-      sessionId = `plex_${channel.id}_${sessionClientIdentifier}_${Date.now()}`;
-      
+
       // Create session info for tracking
       const streamInfo = {
         streamId: channel.id,
