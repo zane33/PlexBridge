@@ -659,8 +659,13 @@ const initializeApp = async () => {
       app.use('/api/streams/import/m3u', m3uImportRoutes);
       app.use('/api/streaming', streamingRoutes);  // Enhanced streaming monitoring
       app.use('/api/ffmpeg-profiles', ffmpegProfileRoutes);  // FFmpeg profile management
-      app.use('/api', apiRoutes);
+
+      // Mount specific EPG routes BEFORE general API routes to prevent conflicts
       app.use('/epg', epgRoutes);
+      app.use('/api/epg', epgRoutes);
+
+      // General API routes (after specific routes to prevent conflicts)
+      app.use('/api', apiRoutes);
 
       // EPG Admin routes for managing channel mappings
       const epgAdminRoutes = require('./routes/epgAdmin');
