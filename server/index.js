@@ -661,6 +661,10 @@ const initializeApp = async () => {
       app.use('/api/ffmpeg-profiles', ffmpegProfileRoutes);  // FFmpeg profile management
       app.use('/api', apiRoutes);
       app.use('/epg', epgRoutes);
+
+      // EPG Admin routes for managing channel mappings
+      const epgAdminRoutes = require('./routes/epgAdmin');
+      app.use('/api/epg-admin', epgAdminRoutes);
       app.use('/', ssdpRoutes);
       app.use('/', streamRoutes);
       

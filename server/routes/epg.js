@@ -7,6 +7,7 @@ const { generateXMLTVCategories } = require('../utils/plexCategories');
 const { cacheMiddleware, responseTimeMonitor, optimizeEPGData } = require('../utils/performanceOptimizer');
 const { fixProgramMetadata, generateXMLTVProgramme } = require('../utils/plexMetadataFix');
 const { channelSwitchingMiddleware, getCurrentProgramFast, generateImmediateEPGResponse } = require('../utils/channelSwitchingFix');
+const { resolveEPGPrograms } = require('../services/epgResolver');
 
 // XMLTV format EPG endpoint - both with and without .xml extension for Plex compatibility
 // IMPORTANT: The .xml route MUST come before the parameterized route to avoid conflicts
@@ -185,26 +186,21 @@ router.get('/now/:channelId', channelSwitchingMiddleware(), responseTimeMonitor(
     }
     
     // Standard lookup for non-Android TV or when fast lookup fails
-    const now = new Date().toISOString();
-    let epgChannelId = channelId;
-    const channel = await database.get('SELECT epg_id FROM channels WHERE id = ?', [channelId]);
-    if (channel && channel.epg_id) {
-      epgChannelId = channel.epg_id;
-    }
+    const now = new Date();
+    const nowPlusHour = new Date(Date.now() + 60 * 60 * 1000);
+    const channel = await database.get('SELECT * FROM channels WHERE id = ?', [channelId]);
 
-    let program = await database.get(`
-      SELECT p.title, p.description, p.start_time, p.end_time, p.category,
-             COALESCE(c.name, ec.display_name, 'EPG Channel ' || p.channel_id) as channel_name, 
-             COALESCE(c.number, 9999) as channel_number
-      FROM epg_programs p
-      LEFT JOIN channels c ON c.epg_id = p.channel_id
-      LEFT JOIN epg_channels ec ON ec.epg_id = p.channel_id
-      WHERE p.channel_id = ? 
-      AND p.start_time <= ? 
-      AND p.end_time > ?
-      ORDER BY p.start_time DESC
-      LIMIT 1
-    `, [epgChannelId, now, now]);
+    // Use the intelligent EPG resolver for current program lookup
+    const result = await resolveEPGPrograms(channel, now, nowPlusHour);
+    let program = result.programs.find(p =>
+      new Date(p.start_time) <= now && new Date(p.end_time) > now
+    );
+
+    // Add channel information to the program
+    if (program && channel) {
+      program.channel_name = channel.name;
+      program.channel_number = channel.number;
+    }
 
     if (!program) {
       // Generate fallback program with proper metadata types
@@ -318,25 +314,18 @@ router.get('/next/:channelId', async (req, res) => {
     const channelId = req.params.channelId;
     const now = new Date().toISOString();
 
-    // First try to get the EPG ID if channelId is an internal ID
-    let epgChannelId = channelId;
-    const channel = await database.get('SELECT epg_id FROM channels WHERE id = ?', [channelId]);
-    if (channel && channel.epg_id) {
-      epgChannelId = channel.epg_id;
-    }
+    // Get channel info and resolve EPG programs
+    const channel = await database.get('SELECT * FROM channels WHERE id = ?', [channelId]);
+    const tomorrow = new Date(Date.now() + 24 * 60 * 60 * 1000);
+    const result = await resolveEPGPrograms(channel, new Date(now), tomorrow);
 
-    const program = await database.get(`
-      SELECT p.*, 
-             COALESCE(c.name, ec.display_name, 'EPG Channel ' || p.channel_id) as channel_name, 
-             COALESCE(c.number, 9999) as channel_number
-      FROM epg_programs p
-      LEFT JOIN channels c ON c.epg_id = p.channel_id
-      LEFT JOIN epg_channels ec ON ec.epg_id = p.channel_id
-      WHERE p.channel_id = ? 
-      AND p.start_time > ?
-      ORDER BY p.start_time ASC
-      LIMIT 1
-    `, [epgChannelId, now]);
+    // Find the next program after now
+    const program = result.programs.find(p => new Date(p.start_time) > new Date(now));
+
+    if (program && channel) {
+      program.channel_name = channel.name;
+      program.channel_number = channel.number;
+    }
 
     if (!program) {
       return res.status(404).json({ error: 'No upcoming program found' });

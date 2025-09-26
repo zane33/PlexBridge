@@ -11,6 +11,7 @@ const config = require('../config');
 const database = require('./database');
 const cacheService = require('./cacheService');
 const { ensureAndroidTVCompatibility, generateFallbackProgram } = require('../utils/androidTvCompat');
+const { resolveEPGPrograms } = require('./epgResolver');
 
 const gzipAsync = promisify(gzip);
 const gunzipAsync = promisify(gunzip);
@@ -866,31 +867,36 @@ class EPGService {
   async getEPGData(channelId, startTime, endTime) {
     try {
       // Get channel info first to resolve EPG ID for proper caching
-      const channel = await database.get('SELECT * FROM channels WHERE id = ? OR epg_id = ?', 
+      const channel = await database.get('SELECT * FROM channels WHERE id = ? OR epg_id = ?',
         [channelId, channelId]);
 
-      // Determine the EPG channel ID to use for the query
-      // If channelId is a UUID, use the channel's epg_id; otherwise use channelId directly
-      const epgChannelId = channel?.epg_id || channelId;
+      // Use intelligent EPG resolver to find programs
+      const start = new Date(startTime);
+      const end = new Date(endTime);
+      const result = await resolveEPGPrograms(channel, start, end);
 
-      // Check cache using EPG channel ID for consistent caching
-      const cacheKey = `epg:${epgChannelId}:${startTime}:${endTime}`;
+      let programs = result.programs;
+      const usedEpgId = result.epgId;
+
+      // Check cache using the resolved EPG channel ID
+      const cacheKey = `epg:${usedEpgId}:${startTime}:${endTime}`;
       const cached = await cacheService.get(cacheKey);
-      
-      if (cached) {
+
+      if (cached && cached.length > 0) {
         return cached;
       }
 
-      // Query database using the correct EPG channel ID
-      let programs = await database.all(`
-        SELECT p.*, ec.source_id 
-        FROM epg_programs p
-        LEFT JOIN epg_channels ec ON ec.epg_id = p.channel_id
-        WHERE p.channel_id = ? 
-        AND p.start_time <= ? 
-        AND p.end_time >= ?
-        ORDER BY start_time
-      `, [epgChannelId, endTime, startTime]);
+      // Log the resolution result for debugging
+      if (result.source !== 'original' && result.source !== 'none') {
+        logger.info('EPG programs resolved with fallback strategy', {
+          channelName: channel?.name,
+          channelNumber: channel?.number,
+          originalEpgId: channel?.epg_id,
+          resolvedEpgId: usedEpgId,
+          strategy: result.source,
+          programCount: programs.length
+        });
+      }
 
       // If no programs found, generate fallback data for Android TV compatibility
       if (!programs || programs.length === 0) {
