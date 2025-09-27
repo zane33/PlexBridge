@@ -664,12 +664,12 @@ const initializeApp = async () => {
       app.use('/epg', epgRoutes);
       app.use('/api/epg', epgRoutes);
 
-      // General API routes (after specific routes to prevent conflicts)
-      app.use('/api', apiRoutes);
-
-      // EPG Admin routes for managing channel mappings
+      // EPG Admin routes for managing channel mappings - MUST be before general API routes
       const epgAdminRoutes = require('./routes/epgAdmin');
       app.use('/api/epg-admin', epgAdminRoutes);
+
+      // General API routes (after specific routes to prevent conflicts)
+      app.use('/api', apiRoutes);
       app.use('/', ssdpRoutes);
       app.use('/', streamRoutes);
       
