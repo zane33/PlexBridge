@@ -132,9 +132,9 @@ app.set('io', io);
 
 // Serve static files - MUST BE AFTER API ROUTES
 app.use('/logos', express.static(path.join(__dirname, '../data/logos')));
-app.use(express.static(path.join(__dirname, '../client/build')));
 
-// NOTE: React catch-all route moved to initializeApp() after API routes are registered
+// NOTE: Static file serving moved to initializeApp() after API routes are registered
+// This prevents static middleware from interfering with API routes
 
 // Make socket.io instance available globally for services
 global.io = io;
@@ -704,6 +704,10 @@ const initializeApp = async () => {
       logger.error('❌ Failed to register API routes:', routeError.message);
       throw routeError;
     }
+
+    // Register static file serving AFTER all API routes to prevent interference
+    app.use(express.static(path.join(__dirname, '../client/build')));
+    logger.info('✅ Static file serving registered (after API routes)');
 
     // Register React catch-all route AFTER all API routes
     app.get('*', (req, res) => {
