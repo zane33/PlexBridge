@@ -496,12 +496,32 @@ class EPGService {
       // Process and store channel information first
       const channelMap = new Map();
       const epgChannels = [];
-      
+
+      logger.debug('Processing EPG channels from XML', {
+        sourceId,
+        totalChannelsInXML: channels.length,
+        sampleChannels: channels.slice(0, 5).map(ch => ({
+          id: ch.id,
+          displayName: this.extractText(ch['display-name']),
+          hasId: !!ch.id
+        }))
+      });
+
       for (const channel of channels) {
         if (channel.id) {
           const displayName = this.extractText(channel['display-name']);
           const iconUrl = channel.icon?.src || null;
-          
+
+          // Debug logging for TVNZ channels specifically
+          if (channel.id && (channel.id.includes('tvnz') || channel.id.includes('mjh-tvnz'))) {
+            logger.info('Found TVNZ channel in XML', {
+              sourceId,
+              channelId: channel.id,
+              displayName: displayName,
+              iconUrl: iconUrl
+            });
+          }
+
           channelMap.set(channel.id, {
             id: channel.id,
             name: displayName,
@@ -517,6 +537,12 @@ class EPGService {
           });
         }
       }
+
+      logger.info('EPG channels prepared for storage', {
+        sourceId,
+        totalChannelsProcessed: epgChannels.length,
+        tvnzChannels: epgChannels.filter(ch => ch.epg_id.includes('tvnz') || ch.epg_id.includes('mjh-tvnz')).length
+      });
 
       // Store EPG channels in database
       if (epgChannels.length > 0) {
@@ -740,30 +766,61 @@ class EPGService {
     try {
       database.transaction(() => {
         // Clear old EPG channels for this source
-        database.db.prepare('DELETE FROM epg_channels WHERE source_id = ?').run(sourceId);
+        const deleteResult = database.db.prepare('DELETE FROM epg_channels WHERE source_id = ?').run(sourceId);
+        logger.debug('Cleared existing EPG channels', {
+          sourceId,
+          deletedCount: deleteResult.changes
+        });
 
         // Insert new EPG channels in batches
         const batchSize = 1000;
         const insertSQL = `
-          INSERT OR REPLACE INTO epg_channels 
+          INSERT OR REPLACE INTO epg_channels
           (epg_id, display_name, icon_url, source_id)
           VALUES (?, ?, ?, ?)
         `;
 
         const insertStmt = database.db.prepare(insertSQL);
-        
+        let totalInserted = 0;
+
         for (let i = 0; i < epgChannels.length; i += batchSize) {
           const batch = epgChannels.slice(i, i + batchSize);
-          
+
           for (const channel of batch) {
-            insertStmt.run(
-              channel.epg_id,
-              channel.display_name,
-              channel.icon_url,
-              channel.source_id
-            );
+            try {
+              const result = insertStmt.run(
+                channel.epg_id,
+                channel.display_name,
+                channel.icon_url,
+                channel.source_id
+              );
+
+              totalInserted += result.changes;
+
+              // Debug logging for TVNZ channels specifically
+              if (channel.epg_id && (channel.epg_id.includes('tvnz') || channel.epg_id.includes('mjh-tvnz'))) {
+                logger.info('Inserted TVNZ channel to database', {
+                  sourceId,
+                  epgId: channel.epg_id,
+                  displayName: channel.display_name,
+                  insertResult: result.changes
+                });
+              }
+            } catch (insertError) {
+              logger.error('Failed to insert EPG channel', {
+                sourceId,
+                channel: channel,
+                error: insertError.message
+              });
+            }
           }
         }
+
+        logger.info('EPG channels stored in database', {
+          sourceId,
+          totalInserted,
+          totalProvided: epgChannels.length
+        });
       });
 
       logger.epg('EPG channels stored', { count: epgChannels.length, sourceId });
