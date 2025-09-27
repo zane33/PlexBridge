@@ -841,14 +841,33 @@ class EPGService {
 
     try {
       database.transaction(() => {
-        // Clear old programs first
+        // Clear old programs first (global cleanup)
         const threeDaysAgo = new Date(Date.now() - 3 * 24 * 60 * 60 * 1000).toISOString();
         const deletedResult = database.db.prepare('DELETE FROM epg_programs WHERE end_time < ?').run(threeDaysAgo);
-        
-        logger.info('Cleared old EPG programs', { 
+
+        logger.info('Cleared old EPG programs', {
           deletedCount: deletedResult.changes,
-          cutoffDate: threeDaysAgo 
+          cutoffDate: threeDaysAgo
         });
+
+        // Clear all existing programs for channels that are being updated to prevent stale data
+        const channelsInUpdate = [...new Set(programs.map(p => p.channel_id))];
+        let channelSpecificDeleted = 0;
+
+        if (channelsInUpdate.length > 0) {
+          const placeholders = channelsInUpdate.map(() => '?').join(',');
+          const channelDeleteResult = database.db.prepare(
+            `DELETE FROM epg_programs WHERE channel_id IN (${placeholders})`
+          ).run(...channelsInUpdate);
+
+          channelSpecificDeleted = channelDeleteResult.changes;
+
+          logger.info('Cleared existing programs for updated channels', {
+            channelCount: channelsInUpdate.length,
+            channels: channelsInUpdate.slice(0, 10), // Log first 10 channels
+            deletedPrograms: channelSpecificDeleted
+          });
+        }
 
         // Insert new programs in batches
         const batchSize = 1000;
@@ -970,6 +989,7 @@ class EPGService {
       }
 
       // Query database using the correct EPG channel ID
+      // First try with the exact EPG channel ID
       let programs = await database.all(`
         SELECT p.*, ec.source_id
         FROM epg_programs p
@@ -979,6 +999,47 @@ class EPGService {
         AND p.end_time >= ?
         ORDER BY start_time
       `, [epgChannelId, endTime, startTime]);
+
+      // If no programs found and the EPG ID has 'mjh-' prefix, try with alternative IDs
+      if ((!programs || programs.length === 0) && epgChannelId.startsWith('mjh-')) {
+        let alternativeId = null;
+
+        // Extract numeric ID (e.g., mjh-tvnz-1 -> 1)
+        const numericMatch = epgChannelId.match(/^mjh-.*?([0-9]+).*$/);
+        if (numericMatch) {
+          alternativeId = numericMatch[1];
+        }
+        // Handle special cases (e.g., mjh-three -> 3)
+        else if (epgChannelId === 'mjh-three') {
+          alternativeId = '3';
+        }
+
+        if (alternativeId && alternativeId !== epgChannelId) {
+          logger.debug('No programs found with full EPG ID, trying alternative ID fallback', {
+            epgChannelId,
+            alternativeId,
+            channelId
+          });
+
+          programs = await database.all(`
+            SELECT p.*, ec.source_id
+            FROM epg_programs p
+            LEFT JOIN epg_channels ec ON ec.epg_id = p.channel_id
+            WHERE p.channel_id = ?
+            AND p.start_time <= ?
+            AND p.end_time >= ?
+            ORDER BY start_time
+          `, [alternativeId, endTime, startTime]);
+
+          if (programs && programs.length > 0) {
+            logger.info('Found programs using alternative channel ID fallback', {
+              epgChannelId,
+              alternativeId,
+              programCount: programs.length
+            });
+          }
+        }
+      }
 
       // If no programs found, generate fallback data for Android TV compatibility
       if (!programs || programs.length === 0) {
