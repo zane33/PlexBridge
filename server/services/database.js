@@ -384,22 +384,40 @@ class DatabaseService {
       `);
       createEpgChannelsTable.run();
 
-      // Create epg_programs table
+      // Create epg_programs table with enhanced metadata fields
       const createEpgProgramsTable = this.db.prepare(`
         CREATE TABLE IF NOT EXISTS epg_programs (
           id TEXT PRIMARY KEY,
           channel_id TEXT,
           title TEXT NOT NULL,
+          subtitle TEXT,
           description TEXT,
           start_time DATETIME NOT NULL,
           end_time DATETIME NOT NULL,
           category TEXT,
+          secondary_category TEXT,
+          year INTEGER,
+          country TEXT,
+          icon_url TEXT,
           episode_number TEXT,
           season_number TEXT,
+          series_id TEXT,
+          keywords TEXT,
+          rating TEXT,
+          audio_description BOOLEAN DEFAULT 0,
+          subtitles BOOLEAN DEFAULT 0,
+          hd_quality BOOLEAN DEFAULT 0,
+          premiere BOOLEAN DEFAULT 0,
+          finale BOOLEAN DEFAULT 0,
+          live BOOLEAN DEFAULT 0,
+          new_episode BOOLEAN DEFAULT 0,
           created_at DATETIME DEFAULT CURRENT_TIMESTAMP
         )
       `);
       createEpgProgramsTable.run();
+
+      // Migrate existing epg_programs table to add enhanced metadata columns
+      this.migrateEPGProgramsTable();
 
       // Create stream_sessions table
       const createStreamSessionsTable = this.db.prepare(`
@@ -826,6 +844,57 @@ class DatabaseService {
       }
     } catch (error) {
       return { status: 'unhealthy', error: error.message, timestamp: new Date().toISOString() };
+    }
+  }
+
+  // Migrate existing epg_programs table to add enhanced metadata columns
+  migrateEPGProgramsTable() {
+    try {
+      // Get existing column names
+      const tableInfo = this.db.prepare("PRAGMA table_info(epg_programs)").all();
+      const existingColumns = tableInfo.map(col => col.name);
+
+      // List of new columns to add
+      const newColumns = [
+        { name: 'subtitle', sql: 'ALTER TABLE epg_programs ADD COLUMN subtitle TEXT' },
+        { name: 'secondary_category', sql: 'ALTER TABLE epg_programs ADD COLUMN secondary_category TEXT' },
+        { name: 'year', sql: 'ALTER TABLE epg_programs ADD COLUMN year INTEGER' },
+        { name: 'country', sql: 'ALTER TABLE epg_programs ADD COLUMN country TEXT' },
+        { name: 'icon_url', sql: 'ALTER TABLE epg_programs ADD COLUMN icon_url TEXT' },
+        { name: 'series_id', sql: 'ALTER TABLE epg_programs ADD COLUMN series_id TEXT' },
+        { name: 'keywords', sql: 'ALTER TABLE epg_programs ADD COLUMN keywords TEXT' },
+        { name: 'rating', sql: 'ALTER TABLE epg_programs ADD COLUMN rating TEXT' },
+        { name: 'audio_description', sql: 'ALTER TABLE epg_programs ADD COLUMN audio_description BOOLEAN DEFAULT 0' },
+        { name: 'subtitles', sql: 'ALTER TABLE epg_programs ADD COLUMN subtitles BOOLEAN DEFAULT 0' },
+        { name: 'hd_quality', sql: 'ALTER TABLE epg_programs ADD COLUMN hd_quality BOOLEAN DEFAULT 0' },
+        { name: 'premiere', sql: 'ALTER TABLE epg_programs ADD COLUMN premiere BOOLEAN DEFAULT 0' },
+        { name: 'finale', sql: 'ALTER TABLE epg_programs ADD COLUMN finale BOOLEAN DEFAULT 0' },
+        { name: 'live', sql: 'ALTER TABLE epg_programs ADD COLUMN live BOOLEAN DEFAULT 0' },
+        { name: 'new_episode', sql: 'ALTER TABLE epg_programs ADD COLUMN new_episode BOOLEAN DEFAULT 0' }
+      ];
+
+      // Add missing columns
+      let addedColumns = 0;
+      for (const column of newColumns) {
+        if (!existingColumns.includes(column.name)) {
+          try {
+            this.db.prepare(column.sql).run();
+            addedColumns++;
+            logger.info(`Added column ${column.name} to epg_programs table`);
+          } catch (error) {
+            logger.warn(`Failed to add column ${column.name}:`, error.message);
+          }
+        }
+      }
+
+      if (addedColumns > 0) {
+        logger.info(`EPG programs table migration completed. Added ${addedColumns} enhanced metadata columns.`);
+      } else {
+        logger.info('EPG programs table already has all enhanced metadata columns');
+      }
+    } catch (error) {
+      logger.error('EPG programs table migration failed:', error);
+      // Don't throw error to prevent initialization failure
     }
   }
 }

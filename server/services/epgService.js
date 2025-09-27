@@ -578,18 +578,32 @@ class EPGService {
     }
 
     try {
-      // **CRITICAL FIX**: Use EPG channel ID directly, don't try to map to internal channel
-      // This allows programs to be stored even without channel mapping
+      // **ENHANCED**: Extract comprehensive metadata for rich Plex integration
       const program = {
         id: `${programme.channel}_${programme.start}`,
         channel_id: programme.channel, // Use EPG channel ID directly
         title: this.extractText(programme.title) || 'Unknown',
+        subtitle: this.extractText(programme['sub-title']) || null,
         description: this.extractText(programme.desc) || null,
         start_time: this.parseXMLTVTime(programme.start),
         end_time: this.parseXMLTVTime(programme.stop),
-        category: this.extractText(programme.category) || null,
+        category: this.extractPrimaryCategory(programme.category),
+        secondary_category: this.extractSecondaryCategory(programme.category),
+        year: this.extractYear(programme.date),
+        country: this.extractText(programme.country) || null,
+        icon_url: this.extractIconUrl(programme.icon),
         episode_number: programme['episode-num'] ? this.parseEpisodeNumber(programme['episode-num']) : null,
-        season_number: programme['episode-num'] ? this.parseSeasonNumber(programme['episode-num']) : null
+        season_number: programme['episode-num'] ? this.parseSeasonNumber(programme['episode-num']) : null,
+        series_id: this.extractSeriesId(programme['episode-num']),
+        keywords: this.extractKeywords(programme.keyword),
+        rating: this.extractRating(programme.rating),
+        audio_description: this.checkAudioDescription(programme),
+        subtitles: this.checkSubtitles(programme),
+        hd_quality: this.checkHDQuality(programme),
+        premiere: this.checkPremiere(programme),
+        finale: this.checkFinale(programme),
+        live: this.checkLive(programme),
+        new_episode: this.checkNewEpisode(programme)
       };
 
       logger.debug('Successfully parsed programme', {
@@ -782,9 +796,11 @@ class EPGService {
         // Insert new programs in batches
         const batchSize = 1000;
         const insertSQL = `
-          INSERT OR REPLACE INTO epg_programs 
-          (id, channel_id, title, description, start_time, end_time, category, episode_number, season_number)
-          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+          INSERT OR REPLACE INTO epg_programs
+          (id, channel_id, title, subtitle, description, start_time, end_time, category, secondary_category,
+           year, country, icon_url, episode_number, season_number, series_id, keywords, rating,
+           audio_description, subtitles, hd_quality, premiere, finale, live, new_episode)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         `;
 
         let insertedCount = 0;
@@ -801,12 +817,27 @@ class EPGService {
                 program.id,
                 program.channel_id,
                 program.title,
+                program.subtitle,
                 program.description,
                 program.start_time,
                 program.end_time,
                 program.category,
+                program.secondary_category,
+                program.year,
+                program.country,
+                program.icon_url,
                 program.episode_number,
-                program.season_number
+                program.season_number,
+                program.series_id,
+                program.keywords,
+                program.rating,
+                program.audio_description || false,
+                program.subtitles || false,
+                program.hd_quality || false,
+                program.premiere || false,
+                program.finale || false,
+                program.live || false,
+                program.new_episode || false
               );
               insertedCount++;
               
@@ -1253,6 +1284,219 @@ class EPGService {
       jobs,
       serviceInitialized: this.isInitialized
     };
+  }
+
+  // **ENHANCED METADATA EXTRACTION FUNCTIONS FOR RICH PLEX INTEGRATION**
+
+  extractPrimaryCategory(categories) {
+    if (!categories) return null;
+
+    // Ensure categories is an array
+    const catArray = Array.isArray(categories) ? categories : [categories];
+    return this.extractText(catArray[0]) || null;
+  }
+
+  extractSecondaryCategory(categories) {
+    if (!categories) return null;
+
+    const catArray = Array.isArray(categories) ? categories : [categories];
+    return catArray.length > 1 ? this.extractText(catArray[1]) : null;
+  }
+
+  extractYear(dateElement) {
+    if (!dateElement) return null;
+
+    const dateText = this.extractText(dateElement);
+    if (!dateText) return null;
+
+    // Extract 4-digit year
+    const yearMatch = dateText.match(/(\d{4})/);
+    return yearMatch ? parseInt(yearMatch[1]) : null;
+  }
+
+  extractIconUrl(iconElement) {
+    if (!iconElement) return null;
+
+    // Handle both <icon src="url"/> and nested structures
+    if (typeof iconElement === 'string') return iconElement;
+    if (iconElement.src) return iconElement.src;
+    if (iconElement._) return iconElement._;
+
+    return null;
+  }
+
+  extractSeriesId(episodeNum) {
+    if (!episodeNum) return null;
+
+    const episodeText = Array.isArray(episodeNum) ? episodeNum[0] : episodeNum;
+    if (!episodeText || typeof episodeText !== 'object') return null;
+
+    // Look for dd_seriesid system or similar
+    if (episodeText.system === 'dd_seriesid' || episodeText.system === 'thetvdb') {
+      return this.extractText(episodeText) || null;
+    }
+
+    return null;
+  }
+
+  extractKeywords(keywordElement) {
+    if (!keywordElement) return null;
+
+    const keywords = Array.isArray(keywordElement) ? keywordElement : [keywordElement];
+    return keywords.map(k => this.extractText(k)).filter(Boolean).join(',') || null;
+  }
+
+  extractRating(ratingElement) {
+    if (!ratingElement) return null;
+
+    // Handle various rating formats
+    if (typeof ratingElement === 'string') return ratingElement;
+    if (ratingElement.value) return ratingElement.value;
+    if (ratingElement._) return ratingElement._;
+
+    return null;
+  }
+
+  checkAudioDescription(programme) {
+    // Check for audio description markers
+    const title = this.extractText(programme.title) || '';
+    const desc = this.extractText(programme.desc) || '';
+    const keywords = this.extractText(programme.keyword) || '';
+
+    return title.includes('[AD]') ||
+           desc.includes('audio description') ||
+           keywords.includes('audio-description') ||
+           !!programme['audio-description'];
+  }
+
+  checkSubtitles(programme) {
+    // Check for subtitle markers
+    const title = this.extractText(programme.title) || '';
+    const desc = this.extractText(programme.desc) || '';
+    const keywords = this.extractText(programme.keyword) || '';
+
+    return title.includes('[CC]') ||
+           title.includes('[S]') ||
+           desc.includes('subtitles') ||
+           keywords.includes('subtitles') ||
+           !!programme.subtitles;
+  }
+
+  checkHDQuality(programme) {
+    // Check for HD quality markers
+    const title = this.extractText(programme.title) || '';
+    const desc = this.extractText(programme.desc) || '';
+    const keywords = this.extractText(programme.keyword) || '';
+
+    return title.includes('HD') ||
+           title.includes('[HD]') ||
+           desc.includes('high definition') ||
+           keywords.includes('hd') ||
+           !!programme.quality;
+  }
+
+  checkPremiere(programme) {
+    // Check for premiere markers
+    const title = this.extractText(programme.title) || '';
+    const desc = this.extractText(programme.desc) || '';
+    const keywords = this.extractText(programme.keyword) || '';
+
+    return title.includes('Premiere') ||
+           title.includes('[Premiere]') ||
+           desc.includes('premiere') ||
+           keywords.includes('premiere') ||
+           !!programme.premiere;
+  }
+
+  checkFinale(programme) {
+    // Check for finale markers
+    const title = this.extractText(programme.title) || '';
+    const desc = this.extractText(programme.desc) || '';
+    const keywords = this.extractText(programme.keyword) || '';
+
+    return title.includes('Finale') ||
+           title.includes('Season Finale') ||
+           title.includes('Series Finale') ||
+           desc.includes('finale') ||
+           keywords.includes('finale');
+  }
+
+  checkLive(programme) {
+    // Check for live broadcast markers
+    const title = this.extractText(programme.title) || '';
+    const desc = this.extractText(programme.desc) || '';
+    const keywords = this.extractText(programme.keyword) || '';
+
+    return title.includes('LIVE') ||
+           title.includes('[Live]') ||
+           desc.includes('live broadcast') ||
+           keywords.includes('live') ||
+           !!programme.live;
+  }
+
+  checkNewEpisode(programme) {
+    // Check for new episode markers
+    const title = this.extractText(programme.title) || '';
+    const desc = this.extractText(programme.desc) || '';
+    const keywords = this.extractText(programme.keyword) || '';
+
+    return title.includes('[New]') ||
+           title.includes('New Episode') ||
+           desc.includes('new episode') ||
+           keywords.includes('new') ||
+           !!programme.new;
+  }
+
+  // **ENHANCED EPISODE/SEASON PARSING - Override existing methods**
+  parseEpisodeNumber(episodeNum) {
+    if (!episodeNum) return null;
+
+    const episodeText = Array.isArray(episodeNum) ? episodeNum[0] : episodeNum;
+    if (typeof episodeText === 'string') {
+      // Handle various episode number formats
+      // XMLTV format: "season.episode.part/total"
+      const xmltvMatch = episodeText.match(/\.(\d+)\./);
+      if (xmltvMatch) return parseInt(xmltvMatch[1]) + 1; // XMLTV uses 0-based indexing
+
+      // Simple episode number: "E5", "Episode 5", etc.
+      const episodeMatch = episodeText.match(/(?:E|Episode)\s*(\d+)/i);
+      if (episodeMatch) return parseInt(episodeMatch[1]);
+
+      // Season/Episode format: "S1E5"
+      const seMatch = episodeText.match(/S\d+E(\d+)/i);
+      if (seMatch) return parseInt(seMatch[1]);
+    }
+
+    if (typeof episodeText === 'object' && episodeText._) {
+      return this.parseEpisodeNumber(episodeText._);
+    }
+
+    return null;
+  }
+
+  parseSeasonNumber(episodeNum) {
+    if (!episodeNum) return null;
+
+    const episodeText = Array.isArray(episodeNum) ? episodeNum[0] : episodeNum;
+    if (typeof episodeText === 'string') {
+      // XMLTV format: "season.episode.part/total"
+      const xmltvMatch = episodeText.match(/^(\d+)\./);
+      if (xmltvMatch) return parseInt(xmltvMatch[1]) + 1; // XMLTV uses 0-based indexing
+
+      // Simple season number: "S5", "Season 5", etc.
+      const seasonMatch = episodeText.match(/(?:S|Season)\s*(\d+)/i);
+      if (seasonMatch) return parseInt(seasonMatch[1]);
+
+      // Season/Episode format: "S1E5"
+      const seMatch = episodeText.match(/S(\d+)E\d+/i);
+      if (seMatch) return parseInt(seMatch[1]);
+    }
+
+    if (typeof episodeText === 'object' && episodeText._) {
+      return this.parseSeasonNumber(episodeText._);
+    }
+
+    return null;
   }
 
   async shutdown() {
