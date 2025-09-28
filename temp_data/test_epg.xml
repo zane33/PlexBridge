@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<tv>
+  <channel id="test.channel.1">
+    <display-name>Test Channel 1</display-name>
+  </channel>
+  <channel id="test.channel.2">
+    <display-name>Test Channel 2</display-name>
+  </channel>
+
+  <programme start="20250929120000 +0000" stop="20250929130000 +0000" channel="test.channel.1">
+    <title>Test Program 1</title>
+    <desc>A test program with episode and season numbers</desc>
+    <category>Comedy</category>
+    <episode-num system="onscreen">S1E5</episode-num>
+  </programme>
+
+  <programme start="20250929130000 +0000" stop="20250929140000 +0000" channel="test.channel.1">
+    <title>Test Program 2</title>
+    <desc>Another test program</desc>
+    <category>Drama</category>
+    <episode-num system="xmltv_ns">0.4.0/1</episode-num>
+  </programme>
+
+  <programme start="20250929120000 +0000" stop="20250929130000 +0000" channel="test.channel.2">
+    <title>News Program</title>
+    <desc>Test news program</desc>
+    <category>News</category>
+  </programme>
+</tv>

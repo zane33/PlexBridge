@@ -161,11 +161,53 @@ app.get('/api/epg-sources', async (req, res) => {
 
 app.get('/api/epg/channels', async (req, res) => {
   try {
-    const channels = await database.all('SELECT * FROM epg_channels ORDER BY display_name');
-    res.json(channels || []);
+    // Get EPG channels with program counts
+    // CRITICAL FIX: Join through channels table since epg_programs.channel_id references channels.id (UUID)
+    // while epg_channels.epg_id contains service codes (F1S, FOX, etc.)
+    const channelsWithCounts = await database.all(`
+      SELECT
+        ec.*,
+        COUNT(ep.id) as program_count,
+        es.name as source_name,
+        es.id as source_id,
+        GROUP_CONCAT(DISTINCT c.name) as mapped_channel_names
+      FROM epg_channels ec
+      LEFT JOIN epg_sources es ON ec.source_id = es.id
+      LEFT JOIN channels c ON c.epg_id = ec.epg_id
+      LEFT JOIN epg_programs ep ON c.id = ep.channel_id
+      GROUP BY ec.epg_id
+      ORDER BY ec.display_name
+    `);
+
+    // Format the response to match what the frontend expects
+    const formattedChannels = channelsWithCounts.map(ch => ({
+      epg_id: ch.epg_id,
+      channel_name: ch.display_name || ch.epg_id,
+      program_count: parseInt(ch.program_count) || 0,
+      source_name: ch.source_name || 'Unknown Source',
+      source_id: ch.source_id,
+      icon_url: ch.icon_url,
+      mapped_channel_names: ch.mapped_channel_names || null, // For debugging
+      // Include original fields for compatibility
+      id: ch.epg_id,
+      display_name: ch.display_name,
+      created_at: ch.created_at,
+      updated_at: ch.updated_at
+    }));
+
+    // Return in the format expected by the frontend
+    res.json({
+      available_channels: formattedChannels,
+      total_channels: formattedChannels.length,
+      total_programs: formattedChannels.reduce((sum, ch) => sum + ch.program_count, 0)
+    });
   } catch (error) {
     console.error('Error fetching EPG channels:', error);
-    res.json([]);
+    res.json({
+      available_channels: [],
+      total_channels: 0,
+      total_programs: 0
+    });
   }
 });
 

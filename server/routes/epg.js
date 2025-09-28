@@ -766,10 +766,10 @@ router.get('/debug/jobs', async (req, res) => {
   try {
     const jobStatus = epgService.getActiveJobs();
     const currentTime = new Date();
-    
+
     // Get EPG sources to compare with jobs
     const sources = await database.all('SELECT id, name, refresh_interval, last_refresh, last_success, enabled FROM epg_sources');
-    
+
     res.json({
       timestamp: currentTime.toISOString(),
       timezone: 'UTC',
@@ -797,6 +797,505 @@ router.get('/debug/jobs', async (req, res) => {
   } catch (error) {
     logger.error('EPG debug endpoint error:', error);
     res.status(500).json({ error: 'Failed to get EPG debug info', details: error.message });
+  }
+});
+
+// Comprehensive EPG diagnostic endpoint
+router.get('/debug/diagnose/:sourceId?', async (req, res) => {
+  try {
+    const { sourceId } = req.params;
+    const diagnosis = {
+      timestamp: new Date().toISOString(),
+      environment: process.env.NODE_ENV || 'development',
+      issues: [],
+      recommendations: []
+    };
+
+    if (sourceId) {
+      // Diagnose specific source
+      const source = await database.get('SELECT * FROM epg_sources WHERE id = ?', [sourceId]);
+
+      if (!source) {
+        return res.status(404).json({ error: 'EPG source not found' });
+      }
+
+      diagnosis.source = {
+        id: source.id,
+        name: source.name,
+        url: source.url,
+        enabled: source.enabled,
+        last_refresh: source.last_refresh,
+        last_success: source.last_success,
+        last_error: source.last_error
+      };
+
+      // Check connectivity
+      try {
+        const axios = require('axios');
+        const testResponse = await axios.head(source.url, {
+          timeout: 10000,
+          maxRedirects: 10,
+          headers: {
+            'User-Agent': 'PlexBridge/1.0 (compatible; EPG Diagnostic)'
+          }
+        });
+
+        diagnosis.connectivity = {
+          status: 'success',
+          httpStatus: testResponse.status,
+          contentType: testResponse.headers['content-type'],
+          contentLength: testResponse.headers['content-length'],
+          finalUrl: testResponse.request?.res?.responseUrl || source.url
+        };
+      } catch (error) {
+        diagnosis.connectivity = {
+          status: 'failed',
+          error: error.message,
+          code: error.code,
+          httpStatus: error.response?.status
+        };
+        diagnosis.issues.push(`Connectivity issue: ${error.message}`);
+        diagnosis.recommendations.push('Check if the URL is accessible from the production environment');
+        diagnosis.recommendations.push('Verify firewall rules and network connectivity');
+      }
+
+      // Check program data
+      const programCount = await database.get(
+        'SELECT COUNT(*) as count FROM epg_programs WHERE channel_id IN (SELECT epg_id FROM epg_channels WHERE source_id = ?)',
+        [sourceId]
+      );
+
+      const channelCount = await database.get(
+        'SELECT COUNT(*) as count FROM epg_channels WHERE source_id = ?',
+        [sourceId]
+      );
+
+      diagnosis.data = {
+        programs: programCount?.count || 0,
+        channels: channelCount?.count || 0
+      };
+
+      if (programCount?.count === 0) {
+        diagnosis.issues.push('No programs stored for this source');
+        diagnosis.recommendations.push('Check if channels have correct EPG IDs mapped');
+        diagnosis.recommendations.push('Verify XML parsing is working correctly');
+      }
+
+      // Check last error details
+      if (source.last_error) {
+        diagnosis.issues.push(`Last error: ${source.last_error}`);
+
+        if (source.last_error.includes('timeout')) {
+          diagnosis.recommendations.push('Increase timeout settings for large EPG files');
+        }
+        if (source.last_error.includes('parse')) {
+          diagnosis.recommendations.push('Verify EPG data is in valid XMLTV format');
+        }
+      }
+
+    } else {
+      // General EPG system diagnosis
+      const sources = await database.all('SELECT * FROM epg_sources');
+      const totalPrograms = await database.get('SELECT COUNT(*) as count FROM epg_programs');
+      const totalChannels = await database.get('SELECT COUNT(*) as count FROM channels');
+      const mappedChannels = await database.get(
+        'SELECT COUNT(*) as count FROM channels WHERE epg_id IS NOT NULL AND epg_id != \'\''
+      );
+
+      diagnosis.system = {
+        sources: sources.length,
+        enabledSources: sources.filter(s => s.enabled).length,
+        totalPrograms: totalPrograms?.count || 0,
+        totalChannels: totalChannels?.count || 0,
+        mappedChannels: mappedChannels?.count || 0,
+        unmappedChannels: (totalChannels?.count || 0) - (mappedChannels?.count || 0)
+      };
+
+      // Check for common issues
+      if (diagnosis.system.unmappedChannels > 0) {
+        diagnosis.issues.push(`${diagnosis.system.unmappedChannels} channels without EPG mapping`);
+        diagnosis.recommendations.push('Map channels to EPG IDs in the channel manager');
+      }
+
+      const failedSources = sources.filter(s => s.last_error && s.enabled);
+      if (failedSources.length > 0) {
+        diagnosis.issues.push(`${failedSources.length} sources with errors`);
+        diagnosis.failedSources = failedSources.map(s => ({
+          id: s.id,
+          name: s.name,
+          error: s.last_error
+        }));
+      }
+
+      // Check EPG service health
+      const epgHealth = await epgService.getEPGHealth();
+      diagnosis.health = epgHealth;
+
+      if (epgHealth.status !== 'healthy') {
+        diagnosis.issues.push(`EPG service status: ${epgHealth.status}`);
+        diagnosis.issues.push(...epgHealth.issues);
+      }
+    }
+
+    // Add general recommendations
+    if (diagnosis.issues.length > 0) {
+      diagnosis.recommendations.push('Check application logs for detailed error messages');
+      diagnosis.recommendations.push('Ensure PlexBridge has sufficient memory and CPU resources');
+      diagnosis.recommendations.push('Verify database is not corrupted (run integrity check)');
+    }
+
+    res.json(diagnosis);
+  } catch (error) {
+    logger.error('EPG diagnosis error:', error);
+    res.status(500).json({
+      error: 'Failed to diagnose EPG',
+      details: error.message,
+      stack: process.env.NODE_ENV !== 'production' ? error.stack : undefined
+    });
+  }
+});
+
+// Test EPG parsing endpoint - useful for debugging specific URLs
+router.post('/debug/test-parse', async (req, res) => {
+  try {
+    const { url, sampleSize = 10 } = req.body;
+
+    if (!url) {
+      return res.status(400).json({ error: 'URL is required' });
+    }
+
+    const axios = require('axios');
+    const xml2js = require('xml2js');
+
+    // Download EPG data
+    const response = await axios.get(url, {
+      timeout: 30000,
+      maxContentLength: 10 * 1024 * 1024, // 10MB for testing
+      responseType: 'text',
+      headers: {
+        'User-Agent': 'PlexBridge/1.0 (compatible; EPG Test Parser)'
+      }
+    });
+
+    // Parse XML
+    const parser = new xml2js.Parser({
+      explicitArray: false,
+      ignoreAttrs: false,
+      mergeAttrs: true
+    });
+
+    const result = await parser.parseStringPromise(response.data);
+
+    if (!result.tv) {
+      return res.json({
+        success: false,
+        error: 'Invalid XMLTV format - missing tv root element'
+      });
+    }
+
+    const channels = Array.isArray(result.tv.channel) ? result.tv.channel : [result.tv.channel];
+    const programmes = Array.isArray(result.tv.programme) ? result.tv.programme : [result.tv.programme];
+
+    // Sample data for response
+    const sampleChannels = channels.slice(0, sampleSize);
+    const sampleProgrammes = programmes.slice(0, sampleSize);
+
+    res.json({
+      success: true,
+      stats: {
+        totalChannels: channels.length,
+        totalProgrammes: programmes.length,
+        xmlSize: response.data.length
+      },
+      sampleChannels: sampleChannels.map(ch => ({
+        id: ch.id,
+        displayName: ch['display-name'],
+        icon: ch.icon?.src
+      })),
+      sampleProgrammes: sampleProgrammes.map(p => ({
+        channel: p.channel,
+        start: p.start,
+        stop: p.stop,
+        title: p.title
+      }))
+    });
+  } catch (error) {
+    logger.error('EPG test parse error:', error);
+    res.status(500).json({
+      success: false,
+      error: error.message,
+      details: error.response ? {
+        status: error.response.status,
+        statusText: error.response.statusText
+      } : undefined
+    });
+  }
+});
+
+// Get available EPG channels for mapping
+router.get('/channels/available/:sourceId?', async (req, res) => {
+  try {
+    const { sourceId } = req.params;
+
+    if (sourceId) {
+      // Get EPG channels from specific source
+      const epgChannels = await database.all(`
+        SELECT epg_id, display_name, icon_url
+        FROM epg_channels
+        WHERE source_id = ?
+        ORDER BY display_name
+      `, [sourceId]);
+
+      res.json({
+        sourceId,
+        channels: epgChannels
+      });
+    } else {
+      // Get all EPG channels across all sources
+      const epgChannels = await database.all(`
+        SELECT ec.epg_id, ec.display_name, ec.icon_url, es.name as source_name, es.id as source_id
+        FROM epg_channels ec
+        JOIN epg_sources es ON ec.source_id = es.id
+        ORDER BY es.name, ec.display_name
+      `);
+
+      res.json({
+        channels: epgChannels
+      });
+    }
+  } catch (error) {
+    logger.error('Failed to get available EPG channels:', error);
+    res.status(500).json({
+      error: 'Failed to get EPG channels',
+      details: error.message
+    });
+  }
+});
+
+// Auto-suggest channel mappings
+router.get('/channels/suggest-mappings/:sourceId?', async (req, res) => {
+  try {
+    const { sourceId } = req.params;
+
+    // Get unmapped channels
+    const unmappedChannels = await database.all(`
+      SELECT id, name, number, epg_id
+      FROM channels
+      WHERE epg_id IS NULL OR epg_id = ''
+      ORDER BY number
+    `);
+
+    // Get EPG channels
+    let epgChannels;
+    if (sourceId) {
+      epgChannels = await database.all(`
+        SELECT epg_id, display_name, icon_url
+        FROM epg_channels
+        WHERE source_id = ?
+        ORDER BY display_name
+      `, [sourceId]);
+    } else {
+      epgChannels = await database.all(`
+        SELECT ec.epg_id, ec.display_name, ec.icon_url, es.name as source_name
+        FROM epg_channels ec
+        JOIN epg_sources es ON ec.source_id = es.id
+        ORDER BY ec.display_name
+      `);
+    }
+
+    // Suggest mappings based on name similarity
+    const suggestions = [];
+
+    for (const channel of unmappedChannels) {
+      const channelName = channel.name.toLowerCase();
+
+      // Find EPG channels with similar names
+      const matches = epgChannels.filter(epgCh => {
+        const epgName = epgCh.display_name.toLowerCase();
+
+        // Exact match
+        if (channelName === epgName) return true;
+
+        // Contains match
+        if (channelName.includes(epgName) || epgName.includes(channelName)) return true;
+
+        // Common abbreviations
+        const abbreviations = {
+          'tvnz 1': ['tvnz1', 'one'],
+          'tvnz 2': ['tvnz2', 'two'],
+          'tvnz duke': ['duke'],
+          'three': ['tv3', '3'],
+          'bravo': ['bravo+1', 'bravo plus'],
+          'whakaata māori': ['maori tv', 'māori tv'],
+          'eden': ['eden tv']
+        };
+
+        for (const [full, abbrevs] of Object.entries(abbreviations)) {
+          if (channelName.includes(full) && abbrevs.some(abbrev => epgName.includes(abbrev))) {
+            return true;
+          }
+          if (epgName.includes(full) && abbrevs.some(abbrev => channelName.includes(abbrev))) {
+            return true;
+          }
+        }
+
+        return false;
+      });
+
+      if (matches.length > 0) {
+        suggestions.push({
+          channel: {
+            id: channel.id,
+            name: channel.name,
+            number: channel.number
+          },
+          suggestions: matches.map(match => ({
+            epg_id: match.epg_id,
+            display_name: match.display_name,
+            source_name: match.source_name || 'Unknown',
+            confidence: channelName === match.display_name.toLowerCase() ? 'high' : 'medium'
+          }))
+        });
+      }
+    }
+
+    res.json({
+      unmappedChannels: unmappedChannels.length,
+      totalSuggestions: suggestions.length,
+      suggestions
+    });
+
+  } catch (error) {
+    logger.error('Failed to suggest channel mappings:', error);
+    res.status(500).json({
+      error: 'Failed to suggest mappings',
+      details: error.message
+    });
+  }
+});
+
+// Apply channel mapping
+router.post('/channels/map', async (req, res) => {
+  try {
+    const { channelId, epgId } = req.body;
+
+    if (!channelId || !epgId) {
+      return res.status(400).json({
+        error: 'Missing required fields: channelId and epgId'
+      });
+    }
+
+    // Verify the channel exists
+    const channel = await database.get('SELECT * FROM channels WHERE id = ?', [channelId]);
+    if (!channel) {
+      return res.status(404).json({ error: 'Channel not found' });
+    }
+
+    // Verify the EPG channel exists
+    const epgChannel = await database.get('SELECT * FROM epg_channels WHERE epg_id = ?', [epgId]);
+    if (!epgChannel) {
+      return res.status(404).json({ error: 'EPG channel not found' });
+    }
+
+    // Check if another channel is already using this EPG ID
+    const existing = await database.get('SELECT * FROM channels WHERE epg_id = ? AND id != ?', [epgId, channelId]);
+    if (existing) {
+      return res.status(409).json({
+        error: 'EPG ID already in use',
+        conflictChannel: { id: existing.id, name: existing.name }
+      });
+    }
+
+    // Update the channel mapping
+    await database.run('UPDATE channels SET epg_id = ? WHERE id = ?', [epgId, channelId]);
+
+    logger.info('Channel EPG mapping updated', {
+      channelId,
+      channelName: channel.name,
+      epgId,
+      epgName: epgChannel.display_name
+    });
+
+    res.json({
+      success: true,
+      message: 'Channel mapping updated successfully',
+      mapping: {
+        channel: { id: channel.id, name: channel.name },
+        epg: { id: epgChannel.epg_id, name: epgChannel.display_name }
+      }
+    });
+
+  } catch (error) {
+    logger.error('Failed to map channel:', error);
+    res.status(500).json({
+      error: 'Failed to update channel mapping',
+      details: error.message
+    });
+  }
+});
+
+// Bulk apply channel mappings
+router.post('/channels/map-bulk', async (req, res) => {
+  try {
+    const { mappings } = req.body;
+
+    if (!Array.isArray(mappings) || mappings.length === 0) {
+      return res.status(400).json({
+        error: 'Missing or invalid mappings array'
+      });
+    }
+
+    const results = {
+      successful: 0,
+      failed: 0,
+      errors: []
+    };
+
+    for (const mapping of mappings) {
+      try {
+        const { channelId, epgId } = mapping;
+
+        if (!channelId || !epgId) {
+          results.errors.push({ mapping, error: 'Missing channelId or epgId' });
+          results.failed++;
+          continue;
+        }
+
+        // Verify channel exists
+        const channel = await database.get('SELECT * FROM channels WHERE id = ?', [channelId]);
+        if (!channel) {
+          results.errors.push({ mapping, error: 'Channel not found' });
+          results.failed++;
+          continue;
+        }
+
+        // Update mapping
+        await database.run('UPDATE channels SET epg_id = ? WHERE id = ?', [epgId, channelId]);
+        results.successful++;
+
+      } catch (error) {
+        results.errors.push({ mapping, error: error.message });
+        results.failed++;
+      }
+    }
+
+    logger.info('Bulk channel mapping completed', {
+      successful: results.successful,
+      failed: results.failed,
+      total: mappings.length
+    });
+
+    res.json({
+      success: results.failed === 0,
+      results
+    });
+
+  } catch (error) {
+    logger.error('Failed to bulk map channels:', error);
+    res.status(500).json({
+      error: 'Failed to bulk update channel mappings',
+      details: error.message
+    });
   }
 });
 

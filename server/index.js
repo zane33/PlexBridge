@@ -412,13 +412,10 @@ process.on('uncaughtException', (err) => {
     uptime: process.uptime()
   });
   
-  // Record crash before exit
-  crashTracker.recordShutdown('CRASH').then(() => {
-    // Give time for logs to flush
-    setTimeout(() => process.exit(1), 1000);
-  }).catch(() => {
-    setTimeout(() => process.exit(1), 1000);
-  });
+  // Give time for logs to flush before exit
+  setTimeout(() => {
+    process.exit(1);
+  }, 1000);
 });
 
 process.on('unhandledRejection', (reason, promise) => {
@@ -441,13 +438,10 @@ process.on('unhandledRejection', (reason, promise) => {
     uptime: process.uptime()
   });
   
-  // Record crash before exit
-  crashTracker.recordShutdown('UNHANDLED_REJECTION').then(() => {
-    // Give time for logs to flush
-    setTimeout(() => process.exit(1), 1000);
-  }).catch(() => {
-    setTimeout(() => process.exit(1), 1000);
-  });
+  // Give time for logs to flush before exit
+  setTimeout(() => {
+    process.exit(1);
+  }, 1000);
 });
 
 // Initialize application with detailed error handling
