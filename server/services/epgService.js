@@ -993,18 +993,21 @@ class EPGService {
           
           for (const program of batch) {
             try {
-              // **CRITICAL FIX**: Validate channel exists before inserting program
+              // **CRITICAL FIX**: Store programs even without channel mapping for EPG completeness
+              // This allows EPG data to be available even if channels aren't explicitly mapped
+              // The EPG API endpoints can still serve data for unmapped channels
               const channelExists = database.db.prepare(
                 'SELECT 1 FROM channels WHERE epg_id = ? LIMIT 1'
               ).get(program.channel_id);
               
               if (!channelExists) {
-                logger.warn('Skipping program for unmapped channel', {
+                // Log but don't skip - store the program anyway for EPG completeness
+                logger.debug('Storing program for unmapped channel (will be available via EPG API)', {
                   channelId: program.channel_id,
                   programTitle: program.title,
-                  suggestion: `Map channel ${program.channel_id} or create channel with epg_id: ${program.channel_id}`
+                  suggestion: `Map channel ${program.channel_id} to channel table for full integration`
                 });
-                continue; // Skip this program instead of failing
+                // Continue with storage - don't skip
               }
               
               const result = insertStmt.run(
