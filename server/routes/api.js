@@ -3322,4 +3322,20 @@ router.get('/epg-sources', async (req, res) => {
   }
 });
 
+// EPG Health endpoint - Real-time monitoring of EPG system health
+router.get('/epg/health', async (req, res) => {
+  try {
+    const epgService = require('../services/epgService');
+    const health = await epgService.getEPGHealth();
+    res.json(health);
+  } catch (error) {
+    logger.error('Error checking EPG health:', error);
+    res.status(500).json({ 
+      status: 'critical',
+      issues: [`Health check failed: ${error.message}`],
+      error: 'Failed to check EPG health'
+    });
+  }
+});
+
 module.exports = router;
