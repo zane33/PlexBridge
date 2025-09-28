@@ -370,7 +370,7 @@ class EPGService {
         SELECT COUNT(*) as current_programs,
                MAX(start_time) as latest_program
         FROM epg_programs 
-        WHERE created_at > datetime("now", "-5 minutes")
+        WHERE created_at > datetime('now', '-5 minutes')
       `);
       
       if (verification.current_programs === 0) {
@@ -1036,7 +1036,7 @@ class EPGService {
         }
         
         // VALIDATION: Verify data was actually stored
-        const storedCount = database.db.prepare('SELECT COUNT(*) as count FROM epg_programs WHERE created_at > datetime("now", "-1 minute")').get();
+        const storedCount = database.db.prepare('SELECT COUNT(*) as count FROM epg_programs WHERE created_at > datetime(\'now\', \'-1 minute\')').get();
         
         if (storedCount.count === 0) {
           throw new Error('CRITICAL: No programs found in database after storage operation - database corruption detected');
