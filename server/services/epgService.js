@@ -371,7 +371,7 @@ class EPGService {
                MAX(start_time) as latest_program,
                COUNT(DISTINCT channel_id) as channels_with_programs
         FROM epg_programs 
-        WHERE created_at > datetime('now', '-5 minutes')
+        WHERE created_at > datetime(CURRENT_TIMESTAMP, '-5 minutes')
       `);
       
       logger.info('EPG verification results', {
@@ -993,6 +993,20 @@ class EPGService {
           
           for (const program of batch) {
             try {
+              // **CRITICAL FIX**: Validate channel exists before inserting program
+              const channelExists = database.db.prepare(
+                'SELECT 1 FROM channels WHERE epg_id = ? LIMIT 1'
+              ).get(program.channel_id);
+              
+              if (!channelExists) {
+                logger.warn('Skipping program for unmapped channel', {
+                  channelId: program.channel_id,
+                  programTitle: program.title,
+                  suggestion: `Map channel ${program.channel_id} or create channel with epg_id: ${program.channel_id}`
+                });
+                continue; // Skip this program instead of failing
+              }
+              
               const result = insertStmt.run(
                 program.id,
                 program.channel_id,
@@ -1096,7 +1110,7 @@ class EPGService {
       // **VALIDATION**: Verify data was actually stored and accessible
       // Check total programs and recent programs (more reliable than created_at timing)
       const totalCount = database.db.prepare('SELECT COUNT(*) as count FROM epg_programs').get();
-      const recentCount = database.db.prepare('SELECT COUNT(*) as count FROM epg_programs WHERE start_time > datetime(\'now\', \'-1 day\')').get();
+      const recentCount = database.db.prepare('SELECT COUNT(*) as count FROM epg_programs WHERE start_time > datetime(CURRENT_TIMESTAMP, \'-1 day\')').get();
       
       logger.info('EPG validation check', {
         totalPrograms: totalCount.count,
