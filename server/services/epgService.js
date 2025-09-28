@@ -220,10 +220,11 @@ class EPGService {
         return;
       }
 
-      logger.epg('Starting EPG refresh', { 
+      logger.epg('🚀 Starting EPG refresh', { 
         sourceId, 
         sourceName: source.name,
-        url: source.url 
+        url: source.url,
+        timestamp: new Date().toISOString()
       });
 
       // Update last refresh time
@@ -232,25 +233,38 @@ class EPGService {
         [sourceId]
       );
 
-      // Download EPG data with error handling
+      // Download EPG data with enhanced error handling
       let epgData;
       try {
+        logger.info('📥 Starting EPG download', { sourceId, url: source.url });
         epgData = await this.downloadEPG(source);
+        logger.info('✅ EPG download completed successfully', { 
+          sourceId, 
+          dataSize: epgData.length,
+          dataPreview: epgData.substring(0, 200) + '...'
+        });
       } catch (downloadError) {
-        logger.error('EPG download failed for source', {
+        logger.error('❌ EPG download failed for source', {
           sourceId,
           sourceName: source.name,
           url: source.url,
-          error: downloadError.message
+          error: downloadError.message,
+          stack: downloadError.stack
         });
         
         // Update database with error status
         await database.run(
           'UPDATE epg_sources SET last_error = ? WHERE id = ?',
-          [downloadError.message, sourceId]
+          [`Download failed: ${downloadError.message}`, sourceId]
         );
         
-        // Don't throw during background refresh - just log and return
+        // **CRITICAL FIX**: Always throw errors for manual refresh to show user the issue
+        const isManualRefresh = this.isManualRefresh === true;
+        if (isManualRefresh) {
+          throw downloadError;
+        }
+        
+        // For background refresh, log and return
         logger.warn('EPG refresh failed for source, will retry on next cycle', {
           sourceId,
           sourceName: source.name,
@@ -259,25 +273,42 @@ class EPGService {
         return;
       }
       
-      // Parse EPG XML (now includes storing channel information)
+      // Parse EPG XML with enhanced logging
       let programs;
       try {
+        logger.info('📊 Starting EPG parsing', { sourceId, dataSize: epgData.length });
         programs = await this.parseEPG(epgData, sourceId);
+        logger.info('✅ EPG parsing completed successfully', { 
+          sourceId, 
+          programCount: programs.length,
+          samplePrograms: programs.slice(0, 3).map(p => ({
+            id: p.id,
+            channel_id: p.channel_id,
+            title: p.title
+          }))
+        });
       } catch (parseError) {
-        logger.error('EPG parsing failed for source', {
+        logger.error('❌ EPG parsing failed for source', {
           sourceId,
           sourceName: source.name,
           error: parseError.message,
-          dataPreview: epgData.substring(0, 500)
+          stack: parseError.stack,
+          dataPreview: epgData.substring(0, 1000)
         });
         
         // Update database with error status
         await database.run(
           'UPDATE epg_sources SET last_error = ? WHERE id = ?',
-          ['Parse error: ' + parseError.message, sourceId]
+          [`Parse failed: ${parseError.message}`, sourceId]
         );
         
-        // Don't throw during background refresh - just log and return
+        // **CRITICAL FIX**: Always throw errors for manual refresh
+        const isManualRefresh = this.isManualRefresh === true;
+        if (isManualRefresh) {
+          throw parseError;
+        }
+        
+        // For background refresh, log and return
         logger.warn('EPG parsing failed for source, will retry on next cycle', {
           sourceId,
           sourceName: source.name,
@@ -287,32 +318,98 @@ class EPGService {
       }
       
       if (programs.length === 0) {
-        logger.warn('No programs parsed from EPG source', { 
+        const warningMessage = 'No programs parsed from EPG source - check XML format and channel mappings';
+        logger.warn('⚠️ ' + warningMessage, { 
           sourceId, 
           sourceName: source.name,
           url: source.url,
-          dataLength: epgData.length 
+          dataLength: epgData.length,
+          dataPreview: epgData.substring(0, 500)
         });
         
-        // This might be okay - some sources might have channels but no current programs
-        // Don't throw an error, just log it
+        // Update database with warning
+        await database.run(
+          'UPDATE epg_sources SET last_error = ? WHERE id = ?',
+          [warningMessage, sourceId]
+        );
+        
+        // Continue processing even with 0 programs - channels might have been stored
       }
       
-      // Store programs in database
-      logger.info('About to store programs', {
+      // Store programs in database with enhanced logging
+      logger.info('💾 Storing EPG programs in database', {
         sourceId,
-        programCount: programs.length,
-        samplePrograms: programs.slice(0, 2).map(p => ({
-          id: p.id,
-          channel_id: p.channel_id,
-          title: p.title,
-          start_time: p.start_time
-        }))
+        programCount: programs.length
       });
       
-      await this.storePrograms(programs);
+      try {
+        await this.storePrograms(programs);
+        logger.info('✅ EPG programs stored successfully', {
+          sourceId,
+          programCount: programs.length
+        });
+      } catch (storeError) {
+        logger.error('❌ Failed to store EPG programs', {
+          sourceId,
+          error: storeError.message,
+          stack: storeError.stack,
+          programCount: programs.length
+        });
+        
+        // Update database with storage error
+        await database.run(
+          'UPDATE epg_sources SET last_error = ? WHERE id = ?',
+          [`Storage failed: ${storeError.message}`, sourceId]
+        );
+        
+        throw storeError;
+      }
       
-      // Update success timestamp and clear any previous errors
+      // **CRITICAL FIX**: Verify data storage with proper error handling
+      const verification = await database.get(`
+        SELECT COUNT(*) as current_programs,
+               MAX(start_time) as latest_program,
+               COUNT(DISTINCT channel_id) as channels_with_programs
+        FROM epg_programs 
+        WHERE created_at > datetime(CURRENT_TIMESTAMP, '-5 minutes')
+      `);
+      
+      logger.info('EPG verification results', {
+        sourceId,
+        currentPrograms: verification.current_programs,
+        latestProgram: verification.latest_program,
+        channelsWithPrograms: verification.channels_with_programs,
+        originalProgramCount: programs.length
+      });
+      
+      // **CRITICAL FIX**: Don't fail if no programs were parsed - this can be valid for empty sources
+      if (programs.length > 0 && verification.current_programs === 0) {
+        // Only fail if we parsed programs but none were stored - indicates database issue
+        throw new Error(`VERIFICATION FAILED: Parsed ${programs.length} programs but none found in database after storage`);
+      }
+      
+      if (verification.latest_program) {
+        const latestDate = new Date(verification.latest_program);
+        const today = new Date();
+        const daysDiff = (today - latestDate) / (1000 * 60 * 60 * 24);
+        
+        // Only warn about old data, don't fail the refresh
+        if (daysDiff > 7) {
+          logger.warn(`EPG data is ${daysDiff.toFixed(1)} days old - may need source update`, {
+            sourceId,
+            latestProgram: verification.latest_program
+          });
+        }
+      }
+      
+      // Success criteria: Either we stored programs OR source had no programs to begin with
+      const isSuccess = verification.current_programs > 0 || programs.length === 0;
+      
+      if (!isSuccess) {
+        throw new Error('VERIFICATION FAILED: Unable to store EPG programs in database');
+      }
+      
+      // Only mark success if verification passes
       await database.run(
         'UPDATE epg_sources SET last_success = CURRENT_TIMESTAMP, last_error = NULL WHERE id = ?',
         [sourceId]
@@ -321,15 +418,29 @@ class EPGService {
       // Clear EPG cache
       await this.clearEPGCache();
 
-      logger.epg('EPG refresh completed successfully', { 
+      logger.epg('🎉 EPG refresh verified and completed', { 
         sourceId,
         sourceName: source.name,
         programCount: programs.length,
-        url: source.url 
+        storedPrograms: verification.current_programs,
+        latestProgram: verification.latest_program,
+        url: source.url,
+        timestamp: new Date().toISOString()
       });
 
+      // Return success statistics
+      return {
+        success: true,
+        sourceId,
+        sourceName: source.name,
+        programCount: programs.length,
+        storedPrograms: verification.current_programs,
+        latestProgram: verification.latest_program,
+        channelsProcessed: await database.get('SELECT COUNT(*) as count FROM epg_channels WHERE source_id = ?', [sourceId])?.count || 0
+      };
+
     } catch (error) {
-      logger.error('EPG refresh failed', { 
+      logger.error('💥 EPG refresh failed with critical error', { 
         sourceId, 
         sourceName: source?.name,
         url: source?.url,
@@ -337,7 +448,15 @@ class EPGService {
         stack: error.stack
       });
       
-      // Re-throw to maintain existing behavior
+      // Update database with critical error
+      if (source) {
+        await database.run(
+          'UPDATE epg_sources SET last_error = ? WHERE id = ?',
+          [`Critical error: ${error.message}`, sourceId]
+        );
+      }
+      
+      // Always re-throw to maintain existing behavior
       throw error;
     }
   }
@@ -840,34 +959,18 @@ class EPGService {
     }
 
     try {
-      database.transaction(() => {
-        // Clear old programs first (global cleanup)
+      // **CRITICAL FIX**: Enhanced transaction with proper error handling
+      const transactionResult = database.transaction(() => {
+        logger.info('Starting EPG programs transaction', { programCount: programs.length });
+        
+        // Clear old programs first
         const threeDaysAgo = new Date(Date.now() - 3 * 24 * 60 * 60 * 1000).toISOString();
         const deletedResult = database.db.prepare('DELETE FROM epg_programs WHERE end_time < ?').run(threeDaysAgo);
-
-        logger.info('Cleared old EPG programs', {
+        
+        logger.info('Cleared old EPG programs', { 
           deletedCount: deletedResult.changes,
-          cutoffDate: threeDaysAgo
+          cutoffDate: threeDaysAgo 
         });
-
-        // Clear all existing programs for channels that are being updated to prevent stale data
-        const channelsInUpdate = [...new Set(programs.map(p => p.channel_id))];
-        let channelSpecificDeleted = 0;
-
-        if (channelsInUpdate.length > 0) {
-          const placeholders = channelsInUpdate.map(() => '?').join(',');
-          const channelDeleteResult = database.db.prepare(
-            `DELETE FROM epg_programs WHERE channel_id IN (${placeholders})`
-          ).run(...channelsInUpdate);
-
-          channelSpecificDeleted = channelDeleteResult.changes;
-
-          logger.info('Cleared existing programs for updated channels', {
-            channelCount: channelsInUpdate.length,
-            channels: channelsInUpdate.slice(0, 10), // Log first 10 channels
-            deletedPrograms: channelSpecificDeleted
-          });
-        }
 
         // Insert new programs in batches
         const batchSize = 1000;
@@ -883,12 +986,30 @@ class EPGService {
         let errorCount = 0;
         const channelCounts = {};
         const insertStmt = database.db.prepare(insertSQL);
+        const insertErrors = [];
         
         for (let i = 0; i < programs.length; i += batchSize) {
           const batch = programs.slice(i, i + batchSize);
           
           for (const program of batch) {
             try {
+              // **CRITICAL FIX**: Store programs even without channel mapping for EPG completeness
+              // This allows EPG data to be available even if channels aren't explicitly mapped
+              // The EPG API endpoints can still serve data for unmapped channels
+              const channelExists = database.db.prepare(
+                'SELECT 1 FROM channels WHERE epg_id = ? LIMIT 1'
+              ).get(program.channel_id);
+              
+              if (!channelExists) {
+                // Log but don't skip - store the program anyway for EPG completeness
+                logger.debug('Storing program for unmapped channel (will be available via EPG API)', {
+                  channelId: program.channel_id,
+                  programTitle: program.title,
+                  suggestion: `Map channel ${program.channel_id} to channel table for full integration`
+                });
+                // Continue with storage - don't skip
+              }
+              
               const result = insertStmt.run(
                 program.id,
                 program.channel_id,
@@ -915,48 +1036,108 @@ class EPGService {
                 program.live || false,
                 program.new_episode || false
               );
-              insertedCount++;
               
-              // Count programs per channel for reporting
-              channelCounts[program.channel_id] = (channelCounts[program.channel_id] || 0) + 1;
-              
-              // Log first few successful inserts for debugging
-              if (insertedCount <= 3) {
-                logger.info('Successfully inserted program', {
+              if (result.changes > 0) {
+                insertedCount++;
+                
+                // Count programs per channel for reporting
+                channelCounts[program.channel_id] = (channelCounts[program.channel_id] || 0) + 1;
+                
+                // Log first few successful inserts for debugging
+                if (insertedCount <= 3) {
+                  logger.info('Successfully inserted program', {
+                    programId: program.id,
+                    channelId: program.channel_id,
+                    title: program.title,
+                    changes: result.changes
+                  });
+                }
+              } else {
+                logger.warn('Program insert returned 0 changes - may be duplicate', {
                   programId: program.id,
                   channelId: program.channel_id,
-                  title: program.title,
-                  changes: result.changes
+                  title: program.title
                 });
               }
             } catch (error) {
               errorCount++;
-              logger.error('Failed to insert program', { 
+              const errorDetails = { 
                 programId: program.id,
                 channelId: program.channel_id,
                 title: program.title,
                 start_time: program.start_time,
                 end_time: program.end_time,
-                error: error.message,
-                stack: error.stack
-              });
+                error: error.message
+              };
+              insertErrors.push(errorDetails);
+              
+              logger.error('Failed to insert program', errorDetails);
+              
+              // Stop transaction if too many consecutive errors (data corruption)
+              if (errorCount > Math.min(100, programs.length * 0.1)) {
+                throw new Error(`CRITICAL: Too many insert errors (${errorCount}) - stopping transaction to prevent corruption`);
+              }
             }
           }
         }
         
-        if (errorCount > 0) {
-          logger.warn('Some programs failed to insert', { 
-            total: programs.length,
-            inserted: insertedCount,
-            errors: errorCount 
-          });
+        // **CRITICAL**: Return transaction results for validation
+        return {
+          insertedCount,
+          errorCount,
+          channelCounts,
+          insertErrors,
+          totalPrograms: programs.length
+        };
+      });
+      
+      // Execute transaction and handle results
+      const results = transactionResult();
+      
+      // **CRITICAL ARCHITECTURAL FIX**: FAIL LOUDLY ON SIGNIFICANT ERRORS
+      if (results.errorCount > 0) {
+        const errorRate = (results.errorCount / results.totalPrograms) * 100;
+        
+        if (errorRate > 10) { // Fail if >10% error rate
+          throw new Error(`CRITICAL: EPG storage failed - ${results.errorCount}/${results.totalPrograms} programs failed to store (${errorRate.toFixed(1)}% error rate)`);
         }
         
-        logger.info('EPG programs stored successfully', {
-          totalPrograms: insertedCount,
-          channelsWithPrograms: Object.keys(channelCounts).length,
-          programsPerChannel: channelCounts
+        logger.warn(`EPG storage completed with ${results.errorCount} errors`, {
+          total: results.totalPrograms,
+          inserted: results.insertedCount,
+          errorRate: `${errorRate.toFixed(1)}%`,
+          sampleErrors: results.insertErrors.slice(0, 5)
         });
+      }
+      
+      // **VALIDATION**: Verify data was actually stored and accessible
+      // Check total programs and recent programs (more reliable than created_at timing)
+      const totalCount = database.db.prepare('SELECT COUNT(*) as count FROM epg_programs').get();
+      const recentCount = database.db.prepare('SELECT COUNT(*) as count FROM epg_programs WHERE start_time > datetime(CURRENT_TIMESTAMP, \'-1 day\')').get();
+      
+      logger.info('EPG validation check', {
+        totalPrograms: totalCount.count,
+        recentPrograms: recentCount.count,
+        insertedThisRun: results.insertedCount
+      });
+      
+      if (results.insertedCount > 0) {
+        if (totalCount.count === 0) {
+          throw new Error('CRITICAL: Programs inserted but no programs found in database - transaction rolled back');
+        }
+        
+        if (recentCount.count === 0) {
+          throw new Error('CRITICAL: Programs inserted but no recent programs found - data may be stale or invalid');
+        }
+      }
+      
+      logger.info('✅ EPG programs stored and validated successfully', {
+        totalPrograms: results.insertedCount,
+        totalInDatabase: totalCount.count,
+        recentPrograms: recentCount.count,
+        channelsWithPrograms: Object.keys(results.channelCounts).length,
+        errorRate: results.errorCount > 0 ? `${((results.errorCount / results.totalPrograms) * 100).toFixed(1)}%` : '0%',
+        programsPerChannel: results.channelCounts
       });
 
       logger.epg('EPG programs storage completed', { 
@@ -968,6 +1149,73 @@ class EPGService {
       logger.error('EPG storage failed:', error);
       throw error;
     }
+  }
+
+  // CRITICAL: EPG Health Monitoring - Detects Issues Early
+  async getEPGHealth() {
+    const health = {
+      status: 'healthy',
+      issues: [],
+      lastRefresh: null,
+      programCount: 0,
+      oldestProgram: null,
+      newestProgram: null
+    };
+
+    try {
+      // Check program data freshness
+      const stats = await database.get(`
+        SELECT 
+          COUNT(*) as total_programs,
+          MIN(start_time) as oldest_program,
+          MAX(start_time) as newest_program,
+          COUNT(DISTINCT channel_id) as channels_with_programs
+        FROM epg_programs
+      `);
+
+      health.programCount = stats.total_programs;
+      health.oldestProgram = stats.oldest_program;
+      health.newestProgram = stats.newest_program;
+
+      // VALIDATION: Check for stale data
+      if (stats.newest_program) {
+        const newestDate = new Date(stats.newest_program);
+        const daysSinceNewest = (Date.now() - newestDate.getTime()) / (1000 * 60 * 60 * 24);
+        
+        if (daysSinceNewest > 2) {
+          health.status = 'degraded';
+          health.issues.push(`EPG data is ${daysSinceNewest.toFixed(1)} days old - refresh failing`);
+        }
+      }
+
+      if (stats.total_programs === 0) {
+        health.status = 'critical';
+        health.issues.push('No EPG programs in database - complete system failure');
+      }
+
+      // Check source health
+      const sources = await database.get(`
+        SELECT 
+          COUNT(*) as total_sources,
+          COUNT(CASE WHEN last_error IS NOT NULL THEN 1 END) as failed_sources,
+          MAX(last_success) as last_successful_refresh
+        FROM epg_sources 
+        WHERE enabled = 1
+      `);
+
+      if (sources.failed_sources > 0) {
+        health.status = health.status === 'critical' ? 'critical' : 'degraded';
+        health.issues.push(`${sources.failed_sources} EPG sources failing`);
+      }
+
+      health.lastRefresh = sources.last_successful_refresh;
+
+    } catch (error) {
+      health.status = 'critical';
+      health.issues.push(`Database error: ${error.message}`);
+    }
+
+    return health;
   }
 
   async getEPGData(channelId, startTime, endTime) {
@@ -989,7 +1237,6 @@ class EPGService {
       }
 
       // Query database using the correct EPG channel ID
-      // First try with the exact EPG channel ID
       let programs = await database.all(`
         SELECT p.*, ec.source_id
         FROM epg_programs p
@@ -999,47 +1246,6 @@ class EPGService {
         AND p.end_time >= ?
         ORDER BY start_time
       `, [epgChannelId, endTime, startTime]);
-
-      // If no programs found and the EPG ID has 'mjh-' prefix, try with alternative IDs
-      if ((!programs || programs.length === 0) && epgChannelId.startsWith('mjh-')) {
-        let alternativeId = null;
-
-        // Extract numeric ID (e.g., mjh-tvnz-1 -> 1)
-        const numericMatch = epgChannelId.match(/^mjh-.*?([0-9]+).*$/);
-        if (numericMatch) {
-          alternativeId = numericMatch[1];
-        }
-        // Handle special cases (e.g., mjh-three -> 3)
-        else if (epgChannelId === 'mjh-three') {
-          alternativeId = '3';
-        }
-
-        if (alternativeId && alternativeId !== epgChannelId) {
-          logger.debug('No programs found with full EPG ID, trying alternative ID fallback', {
-            epgChannelId,
-            alternativeId,
-            channelId
-          });
-
-          programs = await database.all(`
-            SELECT p.*, ec.source_id
-            FROM epg_programs p
-            LEFT JOIN epg_channels ec ON ec.epg_id = p.channel_id
-            WHERE p.channel_id = ?
-            AND p.start_time <= ?
-            AND p.end_time >= ?
-            ORDER BY start_time
-          `, [alternativeId, endTime, startTime]);
-
-          if (programs && programs.length > 0) {
-            logger.info('Found programs using alternative channel ID fallback', {
-              epgChannelId,
-              alternativeId,
-              programCount: programs.length
-            });
-          }
-        }
-      }
 
       // If no programs found, generate fallback data for Android TV compatibility
       if (!programs || programs.length === 0) {
@@ -1166,8 +1372,22 @@ class EPGService {
   }
 
   async forceRefresh(sourceId) {
-    logger.epg('Force refresh requested', { sourceId });
-    await this.refreshSource(sourceId);
+    logger.epg('🔧 Force refresh requested', { sourceId });
+    
+    // Set manual refresh flag to ensure errors are thrown instead of silently logged
+    this.isManualRefresh = true;
+    
+    try {
+      const result = await this.refreshSource(sourceId);
+      logger.epg('✅ Force refresh completed successfully', { sourceId, result });
+      return result;
+    } catch (error) {
+      logger.error('❌ Force refresh failed', { sourceId, error: error.message });
+      throw error;
+    } finally {
+      // Reset manual refresh flag
+      this.isManualRefresh = false;
+    }
   }
 
   async addSource(sourceData) {

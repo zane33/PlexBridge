@@ -3310,4 +3310,103 @@ router.post('/epg/test-url', async (req, res) => {
   }
 });
 
+// EPG Sources endpoint - CRITICAL FIX for frontend routing issue
+// This endpoint was missing, causing frontend to receive HTML instead of JSON
+router.get('/epg-sources', async (req, res) => {
+  try {
+    const sources = await database.all('SELECT * FROM epg_sources ORDER BY created_at DESC');
+    res.json(sources || []);
+  } catch (error) {
+    logger.error('Error fetching EPG sources:', error);
+    res.status(500).json({ error: 'Failed to fetch EPG sources', details: error.message });
+  }
+});
+
+// EPG Health endpoint - Real-time monitoring of EPG system health
+router.get('/epg/health', async (req, res) => {
+  try {
+    const epgService = require('../services/epgService');
+    const health = await epgService.getEPGHealth();
+    res.json(health);
+  } catch (error) {
+    logger.error('Error checking EPG health:', error);
+    res.status(500).json({ 
+      status: 'critical',
+      issues: [`Health check failed: ${error.message}`],
+      error: 'Failed to check EPG health'
+    });
+  }
+});
+
+// EPG Database Cleanup endpoint - Remove corrupted/old data
+router.post('/epg/cleanup', async (req, res) => {
+  try {
+    const { dryRun = false, cutoffDate = null } = req.body;
+    
+    // Default cutoff: remove programs older than 3 days
+    const defaultCutoff = new Date(Date.now() - 3 * 24 * 60 * 60 * 1000).toISOString();
+    const cutoff = cutoffDate || defaultCutoff;
+    
+    logger.info('EPG cleanup requested', { dryRun, cutoff });
+    
+    if (dryRun) {
+      // Just count what would be deleted
+      const oldPrograms = await database.get('SELECT COUNT(*) as count FROM epg_programs WHERE end_time < ?', [cutoff]);
+      res.json({
+        dryRun: true,
+        cutoffDate: cutoff,
+        programsToDelete: oldPrograms.count,
+        message: 'Dry run - no data was deleted'
+      });
+    } else {
+      // Actually delete old programs
+      const deleteResult = await database.run('DELETE FROM epg_programs WHERE end_time < ?', [cutoff]);
+      
+      logger.info('EPG cleanup completed', { 
+        cutoffDate: cutoff,
+        deletedCount: deleteResult.changes 
+      });
+      
+      res.json({
+        success: true,
+        cutoffDate: cutoff,
+        deletedPrograms: deleteResult.changes,
+        message: 'Old EPG programs cleaned up successfully'
+      });
+    }
+  } catch (error) {
+    logger.error('EPG cleanup failed:', error);
+    res.status(500).json({ 
+      error: 'Failed to cleanup EPG database',
+      details: error.message 
+    });
+  }
+});
+
+// EPG Force Refresh endpoint - Manually trigger specific source refresh
+router.post('/epg/force-refresh/:sourceId', async (req, res) => {
+  try {
+    const { sourceId } = req.params;
+    const epgService = require('../services/epgService');
+    
+    logger.info('Force refresh requested for EPG source', { sourceId });
+    
+    // Trigger the refresh
+    const result = await epgService.refreshSource(sourceId);
+    
+    res.json({
+      success: true,
+      sourceId: sourceId,
+      result: result,
+      message: 'EPG source refresh completed successfully'
+    });
+  } catch (error) {
+    logger.error('Force refresh failed:', error);
+    res.status(500).json({ 
+      error: 'Failed to force refresh EPG source',
+      details: error.message 
+    });
+  }
+});
+
 module.exports = router;

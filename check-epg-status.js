@@ -35,30 +35,29 @@ if (!db) {
   process.exit(1);
 }
 
-console.log('\n===  SPORTS CHANNELS (After Your Updates) ===');
-const Channels = db.prepare(`
+console.log('\n=== ALL CHANNELS ===');
+const allChannelsData = db.prepare(`
   SELECT id, name, number, epg_id, enabled 
   FROM channels 
-  WHERE name LIKE '%%' 
   ORDER BY number
 `).all();
 
-Channels.forEach(ch => {
+allChannelsData.forEach(ch => {
   const status = ch.epg_id ? '✅' : '❌';
   console.log(`${status} Channel ${ch.number}: ${ch.name}`);
   console.log(`   EPG ID: ${ch.epg_id || 'NOT SET'}`);
   console.log(`   Enabled: ${ch.enabled ? 'Yes' : 'No'}`);
 });
 
-console.log('\n===  SPORT CHANNELS ===');
-const Channels = db.prepare(`
+console.log('\n=== SPORT CHANNELS ===');
+const sportChannels = db.prepare(`
   SELECT id, name, number, epg_id, enabled 
   FROM channels 
   WHERE name LIKE '% Sport%' 
   ORDER BY number
 `).all();
 
-Channels.forEach(ch => {
+sportChannels.forEach(ch => {
   const status = ch.epg_id ? '✅' : '❌';
   console.log(`${status} Channel ${ch.number}: ${ch.name}`);
   console.log(`   EPG ID: ${ch.epg_id || 'NOT SET'}`);
@@ -90,7 +89,7 @@ if (epgChannels.length > 0) {
 
 console.log('\n=== EPG ID MATCHING ANALYSIS ===');
 // Check if channel EPG IDs match any available EPG channels
-const allChannels = [...Channels, ...Channels];
+const allChannels = [...allChannelsData, ...sportChannels];
 let matchedCount = 0;
 let unmatchedChannels = [];
 
