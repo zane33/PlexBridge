@@ -335,76 +335,82 @@ class DatabaseService {
           if (foreignKeys.length > 0) {
             logger.info('🔧 CRITICAL: Migrating epg_programs table to remove foreign key constraint');
             
-            // Disable foreign key constraints for migration
-            this.db.pragma('foreign_keys = OFF');
-            
-            // Create backup with current data
-            this.db.prepare(`
-              CREATE TABLE epg_programs_backup AS 
-              SELECT * FROM epg_programs
-            `).run();
-            
-            const backupCount = this.db.prepare('SELECT COUNT(*) as count FROM epg_programs_backup').get();
-            logger.info(`Backing up ${backupCount.count} existing programs`);
-            
-            // Drop existing table
-            this.db.prepare('DROP TABLE epg_programs').run();
-            logger.info('Dropped old epg_programs table with foreign key constraint');
-            
-            // Recreate without foreign key - enhanced schema
-            this.db.prepare(`
-              CREATE TABLE epg_programs (
-                id TEXT PRIMARY KEY,
-                channel_id TEXT NOT NULL,
-                title TEXT NOT NULL,
-                subtitle TEXT,
-                description TEXT,
-                start_time DATETIME NOT NULL,
-                end_time DATETIME NOT NULL,
-                category TEXT,
-                secondary_category TEXT,
-                year INTEGER,
-                country TEXT,
-                icon_url TEXT,
-                episode_number TEXT,
-                season_number TEXT,
-                series_id TEXT,
-                keywords TEXT,
-                rating TEXT,
-                audio_description BOOLEAN DEFAULT 0,
-                subtitles BOOLEAN DEFAULT 0,
-                hd_quality BOOLEAN DEFAULT 0,
-                premiere BOOLEAN DEFAULT 0,
-                finale BOOLEAN DEFAULT 0,
-                live BOOLEAN DEFAULT 0,
-                new_episode BOOLEAN DEFAULT 0,
-                created_at DATETIME DEFAULT CURRENT_TIMESTAMP
-              )
-            `).run();
-            logger.info('Created new epg_programs table WITHOUT foreign key constraint');
-            
-            // Restore data with proper error handling
-            if (backupCount.count > 0) {
-              try {
-                this.db.prepare(`
-                  INSERT INTO epg_programs 
-                  (id, channel_id, title, description, start_time, end_time, category, 
-                   episode_number, season_number, created_at)
-                  SELECT id, channel_id, title, description, start_time, end_time, category,
-                         episode_number, season_number, created_at
-                  FROM epg_programs_backup
-                `).run();
-                logger.info(`✅ Restored ${backupCount.count} programs to new table`);
-              } catch (restoreError) {
-                logger.warn('Failed to restore programs, continuing with empty table:', restoreError.message);
+            // Start a transaction for safe migration
+            const transaction = this.db.transaction(() => {
+              // Disable foreign key constraints for migration
+              this.db.pragma('foreign_keys = OFF');
+              
+              // Create backup with current data
+              this.db.prepare(`
+                CREATE TABLE epg_programs_backup AS 
+                SELECT * FROM epg_programs
+              `).run();
+              
+              const backupCount = this.db.prepare('SELECT COUNT(*) as count FROM epg_programs_backup').get();
+              logger.info(`Backing up ${backupCount.count} existing programs`);
+              
+              // Drop existing table
+              this.db.prepare('DROP TABLE epg_programs').run();
+              logger.info('Dropped old epg_programs table with foreign key constraint');
+              
+              // Recreate without foreign key - enhanced schema
+              this.db.prepare(`
+                CREATE TABLE epg_programs (
+                  id TEXT PRIMARY KEY,
+                  channel_id TEXT NOT NULL,
+                  title TEXT NOT NULL,
+                  subtitle TEXT,
+                  description TEXT,
+                  start_time DATETIME NOT NULL,
+                  end_time DATETIME NOT NULL,
+                  category TEXT,
+                  secondary_category TEXT,
+                  year INTEGER,
+                  country TEXT,
+                  icon_url TEXT,
+                  episode_number TEXT,
+                  season_number TEXT,
+                  series_id TEXT,
+                  keywords TEXT,
+                  rating TEXT,
+                  audio_description BOOLEAN DEFAULT 0,
+                  subtitles BOOLEAN DEFAULT 0,
+                  hd_quality BOOLEAN DEFAULT 0,
+                  premiere BOOLEAN DEFAULT 0,
+                  finale BOOLEAN DEFAULT 0,
+                  live BOOLEAN DEFAULT 0,
+                  new_episode BOOLEAN DEFAULT 0,
+                  created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+                )
+              `).run();
+              logger.info('Created new epg_programs table WITHOUT foreign key constraint');
+              
+              // Restore data with proper error handling
+              if (backupCount.count > 0) {
+                try {
+                  this.db.prepare(`
+                    INSERT INTO epg_programs 
+                    (id, channel_id, title, description, start_time, end_time, category, 
+                     episode_number, season_number, created_at)
+                    SELECT id, channel_id, title, description, start_time, end_time, category,
+                           episode_number, season_number, created_at
+                    FROM epg_programs_backup
+                  `).run();
+                  logger.info(`✅ Restored ${backupCount.count} programs to new table`);
+                } catch (restoreError) {
+                  logger.warn('Failed to restore programs, continuing with empty table:', restoreError.message);
+                }
               }
-            }
+              
+              // Drop backup
+              this.db.prepare('DROP TABLE epg_programs_backup').run();
+              
+              // Re-enable foreign key constraints
+              this.db.pragma('foreign_keys = ON');
+            });
             
-            // Drop backup
-            this.db.prepare('DROP TABLE epg_programs_backup').run();
-            
-            // Re-enable foreign key constraints
-            this.db.pragma('foreign_keys = ON');
+            // Execute the transaction
+            transaction();
             
             logger.info('✅ EPG programs table migration completed successfully - foreign key constraint removed');
           } else {
@@ -414,8 +420,8 @@ class DatabaseService {
           logger.info('EPG programs table does not exist yet, will be created below');
         }
       } catch (migrationError) {
-        logger.error('EPG programs table migration failed:', migrationError.message);
-        // Continue with table creation below
+        logger.error('EPG programs table migration failed - continuing with table creation:', migrationError.message);
+        // Continue with table creation below - don't throw error to prevent app crash
       }
 
       // Create epg_channels table

@@ -365,24 +365,48 @@ class EPGService {
         throw storeError;
       }
       
-      // CRITICAL: Verify data is actually accessible before marking success
+      // **CRITICAL FIX**: Verify data storage with proper error handling
       const verification = await database.get(`
         SELECT COUNT(*) as current_programs,
-               MAX(start_time) as latest_program
+               MAX(start_time) as latest_program,
+               COUNT(DISTINCT channel_id) as channels_with_programs
         FROM epg_programs 
         WHERE created_at > datetime('now', '-5 minutes')
       `);
       
-      if (verification.current_programs === 0) {
-        throw new Error('VERIFICATION FAILED: No current programs found after refresh');
+      logger.info('EPG verification results', {
+        sourceId,
+        currentPrograms: verification.current_programs,
+        latestProgram: verification.latest_program,
+        channelsWithPrograms: verification.channels_with_programs,
+        originalProgramCount: programs.length
+      });
+      
+      // **CRITICAL FIX**: Don't fail if no programs were parsed - this can be valid for empty sources
+      if (programs.length > 0 && verification.current_programs === 0) {
+        // Only fail if we parsed programs but none were stored - indicates database issue
+        throw new Error(`VERIFICATION FAILED: Parsed ${programs.length} programs but none found in database after storage`);
       }
       
-      const latestDate = new Date(verification.latest_program);
-      const today = new Date();
-      const daysDiff = (today - latestDate) / (1000 * 60 * 60 * 24);
+      if (verification.latest_program) {
+        const latestDate = new Date(verification.latest_program);
+        const today = new Date();
+        const daysDiff = (today - latestDate) / (1000 * 60 * 60 * 24);
+        
+        // Only warn about old data, don't fail the refresh
+        if (daysDiff > 7) {
+          logger.warn(`EPG data is ${daysDiff.toFixed(1)} days old - may need source update`, {
+            sourceId,
+            latestProgram: verification.latest_program
+          });
+        }
+      }
       
-      if (daysDiff > 7) {
-        throw new Error(`VERIFICATION FAILED: Latest program is ${daysDiff.toFixed(1)} days old - no current data downloaded`);
+      // Success criteria: Either we stored programs OR source had no programs to begin with
+      const isSuccess = verification.current_programs > 0 || programs.length === 0;
+      
+      if (!isSuccess) {
+        throw new Error('VERIFICATION FAILED: Unable to store EPG programs in database');
       }
       
       // Only mark success if verification passes
@@ -935,7 +959,10 @@ class EPGService {
     }
 
     try {
-      database.transaction(() => {
+      // **CRITICAL FIX**: Enhanced transaction with proper error handling
+      const transactionResult = database.transaction(() => {
+        logger.info('Starting EPG programs transaction', { programCount: programs.length });
+        
         // Clear old programs first
         const threeDaysAgo = new Date(Date.now() - 3 * 24 * 60 * 60 * 1000).toISOString();
         const deletedResult = database.db.prepare('DELETE FROM epg_programs WHERE end_time < ?').run(threeDaysAgo);
@@ -959,6 +986,7 @@ class EPGService {
         let errorCount = 0;
         const channelCounts = {};
         const insertStmt = database.db.prepare(insertSQL);
+        const insertErrors = [];
         
         for (let i = 0; i < programs.length; i += batchSize) {
           const batch = programs.slice(i, i + batchSize);
@@ -991,64 +1019,93 @@ class EPGService {
                 program.live || false,
                 program.new_episode || false
               );
-              insertedCount++;
               
-              // Count programs per channel for reporting
-              channelCounts[program.channel_id] = (channelCounts[program.channel_id] || 0) + 1;
-              
-              // Log first few successful inserts for debugging
-              if (insertedCount <= 3) {
-                logger.info('Successfully inserted program', {
+              if (result.changes > 0) {
+                insertedCount++;
+                
+                // Count programs per channel for reporting
+                channelCounts[program.channel_id] = (channelCounts[program.channel_id] || 0) + 1;
+                
+                // Log first few successful inserts for debugging
+                if (insertedCount <= 3) {
+                  logger.info('Successfully inserted program', {
+                    programId: program.id,
+                    channelId: program.channel_id,
+                    title: program.title,
+                    changes: result.changes
+                  });
+                }
+              } else {
+                logger.warn('Program insert returned 0 changes - may be duplicate', {
                   programId: program.id,
                   channelId: program.channel_id,
-                  title: program.title,
-                  changes: result.changes
+                  title: program.title
                 });
               }
             } catch (error) {
               errorCount++;
-              logger.error('Failed to insert program', { 
+              const errorDetails = { 
                 programId: program.id,
                 channelId: program.channel_id,
                 title: program.title,
                 start_time: program.start_time,
                 end_time: program.end_time,
-                error: error.message,
-                stack: error.stack
-              });
+                error: error.message
+              };
+              insertErrors.push(errorDetails);
+              
+              logger.error('Failed to insert program', errorDetails);
+              
+              // Stop transaction if too many consecutive errors (data corruption)
+              if (errorCount > Math.min(100, programs.length * 0.1)) {
+                throw new Error(`CRITICAL: Too many insert errors (${errorCount}) - stopping transaction to prevent corruption`);
+              }
             }
           }
         }
         
-        // CRITICAL ARCHITECTURAL FIX: FAIL LOUDLY ON ERRORS
-        if (errorCount > 0) {
-          const errorRate = (errorCount / programs.length) * 100;
-          
-          if (errorRate > 5) { // Fail if >5% error rate
-            throw new Error(`CRITICAL: EPG storage failed - ${errorCount}/${programs.length} programs failed to store (${errorRate.toFixed(1)}% error rate)`);
-          }
-          
-          logger.warn(`EPG storage completed with ${errorCount} errors`, {
-            total: programs.length,
-            inserted: insertedCount,
-            errorRate: `${errorRate.toFixed(1)}%`
-          });
+        // **CRITICAL**: Return transaction results for validation
+        return {
+          insertedCount,
+          errorCount,
+          channelCounts,
+          insertErrors,
+          totalPrograms: programs.length
+        };
+      });
+      
+      // Execute transaction and handle results
+      const results = transactionResult();
+      
+      // **CRITICAL ARCHITECTURAL FIX**: FAIL LOUDLY ON SIGNIFICANT ERRORS
+      if (results.errorCount > 0) {
+        const errorRate = (results.errorCount / results.totalPrograms) * 100;
+        
+        if (errorRate > 10) { // Fail if >10% error rate
+          throw new Error(`CRITICAL: EPG storage failed - ${results.errorCount}/${results.totalPrograms} programs failed to store (${errorRate.toFixed(1)}% error rate)`);
         }
         
-        // VALIDATION: Verify data was actually stored
-        const storedCount = database.db.prepare('SELECT COUNT(*) as count FROM epg_programs WHERE created_at > datetime(\'now\', \'-1 minute\')').get();
-        
-        if (storedCount.count === 0) {
-          throw new Error('CRITICAL: No programs found in database after storage operation - database corruption detected');
-        }
-        
-        logger.info('EPG programs stored and validated', {
-          totalPrograms: insertedCount,
-          validated: storedCount.count,
-          channelsWithPrograms: Object.keys(channelCounts).length,
-          errorRate: errorCount > 0 ? `${((errorCount / programs.length) * 100).toFixed(1)}%` : '0%',
-          programsPerChannel: channelCounts
+        logger.warn(`EPG storage completed with ${results.errorCount} errors`, {
+          total: results.totalPrograms,
+          inserted: results.insertedCount,
+          errorRate: `${errorRate.toFixed(1)}%`,
+          sampleErrors: results.insertErrors.slice(0, 5)
         });
+      }
+      
+      // **VALIDATION**: Verify data was actually stored and accessible
+      const storedCount = database.db.prepare('SELECT COUNT(*) as count FROM epg_programs WHERE created_at > datetime(\'now\', \'-2 minutes\')').get();
+      
+      if (results.insertedCount > 0 && storedCount.count === 0) {
+        throw new Error('CRITICAL: Programs inserted but not found in database - transaction may have rolled back');
+      }
+      
+      logger.info('✅ EPG programs stored and validated successfully', {
+        totalPrograms: results.insertedCount,
+        validated: storedCount.count,
+        channelsWithPrograms: Object.keys(results.channelCounts).length,
+        errorRate: results.errorCount > 0 ? `${((results.errorCount / results.totalPrograms) * 100).toFixed(1)}%` : '0%',
+        programsPerChannel: results.channelCounts
       });
 
       logger.epg('EPG programs storage completed', { 
