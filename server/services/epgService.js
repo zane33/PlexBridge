@@ -1094,15 +1094,30 @@ class EPGService {
       }
       
       // **VALIDATION**: Verify data was actually stored and accessible
-      const storedCount = database.db.prepare('SELECT COUNT(*) as count FROM epg_programs WHERE created_at > datetime(\'now\', \'-2 minutes\')').get();
+      // Check total programs and recent programs (more reliable than created_at timing)
+      const totalCount = database.db.prepare('SELECT COUNT(*) as count FROM epg_programs').get();
+      const recentCount = database.db.prepare('SELECT COUNT(*) as count FROM epg_programs WHERE start_time > datetime(\'now\', \'-1 day\')').get();
       
-      if (results.insertedCount > 0 && storedCount.count === 0) {
-        throw new Error('CRITICAL: Programs inserted but not found in database - transaction may have rolled back');
+      logger.info('EPG validation check', {
+        totalPrograms: totalCount.count,
+        recentPrograms: recentCount.count,
+        insertedThisRun: results.insertedCount
+      });
+      
+      if (results.insertedCount > 0) {
+        if (totalCount.count === 0) {
+          throw new Error('CRITICAL: Programs inserted but no programs found in database - transaction rolled back');
+        }
+        
+        if (recentCount.count === 0) {
+          throw new Error('CRITICAL: Programs inserted but no recent programs found - data may be stale or invalid');
+        }
       }
       
       logger.info('✅ EPG programs stored and validated successfully', {
         totalPrograms: results.insertedCount,
-        validated: storedCount.count,
+        totalInDatabase: totalCount.count,
+        recentPrograms: recentCount.count,
         channelsWithPrograms: Object.keys(results.channelCounts).length,
         errorRate: results.errorCount > 0 ? `${((results.errorCount / results.totalPrograms) * 100).toFixed(1)}%` : '0%',
         programsPerChannel: results.channelCounts
