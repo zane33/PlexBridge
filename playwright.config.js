@@ -33,8 +33,8 @@ module.exports = defineConfig({
       name: 'chromium',
       use: { 
         ...devices['Desktop Chrome'],
-        // Chrome-specific settings for stability
-        channel: 'chrome',
+        // Chromium-specific settings for stability
+        // channel: 'chrome', // Removed to use default Chromium
         args: [
           '--no-sandbox',
           '--disable-setuid-sandbox',

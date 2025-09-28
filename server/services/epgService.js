@@ -220,10 +220,11 @@ class EPGService {
         return;
       }
 
-      logger.epg('Starting EPG refresh', { 
+      logger.epg('🚀 Starting EPG refresh', { 
         sourceId, 
         sourceName: source.name,
-        url: source.url 
+        url: source.url,
+        timestamp: new Date().toISOString()
       });
 
       // Update last refresh time
@@ -232,25 +233,38 @@ class EPGService {
         [sourceId]
       );
 
-      // Download EPG data with error handling
+      // Download EPG data with enhanced error handling
       let epgData;
       try {
+        logger.info('📥 Starting EPG download', { sourceId, url: source.url });
         epgData = await this.downloadEPG(source);
+        logger.info('✅ EPG download completed successfully', { 
+          sourceId, 
+          dataSize: epgData.length,
+          dataPreview: epgData.substring(0, 200) + '...'
+        });
       } catch (downloadError) {
-        logger.error('EPG download failed for source', {
+        logger.error('❌ EPG download failed for source', {
           sourceId,
           sourceName: source.name,
           url: source.url,
-          error: downloadError.message
+          error: downloadError.message,
+          stack: downloadError.stack
         });
         
         // Update database with error status
         await database.run(
           'UPDATE epg_sources SET last_error = ? WHERE id = ?',
-          [downloadError.message, sourceId]
+          [`Download failed: ${downloadError.message}`, sourceId]
         );
         
-        // Don't throw during background refresh - just log and return
+        // **CRITICAL FIX**: Always throw errors for manual refresh to show user the issue
+        const isManualRefresh = this.isManualRefresh === true;
+        if (isManualRefresh) {
+          throw downloadError;
+        }
+        
+        // For background refresh, log and return
         logger.warn('EPG refresh failed for source, will retry on next cycle', {
           sourceId,
           sourceName: source.name,
@@ -259,25 +273,42 @@ class EPGService {
         return;
       }
       
-      // Parse EPG XML (now includes storing channel information)
+      // Parse EPG XML with enhanced logging
       let programs;
       try {
+        logger.info('📊 Starting EPG parsing', { sourceId, dataSize: epgData.length });
         programs = await this.parseEPG(epgData, sourceId);
+        logger.info('✅ EPG parsing completed successfully', { 
+          sourceId, 
+          programCount: programs.length,
+          samplePrograms: programs.slice(0, 3).map(p => ({
+            id: p.id,
+            channel_id: p.channel_id,
+            title: p.title
+          }))
+        });
       } catch (parseError) {
-        logger.error('EPG parsing failed for source', {
+        logger.error('❌ EPG parsing failed for source', {
           sourceId,
           sourceName: source.name,
           error: parseError.message,
-          dataPreview: epgData.substring(0, 500)
+          stack: parseError.stack,
+          dataPreview: epgData.substring(0, 1000)
         });
         
         // Update database with error status
         await database.run(
           'UPDATE epg_sources SET last_error = ? WHERE id = ?',
-          ['Parse error: ' + parseError.message, sourceId]
+          [`Parse failed: ${parseError.message}`, sourceId]
         );
         
-        // Don't throw during background refresh - just log and return
+        // **CRITICAL FIX**: Always throw errors for manual refresh
+        const isManualRefresh = this.isManualRefresh === true;
+        if (isManualRefresh) {
+          throw parseError;
+        }
+        
+        // For background refresh, log and return
         logger.warn('EPG parsing failed for source, will retry on next cycle', {
           sourceId,
           sourceName: source.name,
@@ -287,30 +318,52 @@ class EPGService {
       }
       
       if (programs.length === 0) {
-        logger.warn('No programs parsed from EPG source', { 
+        const warningMessage = 'No programs parsed from EPG source - check XML format and channel mappings';
+        logger.warn('⚠️ ' + warningMessage, { 
           sourceId, 
           sourceName: source.name,
           url: source.url,
-          dataLength: epgData.length 
+          dataLength: epgData.length,
+          dataPreview: epgData.substring(0, 500)
         });
         
-        // This might be okay - some sources might have channels but no current programs
-        // Don't throw an error, just log it
+        // Update database with warning
+        await database.run(
+          'UPDATE epg_sources SET last_error = ? WHERE id = ?',
+          [warningMessage, sourceId]
+        );
+        
+        // Continue processing even with 0 programs - channels might have been stored
       }
       
-      // Store programs in database
-      logger.info('About to store programs', {
+      // Store programs in database with enhanced logging
+      logger.info('💾 Storing EPG programs in database', {
         sourceId,
-        programCount: programs.length,
-        samplePrograms: programs.slice(0, 2).map(p => ({
-          id: p.id,
-          channel_id: p.channel_id,
-          title: p.title,
-          start_time: p.start_time
-        }))
+        programCount: programs.length
       });
       
-      await this.storePrograms(programs);
+      try {
+        await this.storePrograms(programs);
+        logger.info('✅ EPG programs stored successfully', {
+          sourceId,
+          programCount: programs.length
+        });
+      } catch (storeError) {
+        logger.error('❌ Failed to store EPG programs', {
+          sourceId,
+          error: storeError.message,
+          stack: storeError.stack,
+          programCount: programs.length
+        });
+        
+        // Update database with storage error
+        await database.run(
+          'UPDATE epg_sources SET last_error = ? WHERE id = ?',
+          [`Storage failed: ${storeError.message}`, sourceId]
+        );
+        
+        throw storeError;
+      }
       
       // Update success timestamp and clear any previous errors
       await database.run(
@@ -321,15 +374,25 @@ class EPGService {
       // Clear EPG cache
       await this.clearEPGCache();
 
-      logger.epg('EPG refresh completed successfully', { 
+      logger.epg('🎉 EPG refresh completed successfully', { 
         sourceId,
         sourceName: source.name,
         programCount: programs.length,
-        url: source.url 
+        url: source.url,
+        timestamp: new Date().toISOString()
       });
 
+      // Return success statistics
+      return {
+        success: true,
+        sourceId,
+        sourceName: source.name,
+        programCount: programs.length,
+        channelsProcessed: await database.get('SELECT COUNT(*) as count FROM epg_channels WHERE source_id = ?', [sourceId])?.count || 0
+      };
+
     } catch (error) {
-      logger.error('EPG refresh failed', { 
+      logger.error('💥 EPG refresh failed with critical error', { 
         sourceId, 
         sourceName: source?.name,
         url: source?.url,
@@ -337,7 +400,15 @@ class EPGService {
         stack: error.stack
       });
       
-      // Re-throw to maintain existing behavior
+      // Update database with critical error
+      if (source) {
+        await database.run(
+          'UPDATE epg_sources SET last_error = ? WHERE id = ?',
+          [`Critical error: ${error.message}`, sourceId]
+        );
+      }
+      
+      // Always re-throw to maintain existing behavior
       throw error;
     }
   }
@@ -1105,8 +1176,22 @@ class EPGService {
   }
 
   async forceRefresh(sourceId) {
-    logger.epg('Force refresh requested', { sourceId });
-    await this.refreshSource(sourceId);
+    logger.epg('🔧 Force refresh requested', { sourceId });
+    
+    // Set manual refresh flag to ensure errors are thrown instead of silently logged
+    this.isManualRefresh = true;
+    
+    try {
+      const result = await this.refreshSource(sourceId);
+      logger.epg('✅ Force refresh completed successfully', { sourceId, result });
+      return result;
+    } catch (error) {
+      logger.error('❌ Force refresh failed', { sourceId, error: error.message });
+      throw error;
+    } finally {
+      // Reset manual refresh flag
+      this.isManualRefresh = false;
+    }
   }
 
   async addSource(sourceData) {

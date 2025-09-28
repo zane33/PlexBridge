@@ -3310,4 +3310,16 @@ router.post('/epg/test-url', async (req, res) => {
   }
 });
 
+// EPG Sources endpoint - CRITICAL FIX for frontend routing issue
+// This endpoint was missing, causing frontend to receive HTML instead of JSON
+router.get('/epg-sources', async (req, res) => {
+  try {
+    const sources = await database.all('SELECT * FROM epg_sources ORDER BY created_at DESC');
+    res.json(sources || []);
+  } catch (error) {
+    logger.error('Error fetching EPG sources:', error);
+    res.status(500).json({ error: 'Failed to fetch EPG sources', details: error.message });
+  }
+});
+
 module.exports = router;

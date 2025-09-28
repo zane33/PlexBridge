@@ -1,0 +1,27 @@
+{
+  "epg_sources": {
+    "description": "Add these EPG sources via the web interface",
+    "sources": [
+      {
+        "name": "TVNZ Official EPG",
+        "url": "https://i.mjh.nz/nzau/epg.xml.gz",
+        "refresh_interval": "4h",
+        "category": "News"
+      },
+      {
+        "name": "Sky TV EPG",
+        "url": "https://i.mjh.nz/au/Melbourne/epg.xml.gz",
+        "refresh_interval": "6h",
+        "category": "Sports"
+      }
+    ]
+  },
+  "channel_mappings": {
+    "description": "Match channel EPG IDs to XMLTV source IDs",
+    "examples": {
+      "TVNZ 1": "tvnz-1 or mjh-tvnz-1",
+      "TVNZ 2": "tvnz-2 or mjh-tvnz-2",
+      "Sky Sport 1": "sky-sport-1"
+    }
+  }
+}
