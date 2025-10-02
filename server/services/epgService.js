@@ -1295,11 +1295,11 @@ class EPGService {
             let safeYear = null;
             let safeEpisodeNumber = null;
             let safeSeasonNumber = null;
+            let validChannelId = program.channel_id; // CRITICAL FIX: Moved outside try block for catch block access
 
             try {
               // **CRITICAL FIX**: Validate and handle channel ID properly
               // Accept both internal channel UUIDs and EPG channel IDs for maximum compatibility
-              let validChannelId = program.channel_id;
 
               // Check if this is already an internal channel UUID (from our channels table)
               const directChannelMatch = database.db.prepare(
