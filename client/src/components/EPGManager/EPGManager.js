@@ -249,7 +249,16 @@ function EPGManager() {
     setProgramsLoading(true);
     try {
       const params = {};
-      
+
+      // Expand time range to show past and future programs (24 hours ago to 7 days ahead)
+      // This ensures we see recent programs even if they've ended
+      const now = new Date();
+      const startTime = new Date(now.getTime() - (24 * 60 * 60 * 1000)); // 24 hours ago
+      const endTime = new Date(now.getTime() + (7 * 24 * 60 * 60 * 1000)); // 7 days ahead
+
+      params.start = startTime.toISOString();
+      params.end = endTime.toISOString();
+
       // If we have a specific EPG channel ID, use it
       if (epgChannelId && epgChannelId !== 'all') {
         params.channel_id = epgChannelId;
@@ -260,7 +269,7 @@ function EPGManager() {
           params.channel_id = selectedChannel.epg_id;
         }
       }
-      
+
       const response = await api.get('/api/epg', { params });
       setEpgPrograms(response.data.programs || []);
     } catch (error) {
@@ -632,11 +641,18 @@ function EPGManager() {
   );
 
   const renderSourcesTab = () => (
-    <Box>
-      <Box display="flex" justifyContent="space-between" alignItems="center" mb={3}>
+    <Box sx={{ width: '100%', maxWidth: '100%' }}>
+      <Box
+        display="flex"
+        justifyContent="space-between"
+        alignItems={isMobile ? "flex-start" : "center"}
+        mb={3}
+        flexDirection={isMobile ? "column" : "row"}
+        gap={isMobile ? 2 : 0}
+      >
         <Typography variant="h6">EPG Sources</Typography>
-        
-        <Box display="flex" gap={1}>
+
+        <Box display="flex" gap={1} flexWrap="wrap">
           <Button
             variant="outlined"
             startIcon={<RefreshIcon />}
@@ -646,7 +662,7 @@ function EPGManager() {
           >
             {refreshing === 'all' ? <CircularProgress size={20} /> : 'Refresh All'}
           </Button>
-          
+
           {epgStatus && !epgStatus.isInitialized && (
             <Button
               variant="contained"
@@ -659,7 +675,7 @@ function EPGManager() {
               {refreshing === 'all' ? <CircularProgress size={20} /> : 'Fix & Refresh'}
             </Button>
           )}
-          
+
           {!isMobile && (
             <Button
               variant="contained"
@@ -701,20 +717,20 @@ function EPGManager() {
         </Alert>
       )}
 
-      <Card>
-        <CardContent>
+      <Card sx={{ width: '100%', overflowX: 'auto' }}>
+        <CardContent sx={{ p: { xs: 1, sm: 2, md: 3 }, '&:last-child': { pb: { xs: 1, sm: 2, md: 3 } } }}>
           {loading ? renderSkeletonTable() : (
-            <TableContainer component={Paper}>
-              <Table>
+            <TableContainer component={Paper} sx={{ width: '100%' }}>
+              <Table sx={{ minWidth: { xs: 650, md: 750 } }}>
                 <TableHead>
                   <TableRow>
-                    <TableCell sx={{ minWidth: 150 }}>Name</TableCell>
-                    <TableCell sx={{ minWidth: 250, display: { xs: 'none', md: 'table-cell' } }}>URL</TableCell>
-                    <TableCell sx={{ minWidth: 100 }}>Category</TableCell>
-                    <TableCell sx={{ minWidth: 100 }}>Interval</TableCell>
-                    <TableCell sx={{ minWidth: 120, display: { xs: 'none', sm: 'table-cell' } }}>Last Success</TableCell>
-                    <TableCell sx={{ minWidth: 100 }}>Status</TableCell>
-                    <TableCell sx={{ minWidth: 150 }}>Actions</TableCell>
+                    <TableCell sx={{ width: { xs: 120, md: 150 } }}>Name</TableCell>
+                    <TableCell sx={{ width: { md: 250, lg: 300 }, display: { xs: 'none', md: 'table-cell' } }}>URL</TableCell>
+                    <TableCell sx={{ width: { xs: 100, md: 120 } }}>Category</TableCell>
+                    <TableCell sx={{ width: { xs: 90, md: 100 } }}>Interval</TableCell>
+                    <TableCell sx={{ width: { sm: 120, md: 140 }, display: { xs: 'none', sm: 'table-cell' } }}>Last Success</TableCell>
+                    <TableCell sx={{ width: { xs: 80, md: 100 } }}>Status</TableCell>
+                    <TableCell sx={{ width: { xs: 120, md: 150 } }}>Actions</TableCell>
                   </TableRow>
                 </TableHead>
                 <TableBody>
@@ -880,11 +896,25 @@ function EPGManager() {
   );
 
   const renderProgramsTab = () => (
-    <Box data-testid="epg-program-guide">
-      <Box display="flex" justifyContent="space-between" alignItems="center" mb={3}>
+    <Box data-testid="epg-program-guide" sx={{ width: '100%', maxWidth: '100%' }}>
+      <Box
+        display="flex"
+        justifyContent="space-between"
+        alignItems={isMobile ? "flex-start" : "center"}
+        mb={3}
+        flexDirection={isMobile ? "column" : "row"}
+        gap={isMobile ? 2 : 0}
+      >
         <Typography variant="h6">Program Guide</Typography>
-        <Box display="flex" gap={2} alignItems="center">
-          <FormControl variant="outlined" size="small" sx={{ minWidth: 200 }}>
+        <Box display="flex" gap={2} alignItems="center" flexWrap="wrap">
+          <FormControl
+            variant="outlined"
+            size="small"
+            sx={{
+              minWidth: isMobile ? '100%' : 250,
+              maxWidth: isMobile ? '100%' : 400
+            }}
+          >
             <InputLabel>Channel</InputLabel>
             <Select
               value={selectedChannelId}
@@ -911,6 +941,8 @@ function EPGManager() {
             startIcon={<RefreshIcon />}
             onClick={() => fetchEpgPrograms()}
             disabled={programsLoading}
+            size={isMobile ? "small" : "medium"}
+            sx={{ minWidth: isMobile ? 'auto' : 120 }}
           >
             {programsLoading ? <CircularProgress size={20} /> : 'Refresh'}
           </Button>
@@ -918,7 +950,7 @@ function EPGManager() {
       </Box>
 
       {selectedChannelId !== 'all' && (
-        <Alert severity="info" sx={{ mb: 2 }}>
+        <Alert severity="info" sx={{ mb: 2, width: '100%' }}>
           <Typography variant="body2">
             📺 Showing program guide for: <strong>
               {channels.find(c => c.id === selectedChannelId)?.number} - {channels.find(c => c.id === selectedChannelId)?.name}
@@ -930,8 +962,8 @@ function EPGManager() {
         </Alert>
       )}
 
-      <Card>
-        <CardContent>
+      <Card sx={{ width: '100%' }}>
+        <CardContent sx={{ p: { xs: 2, sm: 3 }, '&:last-child': { pb: { xs: 2, sm: 3 } } }}>
           {programsLoading ? (
             <Box display="flex" flexDirection="column" gap={2}>
               {[...Array(5)].map((_, index) => (
@@ -939,44 +971,81 @@ function EPGManager() {
               ))}
             </Box>
           ) : (
-            <List>
+            <List sx={{ width: '100%', px: 0 }}>
               {epgPrograms.slice(0, 20).map((program, index) => (
                 <React.Fragment key={program.id || index}>
-                  <ListItem>
-                    <ListItemIcon>
+                  <ListItem
+                    sx={{
+                      width: '100%',
+                      px: { xs: 1, sm: 2 },
+                      py: { xs: 1.5, sm: 2 },
+                      flexDirection: { xs: 'column', sm: 'row' },
+                      alignItems: { xs: 'flex-start', sm: 'flex-start' },
+                      gap: { xs: 1, sm: 0 }
+                    }}
+                  >
+                    <ListItemIcon
+                      sx={{
+                        minWidth: { xs: 'auto', sm: 56 },
+                        mr: { xs: 0, sm: 0 }
+                      }}
+                    >
                       <TvIcon color="primary" />
                     </ListItemIcon>
                     <ListItemText
+                      sx={{ width: '100%', my: 0 }}
                       primary={
-                        <Box>
-                          <Typography variant="subtitle1" fontWeight="bold">
+                        <Box sx={{ width: '100%' }}>
+                          <Typography variant="subtitle1" fontWeight="bold" sx={{ mb: 0.5 }}>
                             {program.title}
                           </Typography>
                           {selectedChannelId === 'all' && (
-                            <Typography variant="body2" color="text.secondary">
+                            <Typography variant="body2" color="text.secondary" sx={{ mb: 0.5 }}>
                               {program.channel_name} ({program.channel_number})
                             </Typography>
                           )}
                         </Box>
                       }
                       secondary={
-                        <Box>
-                          <Typography variant="body2" color="text.secondary">
-                            {formatNZDateTime(program.start_time)} - {formatNZDateTime(program.end_time)}
+                        <Box sx={{ width: '100%', mt: 0.5 }}>
+                          <Typography
+                            variant="body2"
+                            color="text.secondary"
+                            sx={{
+                              display: 'flex',
+                              gap: 1,
+                              flexWrap: 'wrap',
+                              alignItems: 'center',
+                              mb: program.description ? 0.5 : 0
+                            }}
+                          >
+                            <Box component="span" sx={{ fontWeight: 500 }}>
+                              {formatNZDateTime(program.start_time)} - {formatNZDateTime(program.end_time)}
+                            </Box>
                           </Typography>
                           {program.description && (
-                            <Typography variant="body2" sx={{ mt: 0.5 }}>
-                              {program.description.length > 100 
-                                ? `${program.description.substring(0, 100)}...`
-                                : program.description
-                              }
+                            <Typography
+                              variant="body2"
+                              sx={{
+                                mt: 0.5,
+                                color: 'text.primary',
+                                display: '-webkit-box',
+                                WebkitLineClamp: isMobile ? 2 : 3,
+                                WebkitBoxOrient: 'vertical',
+                                overflow: 'hidden',
+                                textOverflow: 'ellipsis',
+                                lineHeight: 1.6,
+                                maxWidth: '100%'
+                              }}
+                            >
+                              {program.description}
                             </Typography>
                           )}
                         </Box>
                       }
                     />
                   </ListItem>
-                  {index < epgPrograms.slice(0, 20).length - 1 && <Divider />}
+                  {index < epgPrograms.slice(0, 20).length - 1 && <Divider variant="fullWidth" />}
                 </React.Fragment>
               ))}
               {epgPrograms.length === 0 && (
@@ -1001,14 +1070,21 @@ function EPGManager() {
   );
 
   const renderChannelMappingTab = () => (
-    <Box>
-      <Box display="flex" justifyContent="space-between" alignItems="center" mb={3}>
+    <Box sx={{ width: '100%', maxWidth: '100%' }}>
+      <Box
+        display="flex"
+        justifyContent="space-between"
+        alignItems={isMobile ? "flex-start" : "center"}
+        mb={3}
+        flexDirection={isMobile ? "column" : "row"}
+        gap={isMobile ? 2 : 0}
+      >
         <Typography variant="h6">Channel EPG Mapping</Typography>
-        
-        <Box display="flex" gap={1}>
+
+        <Box display="flex" gap={1} flexWrap="wrap">
           <Button
             variant="outlined"
-            size="small"
+            size={isMobile ? "small" : "medium"}
             onClick={handleAutoMapping}
             disabled={!availableEpgIds.length}
             startIcon={<CheckIcon />}
@@ -1017,7 +1093,7 @@ function EPGManager() {
           </Button>
           <Button
             variant="outlined"
-            size="small"
+            size={isMobile ? "small" : "medium"}
             onClick={handleDiagnoseMappings}
             startIcon={<InfoIcon />}
           >
@@ -1025,8 +1101,8 @@ function EPGManager() {
           </Button>
         </Box>
       </Box>
-      
-      <Alert severity="info" sx={{ mb: 2 }}>
+
+      <Alert severity="info" sx={{ mb: 2, width: '100%' }}>
         <Typography variant="body2">
           🔗 Map your channels to EPG IDs from your XMLTV sources to get program guide data.
           Click the EPG ID chip to edit inline. Use "Auto-Map Channels" for smart suggestions.
@@ -1034,8 +1110,8 @@ function EPGManager() {
       </Alert>
 
       {availableEpgIds.length > 0 && (
-        <Card sx={{ mb: 2 }}>
-          <CardContent>
+        <Card sx={{ mb: 2, width: '100%' }}>
+          <CardContent sx={{ p: { xs: 2, sm: 3 }, '&:last-child': { pb: { xs: 2, sm: 3 } } }}>
             <Typography variant="subtitle1" fontWeight="bold" mb={1}>
               📺 Available EPG IDs from Sources:
             </Typography>
@@ -1057,18 +1133,39 @@ function EPGManager() {
         </Card>
       )}
 
-      <Card>
-        <CardContent>
-          <List>
+      <Card sx={{ width: '100%' }}>
+        <CardContent sx={{ p: { xs: 1, sm: 2, md: 3 }, '&:last-child': { pb: { xs: 1, sm: 2, md: 3 } } }}>
+          <List sx={{ width: '100%', px: 0 }}>
             {channels.map((channel, index) => (
               <React.Fragment key={channel.id}>
-                <ListItem>
-                  <ListItemIcon>
+                <ListItem
+                  sx={{
+                    width: '100%',
+                    px: { xs: 1, sm: 2 },
+                    py: { xs: 1.5, sm: 2 },
+                    flexDirection: { xs: 'column', sm: 'row' },
+                    alignItems: { xs: 'flex-start', sm: 'center' },
+                    gap: { xs: 1, sm: 0 }
+                  }}
+                >
+                  <ListItemIcon
+                    sx={{
+                      minWidth: { xs: 'auto', sm: 56 },
+                      mr: { xs: 0, sm: 0 }
+                    }}
+                  >
                     <TvIcon color={channel.epg_id ? 'primary' : 'disabled'} />
                   </ListItemIcon>
                   <ListItemText
+                    sx={{ width: '100%', my: 0 }}
                     primary={
-                      <Box display="flex" alignItems="center" gap={2}>
+                      <Box
+                        display="flex"
+                        alignItems={isMobile ? "flex-start" : "center"}
+                        gap={2}
+                        flexDirection={isMobile ? "column" : "row"}
+                        sx={{ width: '100%' }}
+                      >
                         <Typography variant="subtitle1" fontWeight="bold">
                           {channel.number} - {channel.name}
                         </Typography>
@@ -1159,11 +1256,11 @@ function EPGManager() {
   );
 
   return (
-    <Box>
-      <Box 
-        display="flex" 
-        justifyContent="space-between" 
-        alignItems={isMobile ? 'flex-start' : 'center'} 
+    <Box sx={{ width: '100%', maxWidth: '100%' }}>
+      <Box
+        display="flex"
+        justifyContent="space-between"
+        alignItems={isMobile ? 'flex-start' : 'center'}
         mb={3}
         flexDirection={isMobile ? 'column' : 'row'}
         gap={isMobile ? 2 : 0}
@@ -1171,7 +1268,7 @@ function EPGManager() {
         <Typography variant="h4" sx={{ mb: isMobile ? 1 : 0 }}>
           EPG Manager
         </Typography>
-        
+
         {isMobile && (
           <Fab
             color="primary"
@@ -1189,14 +1286,15 @@ function EPGManager() {
         )}
       </Box>
 
-      <Box sx={{ borderBottom: 1, borderColor: 'divider', mb: 3 }}>
-        <Tabs 
-          value={activeTab} 
+      <Box sx={{ borderBottom: 1, borderColor: 'divider', mb: 3, width: '100%' }}>
+        <Tabs
+          value={activeTab}
           onChange={(e, newValue) => setActiveTab(newValue)}
           variant={isMobile ? "fullWidth" : "standard"}
           scrollButtons={isMobile ? "auto" : false}
           allowScrollButtonsMobile={isMobile}
           sx={{
+            width: '100%',
             '& .MuiTab-root': {
               minHeight: isMobile ? 48 : 72,
               fontSize: isMobile ? '0.875rem' : '1rem',
@@ -1208,17 +1306,17 @@ function EPGManager() {
             }
           }}
         >
-          <Tab 
-            label={isMobile ? "Sources" : "EPG Sources"} 
-            icon={<LinkIcon sx={{ fontSize: isMobile ? 18 : 24 }} />} 
+          <Tab
+            label={isMobile ? "Sources" : "EPG Sources"}
+            icon={<LinkIcon sx={{ fontSize: isMobile ? 18 : 24 }} />}
           />
-          <Tab 
-            label={isMobile ? "Programs" : "Program Guide"} 
-            icon={<ScheduleIcon sx={{ fontSize: isMobile ? 18 : 24 }} />} 
+          <Tab
+            label={isMobile ? "Programs" : "Program Guide"}
+            icon={<ScheduleIcon sx={{ fontSize: isMobile ? 18 : 24 }} />}
           />
-          <Tab 
-            label={isMobile ? "Mapping" : "Channel Mapping"} 
-            icon={<TvIcon sx={{ fontSize: isMobile ? 18 : 24 }} />} 
+          <Tab
+            label={isMobile ? "Mapping" : "Channel Mapping"}
+            icon={<TvIcon sx={{ fontSize: isMobile ? 18 : 24 }} />}
           />
         </Tabs>
       </Box>
