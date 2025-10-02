@@ -63,9 +63,39 @@ class EPGService {
       });
 
       this.isInitialized = true;
-      logger.info('✅ EPG service initialized successfully', { 
+
+      // Log detailed initialization summary
+      const jobsSummary = Array.from(this.refreshJobs.entries()).map(([sourceId, job]) => {
+        const source = sources.find(s => s.id === sourceId);
+        const interval = this.parseInterval(source?.refresh_interval || '4h');
+        const cronExpression = this.intervalToCron(interval, sourceId);
+        const nextRun = this.getNextCronExecution(cronExpression);
+
+        return {
+          sourceId,
+          sourceName: source?.name || 'Unknown',
+          interval: source?.refresh_interval || '4h',
+          cronExpression,
+          nextRun: nextRun ? nextRun.toISOString() : 'unknown',
+          minutesUntilNext: nextRun ? Math.round((nextRun - new Date()) / 60000) : null
+        };
+      });
+
+      logger.info('✅ EPG service initialized successfully', {
         sourceCount: sources.length,
-        scheduledJobs: this.refreshJobs.size
+        scheduledJobs: this.refreshJobs.size,
+        jobs: jobsSummary
+      });
+
+      // Log individual job schedules for clarity
+      jobsSummary.forEach(job => {
+        logger.info(`📅 EPG job scheduled: ${job.sourceName}`, {
+          sourceId: job.sourceId,
+          interval: job.interval,
+          cronExpression: job.cronExpression,
+          nextRun: job.nextRun,
+          minutesUntilNext: job.minutesUntilNext
+        });
       });
 
       // Trigger immediate refresh for sources that have never been refreshed
@@ -141,11 +171,17 @@ class EPGService {
       });
 
       this.refreshJobs.set(source.id, job);
-      
-      logger.info('EPG refresh scheduled', { 
-        sourceId: source.id, 
+
+      // Calculate next execution time for verification
+      const nextExecution = this.getNextCronExecution(cronExpression);
+
+      logger.info('✅ EPG refresh job scheduled successfully', {
+        sourceId: source.id,
+        sourceName: source.name,
         interval: source.refresh_interval,
         cronExpression,
+        nextExecution: nextExecution ? nextExecution.toISOString() : 'unknown',
+        minutesUntilNext: nextExecution ? Math.round((nextExecution - new Date()) / 60000) : null,
         category: 'epg'
       });
 
@@ -217,20 +253,28 @@ class EPGService {
       // Use sourceId to generate a consistent but distributed minute offset
       const hash = sourceId.split('').reduce((a, b) => {
         a = ((a << 5) - a) + b.charCodeAt(0);
-        return a & a;
+        return a; // FIX: Return the hash value directly
       }, 0);
       minute = Math.abs(hash) % 60; // 0-59 minutes
     }
 
+    // CRITICAL FIX: Generate proper cron expressions that actually trigger
     switch (unit) {
       case 'minutes':
+        // Every N minutes: "*/N * * * *"
         return `*/${value} * * * *`;
       case 'hours':
-        return `${minute} */${value} * * *`;
+        // Every N hours at a specific minute: "M 0-23/N * * *"
+        // This means "at minute M, every Nth hour starting from 0"
+        // For example, "15 0-23/4 * * *" runs at 00:15, 04:15, 08:15, 12:15, 16:15, 20:15
+        return `${minute} 0-23/${value} * * *`;
       case 'days':
+        // Every N days at a specific time: "M H */N * *"
+        // This means "at minute M, hour H, every Nth day"
         return `${minute} 0 */${value} * *`;
       default:
-        return `${minute} */4 * * *`; // Default: every 4 hours with staggered minutes
+        // Default: every 4 hours with staggered minutes
+        return `${minute} 0-23/4 * * *`;
     }
   }
 
@@ -1950,12 +1994,92 @@ class EPGService {
     }
   }
 
+  getNextCronExecution(cronExpression) {
+    try {
+      // Parse cron expression to calculate next execution
+      // Cron format: minute hour day month weekday
+      const [minute, hour, day, month, weekday] = cronExpression.split(' ');
+      const now = new Date();
+      const next = new Date(now);
+
+      // Handle hour patterns like "0-23/4" (every 4 hours)
+      if (hour && hour.includes('/')) {
+        const [range, step] = hour.split('/');
+        const stepNum = parseInt(step);
+        const currentHour = now.getHours();
+
+        // Find next hour that matches the pattern
+        let nextHour = Math.ceil(currentHour / stepNum) * stepNum;
+        if (nextHour === currentHour && now.getMinutes() >= parseInt(minute || 0)) {
+          nextHour += stepNum;
+        }
+        if (nextHour >= 24) {
+          nextHour = nextHour % 24;
+          next.setDate(next.getDate() + 1);
+        }
+
+        next.setHours(nextHour);
+        next.setMinutes(parseInt(minute || 0));
+        next.setSeconds(0);
+        next.setMilliseconds(0);
+
+        return next;
+      }
+
+      // Handle minute patterns like "*/5" (every 5 minutes)
+      if (minute && minute.includes('/')) {
+        const stepNum = parseInt(minute.split('/')[1]);
+        const currentMinute = now.getMinutes();
+        let nextMinute = Math.ceil(currentMinute / stepNum) * stepNum;
+
+        if (nextMinute >= 60) {
+          nextMinute = 0;
+          next.setHours(next.getHours() + 1);
+        }
+
+        next.setMinutes(nextMinute);
+        next.setSeconds(0);
+        next.setMilliseconds(0);
+
+        return next;
+      }
+
+      // Simple case: specific minute and hour
+      if (minute && !minute.includes('*') && hour && !hour.includes('*')) {
+        next.setHours(parseInt(hour));
+        next.setMinutes(parseInt(minute));
+        next.setSeconds(0);
+        next.setMilliseconds(0);
+
+        if (next <= now) {
+          next.setDate(next.getDate() + 1);
+        }
+
+        return next;
+      }
+
+      // Fallback: approximate next execution (4 hours from now)
+      next.setHours(next.getHours() + 4);
+      return next;
+    } catch (error) {
+      logger.warn('Failed to calculate next cron execution', { cronExpression, error: error.message });
+      return null;
+    }
+  }
+
   getNextRefreshTime(source) {
-    // This is a simplified calculation - in practice, you'd want to 
-    // calculate based on the cron schedule
+    // Calculate based on the cron schedule
     const interval = this.parseInterval(source.refresh_interval);
+    const cronExpression = this.intervalToCron(interval, source.id);
+    const nextExecution = this.getNextCronExecution(cronExpression);
+
+    if (nextExecution) {
+      return nextExecution;
+    }
+
+    // Fallback to simple calculation if cron parsing fails
     const lastRefresh = new Date(source.last_refresh || Date.now());
-    
+
     switch (interval.unit) {
       case 'hours':
         return new Date(lastRefresh.getTime() + interval.value * 60 * 60 * 1000);
