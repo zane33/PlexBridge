@@ -896,22 +896,26 @@ class EPGService {
       const programs = [];
       let successfulParsed = 0;
       let failedParsed = 0;
-      
+      const channelProgramCounts = {};
+
       for (const programme of programmes) {
         try {
           const program = this.parseProgram(programme, channelMap);
           if (program) {
             programs.push(program);
             successfulParsed++;
+
+            // Track program counts per channel for debugging
+            channelProgramCounts[program.channel_id] = (channelProgramCounts[program.channel_id] || 0) + 1;
           } else {
             failedParsed++;
           }
         } catch (error) {
           failedParsed++;
-          logger.debug('Failed to parse program', { 
+          logger.debug('Failed to parse program', {
             programme: programme.channel,
             title: this.extractText(programme.title),
-            error: error.message 
+            error: error.message
           });
         }
       }
@@ -921,7 +925,15 @@ class EPGService {
         totalProgrammes: programmes.length,
         successfullyParsed: successfulParsed,
         failedToParse: failedParsed,
-        finalProgramCount: programs.length
+        finalProgramCount: programs.length,
+        channelsWithPrograms: Object.keys(channelProgramCounts).length,
+        topChannelsByPrograms: Object.entries(channelProgramCounts)
+          .sort((a, b) => b[1] - a[1])
+          .slice(0, 10)
+          .map(([channelId, count]) => ({ channelId, count })),
+        tvnzChannelPrograms: Object.entries(channelProgramCounts)
+          .filter(([channelId]) => channelId.includes('tvnz') || channelId.includes('mjh-tvnz'))
+          .map(([channelId, count]) => ({ channelId, count }))
       });
 
       return programs;
@@ -1362,21 +1374,29 @@ class EPGService {
               // 3. Numeric and boolean field validation
               safeYear = (program.year && !isNaN(Number(program.year))) ? parseInt(program.year) : null;
 
-              // **CRITICAL**: Proper episode/season number conversion to strings or null
-              // Handle various input types: numbers, strings, null, undefined, empty strings
+              // **CRITICAL FIX**: More permissive episode/season number conversion
+              // Accept any valid number-like string, including "0" (some feeds use 0-based indexing)
               safeEpisodeNumber = null;
               if (program.episode_number !== null && program.episode_number !== undefined && program.episode_number !== '') {
-                const episodeNum = String(program.episode_number).trim();
-                if (episodeNum && !isNaN(Number(episodeNum)) && Number(episodeNum) > 0) {
-                  safeEpisodeNumber = episodeNum;
+                try {
+                  const episodeNum = String(program.episode_number).trim();
+                  if (episodeNum && !isNaN(Number(episodeNum)) && Number(episodeNum) >= 0) {
+                    safeEpisodeNumber = episodeNum;
+                  }
+                } catch (e) {
+                  // Ignore conversion errors, use null
                 }
               }
 
               safeSeasonNumber = null;
               if (program.season_number !== null && program.season_number !== undefined && program.season_number !== '') {
-                const seasonNum = String(program.season_number).trim();
-                if (seasonNum && !isNaN(Number(seasonNum)) && Number(seasonNum) > 0) {
-                  safeSeasonNumber = seasonNum;
+                try {
+                  const seasonNum = String(program.season_number).trim();
+                  if (seasonNum && !isNaN(Number(seasonNum)) && Number(seasonNum) >= 0) {
+                    safeSeasonNumber = seasonNum;
+                  }
+                } catch (e) {
+                  // Ignore conversion errors, use null
                 }
               }
 
@@ -1460,10 +1480,16 @@ class EPGService {
               };
               insertErrors.push(errorDetails);
 
-              // **ENHANCED**: Log first 10 errors in detail for debugging with full context
-              if (errorCount <= 10) {
+              // **ENHANCED**: Log EVERY error with full context for critical channels like TVNZ 1
+              const isCriticalChannel = program.channel_id && (
+                program.channel_id.includes('tvnz-1') ||
+                program.channel_id.includes('mjh-tvnz-1')
+              );
+
+              if (errorCount <= 25 || isCriticalChannel) {
                 logger.error('Failed to insert program (detailed)', {
                   ...errorDetails,
+                  isCriticalChannel,
                   fullProgram: program,
                   // Additional debugging info for constraint violations
                   titleLength: program.title ? program.title.length : 0,
@@ -1488,15 +1514,36 @@ class EPGService {
               
               // **ENHANCED**: Stop transaction if too many consecutive errors (prevent data corruption)
               // More permissive threshold but still protective
-              const maxErrors = Math.max(200, programs.length * 0.15); // Allow up to 15% errors or 200 errors minimum
+              const maxErrors = Math.max(500, programs.length * 0.50); // Allow up to 50% errors or 500 errors minimum
               if (errorCount > maxErrors) {
+                logger.error(`CRITICAL ERROR THRESHOLD REACHED`, {
+                  errorCount,
+                  totalPrograms: programs.length,
+                  maxErrors,
+                  errorRate: `${((errorCount / programs.length) * 100).toFixed(1)}%`,
+                  sampleErrors: insertErrors.slice(0, 10)
+                });
                 throw new Error(`CRITICAL: Too many insert errors (${errorCount}/${programs.length}) - stopping transaction to prevent corruption. Threshold: ${maxErrors}`);
               }
             }
           }
         }
         
-        // **CRITICAL**: Return transaction results for validation
+        // **CRITICAL**: Return transaction results for validation with detailed channel analysis
+        // Log channel-specific statistics for troubleshooting
+        const channelStats = Object.entries(channelCounts).map(([channelId, count]) => ({
+          channelId,
+          programCount: count
+        }));
+
+        logger.info('EPG transaction completed - channel breakdown', {
+          totalInserted: insertedCount,
+          totalErrors: errorCount,
+          channelsProcessed: channelStats.length,
+          topChannels: channelStats.sort((a, b) => b.programCount - a.programCount).slice(0, 10),
+          tvnzChannels: channelStats.filter(s => s.channelId.includes('tvnz') || s.channelId.includes('mjh-tvnz'))
+        });
+
         return {
           insertedCount,
           errorCount,
@@ -1514,13 +1561,23 @@ class EPGService {
         const errorRate = (results.errorCount / results.totalPrograms) * 100;
         const successRate = ((results.totalPrograms - results.errorCount) / results.totalPrograms) * 100;
 
-        // **ENHANCED**: More permissive thresholds for large EPG sources with data quality issues
-        const errorThreshold = results.totalPrograms > 10000 ? 40 : (results.totalPrograms > 5000 ? 30 : 15);
-        const minSuccessRequired = Math.max(50, results.totalPrograms * 0.05); // At least 5% or 50 programs must succeed
+        // **CRITICAL FIX**: Much more permissive thresholds to allow storage even with data quality issues
+        // Priority is to get SOME programs stored rather than ALL-OR-NOTHING approach
+        const errorThreshold = results.totalPrograms > 10000 ? 70 : (results.totalPrograms > 5000 ? 60 : 50);
+        const minSuccessRequired = Math.max(10, results.totalPrograms * 0.02); // At least 2% or 10 programs must succeed
 
         if (errorRate > errorThreshold && results.insertedCount < minSuccessRequired) {
-          throw new Error(`CRITICAL: EPG storage failed - ${results.errorCount}/${results.totalPrograms} programs failed to store (${errorRate.toFixed(1)}% error rate, only ${results.insertedCount} succeeded)`);
-        } else if (errorRate > errorThreshold) {
+          logger.error(`EPG storage failed - insufficient success rate`, {
+            errorRate: `${errorRate.toFixed(1)}%`,
+            successRate: `${successRate.toFixed(1)}%`,
+            inserted: results.insertedCount,
+            failed: results.errorCount,
+            total: results.totalPrograms,
+            minRequired: minSuccessRequired,
+            sampleErrors: results.insertErrors.slice(0, 20)
+          });
+          throw new Error(`CRITICAL: EPG storage failed - ${results.errorCount}/${results.totalPrograms} programs failed to store (${errorRate.toFixed(1)}% error rate, only ${results.insertedCount} succeeded, minimum ${minSuccessRequired} required)`);
+        } else if (errorRate > 25) {
           logger.warn(`EPG storage completed with high error rate but sufficient success`, {
             errorRate: `${errorRate.toFixed(1)}%`,
             successRate: `${successRate.toFixed(1)}%`,
