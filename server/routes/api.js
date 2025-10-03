@@ -1318,12 +1318,21 @@ router.get('/epg/programs', async (req, res) => {
     if (channel_id) {
       // Handle both UUID and EPG ID for channel filtering
       const channelInfo = await database.get('SELECT id, epg_id FROM channels WHERE id = ? OR epg_id = ?', [channel_id, channel_id]);
+      logger.debug('EPG programs channel lookup', {
+        requestedChannelId: channel_id,
+        foundChannel: channelInfo ? { id: channelInfo.id, epg_id: channelInfo.epg_id } : null
+      });
       if (channelInfo) {
         conditions.push('(p.channel_id = ? OR p.channel_id = ?)');
         params.push(channelInfo.epg_id || channel_id, channelInfo.id);
+        logger.debug('EPG programs query params', {
+          epgId: channelInfo.epg_id || channel_id,
+          uuid: channelInfo.id
+        });
       } else {
         conditions.push('p.channel_id = ?');
         params.push(channel_id);
+        logger.debug('EPG programs - channel not found, using raw ID', { channel_id });
       }
     }
     
