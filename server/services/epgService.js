@@ -1722,16 +1722,19 @@ class EPGService {
         return cached;
       }
 
-      // Query database using the correct EPG channel ID
+      // Query database using BOTH UUID and EPG channel ID for maximum compatibility
+      // Programs can be stored with either:
+      // - Internal channel UUID (for mapped channels)
+      // - EPG channel ID (for unmapped channels)
       let programs = await database.all(`
         SELECT p.*, ec.source_id
         FROM epg_programs p
         LEFT JOIN epg_channels ec ON ec.epg_id = p.channel_id
-        WHERE p.channel_id = ?
+        WHERE (p.channel_id = ? OR p.channel_id = ?)
         AND p.start_time <= ?
         AND p.end_time >= ?
         ORDER BY start_time
-      `, [epgChannelId, endTime, startTime]);
+      `, [epgChannelId, channel?.id || channelId, endTime, startTime]);
 
       // If no programs found, generate fallback data for Android TV compatibility
       if (!programs || programs.length === 0) {
@@ -1773,15 +1776,15 @@ class EPGService {
       }
 
       let programs = await database.all(`
-        SELECT p.*, 
-               COALESCE(c.name, ec.display_name, 'EPG Channel ' || p.channel_id) as channel_name, 
-               COALESCE(c.number, 9999) as channel_number, 
+        SELECT p.*,
+               COALESCE(c.name, ec.display_name, 'EPG Channel ' || p.channel_id) as channel_name,
+               COALESCE(c.number, 9999) as channel_number,
                ec.source_id,
-               CASE WHEN c.epg_id IS NULL THEN 1 ELSE 0 END as is_orphaned
+               CASE WHEN c.epg_id IS NULL AND c.id IS NULL THEN 1 ELSE 0 END as is_orphaned
         FROM epg_programs p
-        LEFT JOIN channels c ON c.epg_id = p.channel_id
+        LEFT JOIN channels c ON (c.epg_id = p.channel_id OR c.id = p.channel_id)
         LEFT JOIN epg_channels ec ON ec.epg_id = p.channel_id
-        WHERE p.start_time <= ? 
+        WHERE p.start_time <= ?
         AND p.end_time >= ?
         ORDER BY channel_number, p.start_time
       `, [endTime, startTime]);

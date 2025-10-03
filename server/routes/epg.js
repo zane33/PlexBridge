@@ -192,9 +192,11 @@ router.get('/now/:channelId', channelSwitchingMiddleware(), responseTimeMonitor(
     // Standard lookup for non-Android TV or when fast lookup fails
     const now = new Date().toISOString();
     let epgChannelId = channelId;
-    const channel = await database.get('SELECT epg_id FROM channels WHERE id = ?', [channelId]);
-    if (channel && channel.epg_id) {
-      epgChannelId = channel.epg_id;
+    let internalChannelId = channelId;
+    const channel = await database.get('SELECT id, epg_id FROM channels WHERE id = ? OR epg_id = ?', [channelId, channelId]);
+    if (channel) {
+      epgChannelId = channel.epg_id || channelId;
+      internalChannelId = channel.id;
     }
 
     let program = await database.get(`
@@ -202,14 +204,14 @@ router.get('/now/:channelId', channelSwitchingMiddleware(), responseTimeMonitor(
              COALESCE(c.name, ec.display_name, 'EPG Channel ' || p.channel_id) as channel_name,
              COALESCE(c.number, 9999) as channel_number
       FROM epg_programs p
-      LEFT JOIN channels c ON c.epg_id = p.channel_id
+      LEFT JOIN channels c ON (c.epg_id = p.channel_id OR c.id = p.channel_id)
       LEFT JOIN epg_channels ec ON ec.epg_id = p.channel_id
-      WHERE p.channel_id = ?
+      WHERE (p.channel_id = ? OR p.channel_id = ?)
       AND p.start_time <= ?
       AND p.end_time > ?
       ORDER BY p.start_time DESC
       LIMIT 1
-    `, [epgChannelId, now, now]);
+    `, [epgChannelId, internalChannelId, now, now]);
 
     if (!program) {
       // Generate fallback program with proper metadata types
@@ -325,9 +327,11 @@ router.get('/next/:channelId', async (req, res) => {
 
     // First try to get the EPG ID if channelId is an internal ID
     let epgChannelId = channelId;
-    const channel = await database.get('SELECT epg_id FROM channels WHERE id = ?', [channelId]);
-    if (channel && channel.epg_id) {
-      epgChannelId = channel.epg_id;
+    let internalChannelId = channelId;
+    const channel = await database.get('SELECT id, epg_id FROM channels WHERE id = ? OR epg_id = ?', [channelId, channelId]);
+    if (channel) {
+      epgChannelId = channel.epg_id || channelId;
+      internalChannelId = channel.id;
     }
 
     const program = await database.get(`
@@ -335,13 +339,13 @@ router.get('/next/:channelId', async (req, res) => {
              COALESCE(c.name, ec.display_name, 'EPG Channel ' || p.channel_id) as channel_name,
              COALESCE(c.number, 9999) as channel_number
       FROM epg_programs p
-      LEFT JOIN channels c ON c.epg_id = p.channel_id
+      LEFT JOIN channels c ON (c.epg_id = p.channel_id OR c.id = p.channel_id)
       LEFT JOIN epg_channels ec ON ec.epg_id = p.channel_id
-      WHERE p.channel_id = ?
+      WHERE (p.channel_id = ? OR p.channel_id = ?)
       AND p.start_time > ?
       ORDER BY p.start_time ASC
       LIMIT 1
-    `, [epgChannelId, now]);
+    `, [epgChannelId, internalChannelId, now]);
 
     if (!program) {
       return res.status(404).json({ error: 'No upcoming program found' });
@@ -365,20 +369,27 @@ router.get('/search', async (req, res) => {
     }
 
     let query = `
-      SELECT p.*, 
-             COALESCE(c.name, ec.display_name, 'EPG Channel ' || p.channel_id) as channel_name, 
+      SELECT p.*,
+             COALESCE(c.name, ec.display_name, 'EPG Channel ' || p.channel_id) as channel_name,
              COALESCE(c.number, 9999) as channel_number
       FROM epg_programs p
-      LEFT JOIN channels c ON c.epg_id = p.channel_id
+      LEFT JOIN channels c ON (c.epg_id = p.channel_id OR c.id = p.channel_id)
       LEFT JOIN epg_channels ec ON ec.epg_id = p.channel_id
       WHERE (p.title LIKE ? OR p.description LIKE ?)
     `;
-    
+
     const params = [`%${q}%`, `%${q}%`];
 
     if (channel_id) {
-      query += ' AND p.channel_id = ?';
-      params.push(channel_id);
+      // Handle both UUID and EPG ID for channel filtering
+      const channelInfo = await database.get('SELECT id, epg_id FROM channels WHERE id = ? OR epg_id = ?', [channel_id, channel_id]);
+      if (channelInfo) {
+        query += ' AND (p.channel_id = ? OR p.channel_id = ?)';
+        params.push(channelInfo.epg_id || channel_id, channelInfo.id);
+      } else {
+        query += ' AND p.channel_id = ?';
+        params.push(channel_id);
+      }
     }
 
     if (start) {
@@ -428,12 +439,12 @@ router.get('/grid', async (req, res) => {
     }
 
     const programs = await database.all(`
-      SELECT p.*, 
-             COALESCE(c.name, ec.display_name, 'EPG Channel ' || p.channel_id) as channel_name, 
-             COALESCE(c.number, 9999) as channel_number, 
+      SELECT p.*,
+             COALESCE(c.name, ec.display_name, 'EPG Channel ' || p.channel_id) as channel_name,
+             COALESCE(c.number, 9999) as channel_number,
              c.logo as channel_logo
       FROM epg_programs p
-      LEFT JOIN channels c ON c.epg_id = p.channel_id
+      LEFT JOIN channels c ON (c.epg_id = p.channel_id OR c.id = p.channel_id)
       LEFT JOIN epg_channels ec ON ec.epg_id = p.channel_id
       WHERE p.start_time < ? AND p.end_time > ?${channelFilter}
       ORDER BY c.number, p.start_time
