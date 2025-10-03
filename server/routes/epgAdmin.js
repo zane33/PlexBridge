@@ -18,7 +18,7 @@ router.get('/mapping-status', async (req, res) => {
       SELECT c.*,
         COUNT(DISTINCT p.id) as program_count
       FROM channels c
-      LEFT JOIN epg_programs p ON p.channel_id = c.epg_id
+      LEFT JOIN epg_programs p ON (p.channel_id = c.epg_id OR p.channel_id = c.id)
       GROUP BY c.id
       ORDER BY c.number
     `);

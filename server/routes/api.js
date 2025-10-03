@@ -1300,23 +1300,31 @@ router.get('/epg/programs', async (req, res) => {
     }
 
     const { channel_id, start_time, end_time, limit = 1000 } = req.query;
-    
+
     let query = `
-      SELECT 
+      SELECT
         p.*,
-        ec.display_name as channel_name,
+        COALESCE(c.name, ec.display_name, 'EPG Channel ' || p.channel_id) as channel_name,
         es.name as source_name
       FROM epg_programs p
+      LEFT JOIN channels c ON (c.epg_id = p.channel_id OR c.id = p.channel_id)
       LEFT JOIN epg_channels ec ON p.channel_id = ec.epg_id
       LEFT JOIN epg_sources es ON ec.source_id = es.id
     `;
-    
+
     const params = [];
     const conditions = [];
-    
+
     if (channel_id) {
-      conditions.push('p.channel_id = ?');
-      params.push(channel_id);
+      // Handle both UUID and EPG ID for channel filtering
+      const channelInfo = await database.get('SELECT id, epg_id FROM channels WHERE id = ? OR epg_id = ?', [channel_id, channel_id]);
+      if (channelInfo) {
+        conditions.push('(p.channel_id = ? OR p.channel_id = ?)');
+        params.push(channelInfo.epg_id || channel_id, channelInfo.id);
+      } else {
+        conditions.push('p.channel_id = ?');
+        params.push(channel_id);
+      }
     }
     
     if (start_time) {
@@ -1465,20 +1473,20 @@ router.get('/debug/epg', async (req, res) => {
     `);
 
     // Get channel mapping status
-    // FIXED: Correct mapping between channels and EPG programs via epg_id
+    // FIXED: Correct mapping between channels and EPG programs via both epg_id and UUID
     const channelMapping = await database.all(`
-      SELECT 
+      SELECT
         c.id,
         c.name,
         c.number,
         c.epg_id,
         COALESCE(COUNT(p.id), 0) as program_count
       FROM channels c
-      LEFT JOIN epg_programs p ON c.epg_id = p.channel_id
+      LEFT JOIN epg_programs p ON (c.epg_id = p.channel_id OR c.id = p.channel_id)
       WHERE c.epg_id IS NOT NULL
       GROUP BY c.id
       UNION ALL
-      SELECT 
+      SELECT
         c.id,
         c.name,
         c.number,
